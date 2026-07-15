@@ -1,0 +1,13 @@
+[Unit]
+Description=FreeRig710 PipeWire/PulseAudio endpoint watcher
+After=pipewire-pulse.service
+Wants=pipewire-pulse.service
+
+[Service]
+Type=simple
+ExecStart=@INSTALL_DIR@/scripts/ft710-audio-watch
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

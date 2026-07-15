@@ -1,0 +1,64 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.env
+!*.env.example
+*.htpasswd
+.htpasswd*
+*session.key
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.csr
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime state
+api/data/*
+!api/data/.gitkeep
+*.sqlite
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.pid
+*.sock
+
+# VNC / WSJT-X local state
+.vnc/
+*.pid
+*.log
+WSJT-X.ini
+ALL.TXT
+wsjtx_log.adi
+
+# Build and release output
+build/
+dist/
+*.zip
+*.tar
+*.tar.gz
+*.tar.bz2
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

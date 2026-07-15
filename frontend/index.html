@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Yaesu FT-710 Remote</title>
+  <link rel="stylesheet" href="styles.css?v=1.13.0">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="station-title">
+        <p class="eyebrow">REMOTE STATION</p>
+        <h1>Yaesu FT-710</h1>
+      </div>
+      <div class="topbar-controls">
+        <div class="station-actions" aria-label="Station power and FT8 controls">
+          <button id="radio-power-button" class="station-button power-button" type="button" disabled>POWER…</button>
+          <button id="ft8-power-button" class="station-button" type="button" disabled>FT8 ON</button>
+          <a id="ft8-open-button" class="station-button station-link disabled" href="/ft8/" target="_blank" rel="noopener noreferrer" aria-disabled="true" tabindex="-1">FT8</a>
+        </div>
+        <div class="connection">
+          <span id="connection-dot" class="dot"></span>
+          <span id="connection-text">Connecting…</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <div class="primary-column">
+        <section class="video-card card">
+      <div class="video-header">
+        <span>Radio display</span>
+        <div class="video-actions">
+          <label class="video-setting" for="video-fps">
+            <span>FPS</span>
+            <input id="video-fps" type="number" min="1" max="30" step="1" value="8" inputmode="numeric">
+          </label>
+          <label class="video-setting" for="video-quality">
+            <span>JPEG</span>
+            <input id="video-quality" type="number" min="20" max="95" step="1" value="55" inputmode="numeric">
+          </label>
+          <span id="video-status" class="muted">MJPEG</span>
+          <button id="video-toggle" class="compact-button" type="button">Pause</button>
+        </div>
+      </div>
+      <div id="video-frame" class="video-frame">
+        <img id="radio-video" alt="Live FT-710 display" draggable="false">
+        <div id="click-tune-overlay" class="click-tune-overlay" aria-hidden="true">
+          <div id="click-tune-crosshair" class="click-tune-crosshair"></div>
+          <output id="click-tune-preview" class="click-tune-preview">--.---.---</output>
+        </div>
+      </div>
+    </section>
+
+    <section class="frequency-card card">
+      <div class="frequency-main">
+        <div class="frequency-heading">
+          <span class="label">ACTIVE FREQUENCY</span>
+          <span id="active-vfo-badge" class="badge">VFO --</span>
+        </div>
+        <div id="frequency-readout" class="frequency-readout">--.---.---</div>
+      </div>
+      <form id="frequency-form" class="frequency-form">
+        <label for="frequency-mhz">MHz</label>
+        <input id="frequency-mhz" type="number" min="0.03" max="75" step="0.000001" inputmode="decimal" aria-describedby="frequency-auto-help">
+        <span id="frequency-auto-help" class="auto-hint">Auto</span>
+      </form>
+
+      <div class="jog-control">
+        <div class="jog-title">
+          <span class="label">ELASTIC TUNING</span>
+          <strong id="jog-speed">Stopped</strong>
+        </div>
+        <div class="jog-track-wrap">
+          <span>Lower</span>
+          <input id="frequency-jog" type="range" min="-100" max="100" step="1" value="0" aria-label="Elastic frequency tuning">
+          <span>Higher</span>
+        </div>
+        <p class="help">Hold away from the center to tune. The farther you pull, the faster it moves. Release to stop.</p>
+      </div>
+    </section>
+
+      </div>
+
+      <div class="control-column">
+        <section class="grid">
+      <article class="card panel-card" data-panel-id="vfo-control">
+        <h2>VFO control</h2>
+        <div class="vfo-row" data-vfo="A">
+          <div>
+            <span class="vfo-name">VFO A</span>
+            <span id="vfo-a-mode" class="muted">--</span>
+          </div>
+          <input id="vfo-a-mhz" type="number" min="0.03" max="75" step="0.000001" inputmode="decimal" aria-label="VFO A frequency in MHz">
+          <button id="select-vfo-a" class="vfo-select">Use A</button>
+        </div>
+        <div class="vfo-row" data-vfo="B">
+          <div>
+            <span class="vfo-name">VFO B</span>
+            <span id="vfo-b-mode" class="muted">--</span>
+          </div>
+          <input id="vfo-b-mhz" type="number" min="0.03" max="75" step="0.000001" inputmode="decimal" aria-label="VFO B frequency in MHz">
+          <button id="select-vfo-b" class="vfo-select">Use B</button>
+        </div>
+        <div class="three-buttons">
+          <button id="copy-a-b">A → B</button>
+          <button id="swap-vfos">Swap A/B</button>
+          <button id="copy-b-a">B → A</button>
+        </div>
+      </article>
+
+
+      <article class="card panel-card memory-card" data-panel-id="memories">
+        <div class="panel-heading-row">
+          <h2>Memories</h2>
+          <span id="memory-status" class="memory-status">CACHE</span>
+        </div>
+        <p class="help">Save the current frequency and mode in a real FT-710 memory channel. Category and note are stored only on the Raspberry.</p>
+
+        <form id="memory-save-form" class="memory-save-form">
+          <div class="memory-form-grid">
+            <label>
+              <span class="control-label">Name · max 12 ASCII</span>
+              <input id="memory-name" type="text" maxlength="12" autocomplete="off" spellcheck="false" placeholder="FT8 20M">
+            </label>
+            <label>
+              <span class="control-label">Slot</span>
+              <select id="memory-slot">
+                <option value="">AUTO</option>
+              </select>
+            </label>
+            <label>
+              <span class="control-label">Category</span>
+              <select id="memory-category">
+                <option value="">None</option>
+                <option value="FT8">FT8</option>
+                <option value="CW">CW</option>
+                <option value="SSB">SSB</option>
+                <option value="SSTV">SSTV</option>
+                <option value="FM">FM</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </label>
+            <label class="memory-note-field">
+              <span class="control-label">Note</span>
+              <input id="memory-note" type="text" maxlength="240" autocomplete="off" placeholder="Optional web-only note">
+            </label>
+          </div>
+          <label class="memory-overwrite">
+            <input id="memory-overwrite" type="checkbox">
+            Allow overwrite when a specific occupied slot is selected
+          </label>
+          <button id="memory-save" class="wide" type="submit">SAVE CURRENT</button>
+        </form>
+
+        <div class="memory-toolbar">
+          <button id="memory-sync" type="button">Sync radio</button>
+        </div>
+
+        <div id="memory-list" class="memory-list" aria-live="polite">
+          <p class="memory-empty">No cached memories. Press Sync radio to import existing channels.</p>
+        </div>
+
+        <form id="memory-edit-form" class="memory-edit-form" hidden>
+          <div class="panel-heading-row">
+            <h3>Edit memory <span id="memory-edit-slot">---</span></h3>
+            <button id="memory-edit-cancel" class="compact-button" type="button">Cancel</button>
+          </div>
+          <div class="memory-form-grid">
+            <label>
+              <span class="control-label">Name</span>
+              <input id="memory-edit-name" type="text" maxlength="12" autocomplete="off" spellcheck="false">
+            </label>
+            <label>
+              <span class="control-label">Frequency MHz</span>
+              <input id="memory-edit-frequency" type="number" min="0.03" max="75" step="0.000001" inputmode="decimal">
+            </label>
+            <label>
+              <span class="control-label">Mode</span>
+              <select id="memory-edit-mode"></select>
+            </label>
+            <label>
+              <span class="control-label">Category</span>
+              <select id="memory-edit-category">
+                <option value="">None</option>
+                <option value="FT8">FT8</option>
+                <option value="CW">CW</option>
+                <option value="SSB">SSB</option>
+                <option value="SSTV">SSTV</option>
+                <option value="FM">FM</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </label>
+            <label class="memory-note-field">
+              <span class="control-label">Note</span>
+              <input id="memory-edit-note" type="text" maxlength="240" autocomplete="off">
+            </label>
+          </div>
+          <button id="memory-edit-save" class="wide" type="submit">UPDATE MEMORY</button>
+        </form>
+      </article>
+
+      <article class="card panel-card" data-panel-id="receiver">
+        <h2>Receiver</h2>
+        <label class="control-label" for="mode">Mode</label>
+        <div class="inline-control">
+          <select id="mode"><option value="" selected disabled>Waiting for radio…</option></select>
+        </div>
+
+        <label class="control-label" for="preamp">RF amplifier / IPO</label>
+        <div class="inline-control">
+          <select id="preamp">
+            <option value="" selected disabled>Waiting for radio…</option>
+            <option value="IPO">IPO</option>
+            <option value="AMP1">AMP 1</option>
+            <option value="AMP2">AMP 2</option>
+          </select>
+        </div>
+
+        <label class="control-label" for="attenuator">Attenuator</label>
+        <div class="inline-control">
+          <select id="attenuator">
+            <option value="" selected disabled>Waiting for radio…</option>
+            <option value="0">OFF</option>
+            <option value="6">6 dB</option>
+            <option value="12">12 dB</option>
+            <option value="18">18 dB</option>
+          </select>
+        </div>
+
+        <label class="control-label" for="rf-gain">RF gain: <strong id="rf-gain-value">--</strong></label>
+        <input id="rf-gain" type="range" min="0" max="255" step="1" value="255">
+      </article>
+
+      <article class="card panel-card" data-panel-id="noise-reduction">
+        <h2>Noise reduction</h2>
+        <div class="switch-row">
+          <label class="switch-label" for="dnr-enabled">Digital noise reduction</label>
+          <input id="dnr-enabled" type="checkbox">
+        </div>
+        <label class="control-label" for="dnr-level">DNR level: <strong id="dnr-level-value">--</strong></label>
+        <input id="dnr-level" type="range" min="1" max="15" step="1" value="1">
+
+        <div class="switch-row separated">
+          <label class="switch-label" for="nb-enabled">Noise blanker</label>
+          <input id="nb-enabled" type="checkbox">
+        </div>
+        <label class="control-label" for="nb-level">NB level: <strong id="nb-level-value">--</strong></label>
+        <input id="nb-level" type="range" min="0" max="10" step="1" value="0">
+
+        <div class="switch-row separated">
+          <label class="switch-label" for="auto-notch">Automatic notch filter</label>
+          <input id="auto-notch" type="checkbox">
+        </div>
+      </article>
+
+      <article class="card panel-card" data-panel-id="radio-display">
+        <h2>Radio display</h2>
+        <label class="control-label" for="meter-display">Meter shown on the FT-710</label>
+        <div class="inline-control">
+          <select id="meter-display">
+            <option value="" selected disabled>Waiting for radio…</option>
+            <option value="PO">PO</option>
+            <option value="COMP">COMP</option>
+            <option value="ALC">ALC</option>
+            <option value="VDD">VDD</option>
+            <option value="ID">ID</option>
+            <option value="SWR">SWR</option>
+          </select>
+        </div>
+
+        <label class="control-label" for="scope-mode">Scope / waterfall mode</label>
+        <div class="inline-control">
+          <select id="scope-mode">
+            <option value="" selected disabled>Waiting for radio…</option>
+            <option>3DSS CENTER</option>
+            <option>3DSS CURSOR</option>
+            <option>3DSS FIX</option>
+            <option>WATERFALL CENTER EXPAND</option>
+            <option>WATERFALL CENTER NORMAL</option>
+            <option>WATERFALL CURSOR EXPAND</option>
+            <option>WATERFALL CURSOR NORMAL</option>
+            <option>WATERFALL FIX EXPAND</option>
+            <option>WATERFALL FIX NORMAL</option>
+          </select>
+        </div>
+
+        <label class="control-label" for="scope-speed">Scope speed</label>
+        <div class="inline-control">
+          <select id="scope-speed">
+            <option value="" selected disabled>Waiting for radio…</option>
+            <option>SLOW 1</option><option>SLOW 2</option><option>FAST 1</option>
+            <option>FAST 2</option><option>FAST 3</option><option>STOP</option>
+          </select>
+        </div>
+
+        <label class="control-label" for="scope-span">Scope span</label>
+        <div class="inline-control">
+          <select id="scope-span">
+            <option value="" selected disabled>Waiting for radio…</option>
+            <option>1 kHz</option><option>2 kHz</option><option>5 kHz</option>
+            <option>10 kHz</option><option>20 kHz</option><option>50 kHz</option>
+            <option>100 kHz</option><option>200 kHz</option><option>500 kHz</option><option>1 MHz</option>
+          </select>
+        </div>
+      </article>
+
+      <article class="card panel-card audio-card" data-panel-id="audio-and-ptt">
+        <div class="panel-heading-row">
+          <h2>Audio and PTT</h2>
+          <span id="audio-status" class="audio-status">OFF</span>
+        </div>
+        <p class="help audio-help">Audio devices remain closed until you enable them manually. Use a headset to prevent acoustic feedback.</p>
+        <button id="audio-toggle" class="wide" type="button">Enable audio</button>
+
+        <label class="control-label" for="rx-volume">Speaker boost: <strong id="rx-volume-value">600%</strong></label>
+        <input id="rx-volume" type="range" min="0" max="1200" step="10" value="600" disabled>
+
+        <label class="control-label" for="tx-mic-gain">Browser microphone gain: <strong id="tx-mic-gain-value">100%</strong></label>
+        <input id="tx-mic-gain" type="range" min="0" max="200" step="1" value="100" disabled>
+
+        <button id="ptt-button" class="ptt-button" type="button" aria-pressed="false" disabled>PTT OFF · CLICK TO TRANSMIT</button>
+        <p id="audio-detail" class="help">Source: ft710_in_44100 · Sink: ft710_out_44100</p>
+      </article>
+
+      <article class="card panel-card cw-card" data-panel-id="cw-decoder-and-keyer">
+        <div class="panel-heading-row">
+          <h2>CW decoder and keyer</h2>
+          <span id="cw-status" class="cw-status">OFF</span>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <span class="switch-label">Decode received CW</span>
+            <p class="help">Uses the browser RX audio stream. Enable audio first.</p>
+          </div>
+          <input id="cw-decoder-enabled" type="checkbox" disabled>
+        </div>
+
+        <div class="cw-parameter-grid">
+          <label class="cw-option">
+            <span>Auto tone</span>
+            <input id="cw-tone-auto" type="checkbox" checked>
+          </label>
+          <label for="cw-tone-hz">Tone Hz</label>
+          <input id="cw-tone-hz" type="number" min="300" max="1050" step="10" value="700" disabled>
+          <label class="cw-option">
+            <span>Auto speed</span>
+            <input id="cw-speed-auto" type="checkbox" checked>
+          </label>
+          <label for="cw-wpm">WPM</label>
+          <input id="cw-wpm" type="number" min="4" max="60" step="1" value="25">
+        </div>
+
+        <div id="cw-signal" class="cw-signal">Tone -- Hz · -- WPM · waiting for audio</div>
+        <textarea id="cw-decoded-text" class="cw-decoded-text" rows="6" readonly aria-label="Decoded CW text" placeholder="Decoded CW will appear here"></textarea>
+        <div class="cw-rx-actions">
+          <button id="cw-clear" type="button">Clear RX</button>
+          <button id="cw-copy" type="button">Copy RX</button>
+        </div>
+
+        <form id="cw-send-form" class="cw-send-form">
+          <label class="control-label" for="cw-message">CW message · text memory 5</label>
+          <div class="cw-send-row">
+            <input id="cw-message" type="text" maxlength="50" autocomplete="off" spellcheck="false" placeholder="CQ CQ DE ... K">
+            <button id="cw-send" type="submit">SEND</button>
+            <button id="cw-stop" class="danger" type="button" disabled>STOP</button>
+          </div>
+          <div class="cw-send-meta">
+            <span id="cw-character-count">0 / 50</span>
+            <span>Radio must be in CW-U or CW-L.</span>
+          </div>
+        </form>
+      </article>
+
+      <article class="card panel-card sstv-card" data-panel-id="sstv-decoder">
+        <div class="panel-heading-row">
+          <h2>SSTV decoder</h2>
+          <span id="sstv-status" class="sstv-status">OFF</span>
+        </div>
+
+        <div class="switch-row">
+          <div>
+            <span class="switch-label">Decode received SSTV</span>
+            <p class="help">Uses the same browser RX audio stream. Enable audio first.</p>
+          </div>
+          <input id="sstv-enabled" type="checkbox" disabled>
+        </div>
+
+        <label class="control-label" for="sstv-mode">Mode detection</label>
+        <select id="sstv-mode" disabled>
+          <option value="auto" selected>AUTO · VIS</option>
+          <option value="martin1">Martin M1</option>
+          <option value="martin2">Martin M2</option>
+          <option value="scottie1">Scottie S1</option>
+          <option value="scottie2">Scottie S2</option>
+          <option value="robot36">Robot 36</option>
+          <option value="robot72">Robot 72</option>
+        </select>
+
+        <div class="sstv-meta">
+          <span id="sstv-vis">VIS --</span>
+          <span id="sstv-progress-label">0 / -- · 0%</span>
+        </div>
+        <progress id="sstv-progress" class="sstv-progress" max="256" value="0"></progress>
+        <div id="sstv-detail" class="sstv-detail">Enable audio first</div>
+        <div id="sstv-signal" class="sstv-signal">Tone -- Hz · waiting for audio</div>
+
+        <div class="sstv-canvas-wrap">
+          <canvas id="sstv-canvas" width="320" height="256" aria-label="Decoded SSTV image"></canvas>
+        </div>
+
+        <div class="sstv-actions">
+          <button id="sstv-reset" type="button">Reset / wait next image</button>
+          <button id="sstv-save" type="button" disabled>Save PNG</button>
+        </div>
+        <p class="help">For HF reception use USB, a voice-width filter, and disable DNR/NB if they distort the tones. Manual mode can recover an image when the VIS header is lost.</p>
+      </article>
+
+      <article class="card panel-card" data-panel-id="transmitter-and-tuner">
+        <h2>Transmitter and tuner</h2>
+        <label class="control-label" for="tx-power">TX power: <strong id="tx-power-value">--</strong></label>
+        <input id="tx-power" type="range" min="5" max="100" step="1" value="30">
+
+        <div class="tuner-buttons">
+          <button id="tuner-enable">Tuner ON</button>
+          <button id="tuner-disable">Tuner OFF</button>
+          <button id="tuner-tune" class="warning">TUNE</button>
+        </div>
+        <p class="help">TUNE may transmit at low power.</p>
+      </article>
+
+      <article class="card panel-card" data-panel-id="radio-status">
+        <h2>Radio status</h2>
+        <dl class="status-list">
+          <div><dt>Radio power</dt><dd id="status-radio-power">--</dd></div>
+          <div><dt>FT8 / noVNC</dt><dd id="status-ft8">OFF</dd></div>
+          <div><dt>CAT-2 port</dt><dd id="cat2-device">--</dd></div>
+          <div><dt>Active VFO</dt><dd id="status-active-vfo">--</dd></div>
+          <div><dt>RX / TX</dt><dd id="tx-state">--</dd></div>
+          <div><dt>Tuner</dt><dd id="tuner-state">--</dd></div>
+          <div><dt>High SWR</dt><dd id="hi-swr">--</dd></div>
+          <div><dt>Radio ID</dt><dd id="radio-id">--</dd></div>
+        </dl>
+      </article>
+    </section>
+
+    <details class="card advanced-card">
+      <summary>Advanced CAT-2 command</summary>
+      <p class="muted">Disabled by default. This sends commands directly to /dev/ttyFT710_AUX. Do not send TX or PTT commands.</p>
+      <form id="cat-form" class="cat-form">
+        <input id="cat-command" type="text" maxlength="128" placeholder="Example: PA0;">
+        <label><input id="cat-expect-reply" type="checkbox"> Wait for reply</label>
+        <button type="submit">Send</button>
+      </form>
+      <pre id="cat-response">--</pre>
+        </details>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <script src="config.js?v=1.12.3"></script>
+  <script src="cw.js?v=1.12.3"></script>
+  <script src="sstv.js?v=1.13.0"></script>
+  <script src="app.js?v=1.13.0"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+uid_num="$(id -u)"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${uid_num}}"
+export PULSE_SERVER="${PULSE_SERVER:-unix:${XDG_RUNTIME_DIR}/pulse/native}"
+
+card="${FT710_AUDIO_CARD:-FT710}"
+out_name="${FT710_AUDIO_TX_SINK:-ft710_out_44100}"
+in_name="${FT710_AUDIO_RX_SOURCE:-ft710_in_44100}"
+
+while true; do
+  until [[ -S "${XDG_RUNTIME_DIR}/pulse/native" ]] && \
+        aplay -l 2>/dev/null | grep -q "${card}"; do
+    sleep 3
+  done
+
+  if ! pactl list short sinks 2>/dev/null | awk '{print $2}' | grep -qx "${out_name}" || \
+     ! pactl list short sources 2>/dev/null | awk '{print $2}' | grep -qx "${in_name}"; then
+    "${script_dir}/ft710-wsjtx-audio" || true
+  fi
+
+  sleep 5
+done

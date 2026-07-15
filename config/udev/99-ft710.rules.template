@@ -1,0 +1,15 @@
+# Yaesu FT-710 CP2105 virtual serial ports.
+# Replace @RADIO_USB_SERIAL@ with the serial reported by udevadm/lsusb.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea70", ATTRS{serial}=="@RADIO_USB_SERIAL@", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="ttyFT710_CAT"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea70", ATTRS{serial}=="@RADIO_USB_SERIAL@", ENV{ID_USB_INTERFACE_NUM}=="01", SYMLINK+="ttyFT710_AUX"
+
+# Optional stable ALSA card name. USB topology is installation-specific.
+# Replace @FT710_AUDIO_USB_DEVPATH@ with a DEVPATH fragment such as:
+#   */usb1/1-1/1-1.3/1-1.3.2/*
+# Then uncomment the following line.
+# SUBSYSTEM=="sound", KERNEL=="card*", DEVPATH=="@FT710_AUDIO_USB_DEVPATH@", ATTR{id}:="FT710"
+
+# Optional FT4222 scope/waterfall USB symlink. This web stack captures the
+# external DVI display through TC358743, so this rule is not required for video.
+# Replace @FT710_SCOPE_USB_DEVPATH@ and uncomment only when you use the FT4222.
+# SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0403", ATTR{idProduct}=="601c", DEVPATH=="@FT710_SCOPE_USB_DEVPATH@", MODE="0660", GROUP="plugdev", SYMLINK+="ft710_scope"

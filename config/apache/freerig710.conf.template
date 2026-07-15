@@ -1,0 +1,132 @@
+<VirtualHost *:80>
+        ServerAdmin @SERVER_ADMIN@
+        ServerName @PUBLIC_DOMAIN@
+
+        RewriteEngine On
+        RewriteRule ^ https://@PUBLIC_DOMAIN@%{REQUEST_URI} [R=301,L]
+
+        ErrorLog ${APACHE_LOG_DIR}/freerig710-error.log
+        CustomLog ${APACHE_LOG_DIR}/freerig710-access.log combined
+</VirtualHost>
+
+<IfModule mod_ssl.c>
+<VirtualHost *:443>
+        ServerAdmin @SERVER_ADMIN@
+        ServerName @PUBLIC_DOMAIN@
+
+        DocumentRoot @DOCUMENT_ROOT@
+        DirectoryIndex index.html
+
+        <Directory @DOCUMENT_ROOT@>
+                Options -Indexes +FollowSymLinks
+                AllowOverride None
+                Require all granted
+        </Directory>
+
+        # Public login page.
+        <Location "/login.html">
+                Require all granted
+        </Location>
+
+        # Apache form-login handler. Credentials are stored in the local
+        # htpasswd file; the encrypted session cookie uses a separate key.
+        <Location "/ft710-login">
+                SetHandler form-login-handler
+
+                AuthType form
+                AuthName "FreeRig710"
+                AuthFormProvider file
+                AuthUserFile /etc/apache2/freerig710.htpasswd
+
+                AuthFormLoginRequiredLocation "/login.html"
+                AuthFormLoginSuccessLocation "/"
+
+                Session On
+                SessionCookieName FREERIG710SESSION path=/;httponly;secure;samesite=lax
+                SessionCryptoPassphraseFile /etc/apache2/freerig710-session.key
+                SessionMaxAge 2592000
+                SessionExpiryUpdateInterval 300
+        </Location>
+
+        # Protect the frontend, API, audio WebSocket, video stream and noVNC
+        # with the same encrypted Apache session cookie.
+        <LocationMatch "^/(?!login\.html$|ft710-login$)">
+                AuthType form
+                AuthName "FreeRig710"
+                AuthFormProvider file
+                AuthUserFile /etc/apache2/freerig710.htpasswd
+                AuthFormLoginRequiredLocation "/login.html"
+
+                Session On
+                SessionCookieName FREERIG710SESSION path=/;httponly;secure;samesite=lax
+                SessionCryptoPassphraseFile /etc/apache2/freerig710-session.key
+                SessionMaxAge 2592000
+                SessionExpiryUpdateInterval 300
+                SessionCookieRemove On
+
+                Require valid-user
+        </LocationMatch>
+
+        ProxyRequests Off
+        ProxyPreserveHost On
+        ProxyTimeout 3600
+
+        # Browser audio WebSocket. Keep this before the generic API proxy.
+        ProxyPass \
+                /ft710-api/api/v1/audio/ws \
+                ws://@RASPBERRY_PI_IP@:8100/api/v1/audio/ws \
+                retry=0 timeout=3600
+
+        ProxyPassReverse \
+                /ft710-api/api/v1/audio/ws \
+                ws://@RASPBERRY_PI_IP@:8100/api/v1/audio/ws
+
+        # REST API, server-sent events, MJPEG video and OpenAPI documentation.
+        ProxyPass \
+                /ft710-api/ \
+                http://@RASPBERRY_PI_IP@:8100/ \
+                connectiontimeout=5 timeout=3600 retry=0 keepalive=On
+
+        ProxyPassReverse \
+                /ft710-api/ \
+                http://@RASPBERRY_PI_IP@:8100/
+
+        # WSJT-X through TigerVNC + noVNC/websockify.
+        RedirectMatch 301 ^/ft8$ /ft8/
+
+        ProxyPass \
+                /ft8/ \
+                http://@RASPBERRY_PI_IP@:10005/ \
+                upgrade=websocket connectiontimeout=5 timeout=3600 retry=0
+
+        ProxyPassReverse \
+                /ft8/ \
+                http://@RASPBERRY_PI_IP@:10005/
+
+        RequestHeader set X-Forwarded-Proto "https"
+        RequestHeader set X-Forwarded-Port "443"
+
+        # Long-lived streams must not be buffered or compressed.
+        SetEnvIf Request_URI \
+                "^/ft710-api/(api/v1/events|video\.mjpeg|api/v1/audio/ws)" \
+                no-gzip=1
+
+        <Location "/ft710-api/video.mjpeg">
+                Header always set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+                Header always set Pragma "no-cache"
+                Header always set Expires "0"
+        </Location>
+
+        Header always set X-Content-Type-Options "nosniff"
+        Header always set Referrer-Policy "same-origin"
+        Header always set Strict-Transport-Security "max-age=31536000"
+
+        ErrorLog ${APACHE_LOG_DIR}/freerig710-error.log
+        LogLevel warn
+        CustomLog ${APACHE_LOG_DIR}/freerig710-access.log combined
+
+        SSLCertificateFile /etc/letsencrypt/live/@PUBLIC_DOMAIN@/fullchain.pem
+        SSLCertificateKeyFile /etc/letsencrypt/live/@PUBLIC_DOMAIN@/privkey.pem
+        Include /etc/letsencrypt/options-ssl-apache.conf
+</VirtualHost>
+</IfModule>
