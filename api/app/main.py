@@ -15,10 +15,12 @@ from pydantic import BaseModel, Field
 from .audio import AudioBridge
 from .config import settings
 from .direct_cat import (
+    AGC_NAME_TO_CODE,
     ATTENUATOR_DB_TO_CODE,
     METER_NAME_TO_CODE,
     MODE_NAME_TO_CODE,
     PREAMP_NAME_TO_CODE,
+    RF_SQL_VR_NAME_TO_CODE,
     SCOPE_MODE_NAME_TO_CODE,
     SCOPE_SPAN_NAME_TO_CODE,
     SCOPE_SPEED_NAME_TO_CODE,
@@ -85,8 +87,8 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="FreeRig710 API",
-    version="1.14.0",
+    title="FT-710 Raspberry API",
+    version="1.18.1",
     root_path=settings.root_path,
     lifespan=lifespan,
 )
@@ -117,8 +119,20 @@ class TxPowerRequest(BaseModel):
     watts: int = Field(ge=5, le=100)
 
 
+class RfSqlVrRequest(BaseModel):
+    value: Literal["RF", "SQL", "SQL_FM"]
+
+
 class RfGainRequest(BaseModel):
     value: int = Field(ge=0, le=255)
+
+
+class SquelchRequest(BaseModel):
+    value: int = Field(ge=0, le=100)
+
+
+class AgcRequest(BaseModel):
+    value: Literal["OFF", "FAST", "MID", "SLOW", "AUTO"]
 
 
 class TunerRequest(BaseModel):
@@ -127,6 +141,10 @@ class TunerRequest(BaseModel):
 
 class VfoSelectRequest(BaseModel):
     vfo: Literal["A", "B"]
+
+
+class VfoSplitRequest(BaseModel):
+    mode: Literal["OFF", "A_TO_B", "B_TO_A"]
 
 
 class VfoOperationRequest(BaseModel):
@@ -153,6 +171,15 @@ class NoiseBlankerRequest(BaseModel):
 
 class AutoNotchRequest(BaseModel):
     enabled: bool
+
+
+class FilterRequest(BaseModel):
+    width_code: int | None = Field(default=None, ge=0, le=23)
+    shift_hz: int | None = Field(default=None, ge=-1200, le=1200)
+    manual_notch_enabled: bool | None = None
+    manual_notch_hz: int | None = Field(default=None, ge=10, le=3200)
+    contour_enabled: bool | None = None
+    contour_hz: int | None = Field(default=None, ge=10, le=3200)
 
 
 class MeterDisplayRequest(BaseModel):
@@ -437,7 +464,7 @@ async def root():
     prefix = settings.root_path
     return {
         "service": "FT-710 Raspberry API",
-        "version": "1.14.0",
+        "version": "1.18.1",
         "cat2_device": settings.cat2_device,
         "docs": f"{prefix}/docs",
         "state": f"{prefix}/api/v1/state",
@@ -447,6 +474,8 @@ async def root():
         "audio_status": f"{prefix}/api/v1/audio/status",
         "audio_websocket": f"{prefix}/api/v1/audio/ws",
         "radio_power": f"{prefix}/api/v1/radio/power",
+        "rf_sql_vr": f"{prefix}/api/v1/radio/rf-sql-vr",
+        "filter": f"{prefix}/api/v1/radio/filter",
         "ft8_status": f"{prefix}/api/v1/ft8/status",
         "ft8_control": f"{prefix}/api/v1/ft8",
         "cw_status": f"{prefix}/api/v1/cw/status",
@@ -482,6 +511,16 @@ async def capabilities():
         "modes": list(MODE_NAME_TO_CODE),
         "preamp": list(PREAMP_NAME_TO_CODE),
         "attenuator_db": list(ATTENUATOR_DB_TO_CODE),
+        "agc": list(AGC_NAME_TO_CODE),
+        "rf_sql_vr": list(RF_SQL_VR_NAME_TO_CODE),
+        "rf_gain_range": {"min": 0, "max": 255},
+        "squelch_range": {"min": 0, "max": 100},
+        "filter": {
+            "width_code_range": {"min": 0, "max": 23},
+            "shift_hz_range": {"min": -1200, "max": 1200, "step": 20},
+            "manual_notch_hz_range": {"min": 10, "max": 3200, "step": 10},
+            "contour_hz_range": {"min": 10, "max": 3200, "step": 1},
+        },
         "meter_displays": list(METER_NAME_TO_CODE),
         "scope_modes": list(SCOPE_MODE_NAME_TO_CODE),
         "scope_speeds": list(SCOPE_SPEED_NAME_TO_CODE),
@@ -1016,10 +1055,16 @@ async def set_frequency(payload: FrequencyRequest):
 async def set_mode(payload: ModeRequest):
     active = _active_vfo_from_state()
     target = active if payload.vfo == "ACTIVE" else payload.vfo
-    await run_cat_call(cat.set_mode, target, active, payload.mode)
+    filter_defaults = await run_cat_call(
+        cat.set_mode_and_reset_filters,
+        target,
+        active,
+        payload.mode,
+    )
     values = {"vfo_a_mode" if target == "A" else "vfo_b_mode": payload.mode}
     if target == active:
         values["mode"] = payload.mode
+        values.update(filter_defaults)
     store.update(**values)
     return command_result()
 
@@ -1031,10 +1076,39 @@ async def set_tx_power(payload: TxPowerRequest):
     return command_result()
 
 
+@app.post("/api/v1/radio/rf-sql-vr")
+async def set_rf_sql_vr(payload: RfSqlVrRequest):
+    actual_mode, active_level = await run_cat_call(
+        cat.set_rf_sql_vr_and_read_level,
+        payload.value,
+    )
+    values: dict[str, object] = {"rf_sql_vr": actual_mode}
+    if actual_mode == "RF":
+        values["rf_gain"] = active_level
+    else:
+        values["squelch_level"] = active_level
+    store.update(**values)
+    return command_result()
+
+
 @app.post("/api/v1/radio/rf-gain")
 async def set_rf_gain(payload: RfGainRequest):
     await run_cat_call(cat.set_rf_gain, payload.value)
     store.update(rf_gain=payload.value)
+    return command_result()
+
+
+@app.post("/api/v1/radio/squelch")
+async def set_squelch(payload: SquelchRequest):
+    await run_cat_call(cat.set_squelch_level, payload.value)
+    store.update(squelch_level=payload.value)
+    return command_result()
+
+
+@app.post("/api/v1/radio/agc")
+async def set_agc(payload: AgcRequest):
+    await run_cat_call(cat.set_agc, payload.value)
+    store.update(agc=payload.value)
     return command_result()
 
 
@@ -1050,12 +1124,34 @@ async def tuner(payload: TunerRequest):
     return command_result()
 
 
+@app.post("/api/v1/radio/vfo/split")
+async def set_vfo_split(payload: VfoSplitRequest):
+    result = await run_cat_call(cat.set_split_mode, payload.mode)
+    state = _snapshot()
+    active_vfo = result["active_vfo"]
+    split_enabled = bool(result["split_enabled"])
+    tx_vfo = ({"A": "B", "B": "A"}[active_vfo] if split_enabled else active_vfo)
+    store.update(
+        active_vfo=active_vfo,
+        split_enabled=split_enabled,
+        rx_vfo=active_vfo,
+        tx_vfo=tx_vfo,
+        frequency_hz=state.get("vfo_a_hz") if active_vfo == "A" else state.get("vfo_b_hz"),
+        mode=state.get("vfo_a_mode") if active_vfo == "A" else state.get("vfo_b_mode"),
+    )
+    return command_result()
+
+
 @app.post("/api/v1/radio/vfo/select")
 async def select_vfo(payload: VfoSelectRequest):
     await run_cat_call(cat.set_active_vfo, payload.vfo)
     state = _snapshot()
+    split_enabled = bool(state.get("split_enabled"))
+    tx_vfo = ({"A": "B", "B": "A"}[payload.vfo] if split_enabled else payload.vfo)
     store.update(
         active_vfo=payload.vfo,
+        rx_vfo=payload.vfo,
+        tx_vfo=tx_vfo,
         frequency_hz=state.get("vfo_a_hz") if payload.vfo == "A" else state.get("vfo_b_hz"),
         mode=state.get("vfo_a_mode") if payload.vfo == "A" else state.get("vfo_b_mode"),
     )
@@ -1151,6 +1247,47 @@ async def set_noise_blanker(payload: NoiseBlankerRequest):
 async def set_auto_notch(payload: AutoNotchRequest):
     await run_cat_call(cat.set_auto_notch, payload.enabled)
     store.update(auto_notch=payload.enabled)
+    return command_result()
+
+
+@app.post("/api/v1/radio/filter")
+async def set_filter(payload: FilterRequest):
+    requested = (
+        payload.width_code,
+        payload.shift_hz,
+        payload.manual_notch_enabled,
+        payload.manual_notch_hz,
+        payload.contour_enabled,
+        payload.contour_hz,
+    )
+    if all(value is None for value in requested):
+        raise HTTPException(status_code=422, detail="At least one filter control is required")
+
+    def apply() -> dict[str, object]:
+        values: dict[str, object] = {}
+        if payload.width_code is not None:
+            values["width_code"] = cat.set_width_code(payload.width_code)
+        if payload.shift_hz is not None:
+            values["if_shift_hz"] = cat.set_if_shift(payload.shift_hz)
+
+        # Apply frequencies before enabling the corresponding DSP function so
+        # a combined request never opens briefly at an old frequency.
+        if payload.manual_notch_hz is not None:
+            values["manual_notch_hz"] = cat.set_manual_notch_frequency(
+                payload.manual_notch_hz
+            )
+        if payload.manual_notch_enabled is not None:
+            values["manual_notch"] = cat.set_manual_notch(
+                payload.manual_notch_enabled
+            )
+        if payload.contour_hz is not None:
+            values["contour_hz"] = cat.set_contour_frequency(payload.contour_hz)
+        if payload.contour_enabled is not None:
+            values["contour"] = cat.set_contour(payload.contour_enabled)
+        return values
+
+    values = await run_cat_call(apply)
+    store.update(**values)
     return command_result()
 
 

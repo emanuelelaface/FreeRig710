@@ -28,11 +28,52 @@ MODE_NAME_TO_CODE = {
 }
 MODE_CODE_TO_NAME = {value: key for key, value in MODE_NAME_TO_CODE.items()}
 
+# SH WIDTH code to use when resetting the active receiver after a mode change.
+# Code 00 asks the radio for the mode-specific default on variable-width modes;
+# AM/FM families expose only the fixed codes documented in the CAT table.
+DEFAULT_WIDTH_CODE_BY_MODE = {
+    "LSB": 0,
+    "USB": 0,
+    "CW-U": 0,
+    "CW-L": 0,
+    "RTTY-L": 0,
+    "RTTY-U": 0,
+    "DATA-L": 0,
+    "DATA-U": 0,
+    "PSK": 0,
+    "AM-N": 1,
+    "AM": 2,
+    "FM-N": 2,
+    "DATA-FM-N": 2,
+    "FM": 3,
+    "DATA-FM": 3,
+}
+
 PREAMP_NAME_TO_CODE = {"IPO": "0", "AMP1": "1", "AMP2": "2"}
 PREAMP_CODE_TO_NAME = {value: key for key, value in PREAMP_NAME_TO_CODE.items()}
 
 ATTENUATOR_DB_TO_CODE = {0: "0", 6: "1", 12: "2", 18: "3"}
 ATTENUATOR_CODE_TO_DB = {value: key for key, value in ATTENUATOR_DB_TO_CODE.items()}
+
+RF_SQL_VR_NAME_TO_CODE = {
+    "RF": "0",
+    "SQL": "1",
+    "SQL_FM": "2",
+}
+RF_SQL_VR_CODE_TO_NAME = {value: key for key, value in RF_SQL_VR_NAME_TO_CODE.items()}
+
+AGC_NAME_TO_CODE = {"OFF": "0", "FAST": "1", "MID": "2", "SLOW": "3", "AUTO": "4"}
+# In AUTO mode the FT-710 reports the currently selected automatic speed as
+# codes 4, 5 or 6. The web control intentionally presents all three as AUTO.
+AGC_CODE_TO_NAME = {
+    "0": "OFF",
+    "1": "FAST",
+    "2": "MID",
+    "3": "SLOW",
+    "4": "AUTO",
+    "5": "AUTO",
+    "6": "AUTO",
+}
 
 METER_NAME_TO_CODE = {
     "PO": "0",
@@ -104,8 +145,8 @@ def clamp(value: float, low: float, high: float) -> float:
 class YaesuCatClient:
     """Direct FT-710 CAT-2 client.
 
-    This class is the only owner of /dev/ttyFT710_AUX. WSJT-X directly owns
-    /dev/ttyFT710_CAT. All serial transactions are serialized with one lock.
+    This class is the only owner of /dev/ttyFT710_AUX. CAT-1 remains available
+    to rigctld and WSJT-X. All serial transactions are serialized with one lock.
     RTS, DTR and software/hardware flow control are disabled deliberately.
     """
 
@@ -308,6 +349,42 @@ class YaesuCatClient:
 
     def copy_vfo_b_to_a(self) -> None:
         self.set("BA;")
+
+    def read_split(self, timeout: float | None = None) -> bool:
+        match = self.query("ST;", r"ST([01]);", timeout)
+        return match.group(1) == "1"
+
+    def set_split(self, enabled: bool) -> None:
+        self.set("ST1;" if enabled else "ST0;")
+
+    def set_split_mode(self, mode: str) -> dict[str, Any]:
+        """Configure simplex or split routing and return radio readback.
+
+        OFF keeps the currently selected VFO for both RX and TX. A_TO_B and
+        B_TO_A first select the receive VFO, then enable the FT-710 SPLIT
+        function, which uses the opposite VFO register for transmission.
+        """
+        normalized = str(mode).strip().upper()
+        if normalized not in {"OFF", "A_TO_B", "B_TO_A"}:
+            raise SerialCatError(f"Unsupported split mode: {mode}")
+
+        with self._lock:
+            if normalized == "OFF":
+                self._write_locked("ST0;")
+            else:
+                rx_vfo = "A" if normalized == "A_TO_B" else "B"
+                self._write_locked("VS0;" if rx_vfo == "A" else "VS1;")
+                self._write_locked("ST1;")
+
+            # Read back both values while the same CAT transaction lock is held
+            # so the API can update the interface immediately and accurately.
+            split_enabled = self.read_split()
+            active_vfo = self.read_active_vfo()
+
+        return {
+            "split_enabled": split_enabled,
+            "active_vfo": active_vfo,
+        }
 
     # ---- Memory channels -----------------------------------------------------
 
@@ -518,6 +595,47 @@ class YaesuCatClient:
         band = "0" if vfo == active_vfo else "1"
         self.set(f"MD{band}{code};")
 
+    def set_mode_and_reset_filters(
+        self,
+        vfo: str,
+        active_vfo: str,
+        mode_name: str,
+    ) -> dict[str, Any]:
+        """Set a VFO mode and restore neutral RX filtering on the active VFO.
+
+        WIDTH uses the radio's mode-specific default (or the documented fixed
+        AM/FM bandwidth), SHIFT is centred, and manual NOTCH/CONTOUR are off.
+        Their stored frequencies are intentionally preserved for the next time
+        either function is enabled.
+        """
+        normalized_mode = str(mode_name).strip().upper()
+        try:
+            width_code = DEFAULT_WIDTH_CODE_BY_MODE[normalized_mode]
+        except KeyError as exc:
+            raise SerialCatError(f"Unsupported mode: {mode_name}") from exc
+
+        normalized_vfo = str(vfo).strip().upper()
+        normalized_active = str(active_vfo).strip().upper()
+        with self._lock:
+            self.set_mode(normalized_vfo, normalized_active, normalized_mode)
+            if normalized_vfo != normalized_active:
+                return {}
+
+            # Give the FT-710 a moment to load the new mode before applying its
+            # bandwidth code and the remaining neutral DSP settings.
+            time.sleep(0.06)
+            self.set_width_code(width_code)
+            self.set_if_shift(0)
+            self.set_manual_notch(False)
+            self.set_contour(False)
+
+        return {
+            "width_code": width_code,
+            "if_shift_hz": 0,
+            "manual_notch": False,
+            "contour": False,
+        }
+
     # ---- Core controls and status --------------------------------------------
 
     def set_ptt(self, enabled: bool) -> None:
@@ -582,12 +700,72 @@ class YaesuCatClient:
         watts = int(clamp(int(watts), 5, 100))
         self.set(f"PC{watts:03d};")
 
+    def read_rf_sql_vr(self, timeout: float | None = None) -> str:
+        code = self.query("EX030102;", r"EX030102([012]);", timeout).group(1)
+        return RF_SQL_VR_CODE_TO_NAME[code]
+
+    def set_rf_sql_vr(self, value: str) -> None:
+        try:
+            code = RF_SQL_VR_NAME_TO_CODE[value.upper()]
+        except KeyError as exc:
+            raise SerialCatError(f"Unsupported RF/SQL VR setting: {value}") from exc
+        self.set(f"EX030102{code};")
+
+    def set_rf_sql_vr_and_read_level(self, value: str) -> tuple[str, int]:
+        """Switch RF/SQL VR and immediately read the newly active level.
+
+        The normal optional poller reads only one secondary setting per cycle,
+        so waiting for it can leave the shared web slider on the inactive
+        control's cached value for several seconds. Keep the complete sequence
+        under the CAT client's re-entrant lock and return a confirmed snapshot.
+        """
+        requested = value.upper()
+        if requested not in RF_SQL_VR_NAME_TO_CODE:
+            raise SerialCatError(f"Unsupported RF/SQL VR setting: {value}")
+
+        with self._lock:
+            self.set_rf_sql_vr(requested)
+
+            actual = requested
+            for attempt in range(3):
+                actual = self.read_rf_sql_vr()
+                if actual == requested:
+                    break
+                if attempt < 2:
+                    time.sleep(0.05)
+
+            if actual != requested:
+                raise SerialCatError(
+                    f"RF/SQL VR did not switch to {requested}; radio reports {actual}"
+                )
+
+            level = self.read_rf_gain() if actual == "RF" else self.read_squelch_level()
+            return actual, level
+
     def read_rf_gain(self, timeout: float | None = None) -> int:
         return int(self.query("RG0;", r"RG0(\d{3});", timeout).group(1))
 
     def set_rf_gain(self, value: int) -> None:
         value = int(clamp(int(value), 0, 255))
         self.set(f"RG0{value:03d};")
+
+    def read_squelch_level(self, timeout: float | None = None) -> int:
+        return int(self.query("SQ0;", r"SQ0(\d{3});", timeout).group(1))
+
+    def set_squelch_level(self, value: int) -> None:
+        value = int(clamp(int(value), 0, 100))
+        self.set(f"SQ0{value:03d};")
+
+    def read_agc(self, timeout: float | None = None) -> str:
+        code = self.query("GT0;", r"GT0([0-6]);", timeout).group(1)
+        return AGC_CODE_TO_NAME[code]
+
+    def set_agc(self, name: str) -> None:
+        try:
+            code = AGC_NAME_TO_CODE[name.upper()]
+        except KeyError as exc:
+            raise SerialCatError(f"Unsupported AGC setting: {name}") from exc
+        self.set(f"GT0{code};")
 
     def read_tuner_state(self, timeout: float | None = None) -> str:
         match = self.query("AC;", r"AC0([02])([013]);", timeout)
@@ -636,6 +814,82 @@ class YaesuCatClient:
         except (KeyError, ValueError) as exc:
             raise SerialCatError("Attenuator must be 0, 6, 12 or 18 dB") from exc
         self.set(f"RA0{code};")
+
+    # ---- IF / DSP filter controls --------------------------------------------
+
+    def read_width_code(self, timeout: float | None = None) -> int:
+        """Return the FT-710 SH bandwidth code (00-23).
+
+        The actual bandwidth represented by the code depends on the active
+        operating mode, so the API exposes the stable CAT code and lets the
+        frontend render the corresponding Hz value for the current mode.
+        """
+        return int(self.query("SH0;", r"SH00(\d{2});", timeout).group(1))
+
+    def set_width_code(self, code: int) -> int:
+        normalized = int(clamp(int(code), 0, 23))
+        self.set(f"SH00{normalized:02d};")
+        return normalized
+
+    def read_if_shift(self, timeout: float | None = None) -> int:
+        match = self.query("IS0;", r"IS00([+-])(\d{4});", timeout)
+        magnitude = int(match.group(2))
+        return -magnitude if match.group(1) == "-" else magnitude
+
+    def set_if_shift(self, frequency_hz: int) -> int:
+        normalized = int(round(int(frequency_hz) / 20.0) * 20)
+        normalized = int(clamp(normalized, -1200, 1200))
+        sign = "+" if normalized >= 0 else "-"
+        self.set(f"IS00{sign}{abs(normalized):04d};")
+        return normalized
+
+    def read_manual_notch(self, timeout: float | None = None) -> bool:
+        code = self.query("BP00;", r"BP00(00[01]);", timeout).group(1)
+        return code == "001"
+
+    def set_manual_notch(self, enabled: bool) -> bool:
+        value = bool(enabled)
+        self.set(f"BP00{1 if value else 0:03d};")
+        return value
+
+    def read_manual_notch_frequency(self, timeout: float | None = None) -> int:
+        code = int(self.query("BP01;", r"BP01(\d{3});", timeout).group(1))
+        return code * 10
+
+    def set_manual_notch_frequency(self, frequency_hz: int) -> int:
+        normalized = int(round(int(frequency_hz) / 10.0) * 10)
+        normalized = int(clamp(normalized, 10, 3200))
+        self.set(f"BP01{normalized // 10:03d};")
+        return normalized
+
+    def read_contour(self, timeout: float | None = None) -> bool:
+        code = self.query("CO00;", r"CO00(000[01]);", timeout).group(1)
+        return code == "0001"
+
+    def set_contour(self, enabled: bool) -> bool:
+        value = bool(enabled)
+        self.set(f"CO00{1 if value else 0:04d};")
+        return value
+
+    def read_contour_frequency(self, timeout: float | None = None) -> int:
+        return int(self.query("CO01;", r"CO01(\d{4});", timeout).group(1))
+
+    def set_contour_frequency(self, frequency_hz: int) -> int:
+        normalized = int(clamp(int(frequency_hz), 10, 3200))
+        self.set(f"CO01{normalized:04d};")
+        return normalized
+
+    def read_filter_state(self, timeout: float | None = None) -> dict[str, Any]:
+        """Read all controls shown in the web Filter panel atomically."""
+        with self._lock:
+            return {
+                "width_code": self.read_width_code(timeout),
+                "if_shift_hz": self.read_if_shift(timeout),
+                "manual_notch": self.read_manual_notch(timeout),
+                "manual_notch_hz": self.read_manual_notch_frequency(timeout),
+                "contour": self.read_contour(timeout),
+                "contour_hz": self.read_contour_frequency(timeout),
+            }
 
     # ---- DSP noise controls ---------------------------------------------------
 

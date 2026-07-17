@@ -91,6 +91,7 @@
           <div>
             <span class="vfo-name">VFO A</span>
             <span id="vfo-a-mode" class="muted">--</span>
+            <span id="vfo-a-role" class="muted">--</span>
           </div>
           <input id="vfo-a-mhz" type="number" min="0.03" max="75" step="0.000001" inputmode="decimal" aria-label="VFO A frequency in MHz">
           <button id="select-vfo-a" class="vfo-select">Use A</button>
@@ -99,9 +100,20 @@
           <div>
             <span class="vfo-name">VFO B</span>
             <span id="vfo-b-mode" class="muted">--</span>
+            <span id="vfo-b-role" class="muted">--</span>
           </div>
           <input id="vfo-b-mhz" type="number" min="0.03" max="75" step="0.000001" inputmode="decimal" aria-label="VFO B frequency in MHz">
           <button id="select-vfo-b" class="vfo-select">Use B</button>
+        </div>
+        <label class="control-label" for="vfo-split-mode">RX / TX routing</label>
+        <div class="inline-control">
+          <select id="vfo-split-mode">
+            <option value="" selected disabled>Waiting for radio…</option>
+            <option value="OFF">Simplex · RX/TX same VFO</option>
+            <option value="A_TO_B">Split · RX A → TX B</option>
+            <option value="B_TO_A">Split · RX B → TX A</option>
+          </select>
+          <span id="vfo-split-status" class="help">Waiting for radio state…</span>
         </div>
         <div class="three-buttons">
           <button id="copy-a-b">A → B</button>
@@ -229,8 +241,59 @@
           </select>
         </div>
 
-        <label class="control-label" for="rf-gain">RF gain: <strong id="rf-gain-value">--</strong></label>
-        <input id="rf-gain" type="range" min="0" max="255" step="1" value="255">
+        <label class="control-label" for="rf-sql-vr">RF/SQL knob function</label>
+        <div class="inline-control">
+          <select id="rf-sql-vr">
+            <option value="" selected disabled>Waiting for radio…</option>
+            <option value="RF">RF Gain</option>
+            <option value="SQL">Squelch</option>
+            <option value="SQL_FM">Squelch (FM only)</option>
+          </select>
+        </div>
+
+        <label class="control-label" for="rf-sql-level">
+          <span id="rf-sql-level-label">RF gain</span>:
+          <strong id="rf-sql-level-value">--</strong>
+          <span id="squelch-status-wrap" hidden> · <span id="squelch-status">--</span></span>
+        </label>
+        <input id="rf-sql-level" type="range" min="0" max="255" step="1" value="255" disabled>
+
+        <label class="control-label" for="agc">AGC</label>
+        <div class="inline-control">
+          <select id="agc">
+            <option value="" selected disabled>Waiting for radio…</option>
+            <option value="OFF">OFF</option>
+            <option value="FAST">FAST</option>
+            <option value="MID">MID</option>
+            <option value="SLOW">SLOW</option>
+            <option value="AUTO">AUTO</option>
+          </select>
+        </div>
+      </article>
+
+      <article class="card panel-card" data-panel-id="filter">
+        <h2>Filter</h2>
+        <p class="help">Controls the active RX VFO. Changing mode restores default WIDTH, centred SHIFT, and disables NOTCH/CONTOUR.</p>
+
+        <label class="control-label" for="filter-width">WIDTH: <strong id="filter-width-value">--</strong></label>
+        <input id="filter-width" type="range" min="0" max="23" step="1" value="0" disabled>
+
+        <label class="control-label" for="filter-shift">SHIFT: <strong id="filter-shift-value">--</strong></label>
+        <input id="filter-shift" type="range" min="-1200" max="1200" step="20" value="0" disabled>
+
+        <div class="switch-row separated">
+          <label class="switch-label" for="manual-notch-enabled">Manual NOTCH</label>
+          <input id="manual-notch-enabled" type="checkbox" disabled>
+        </div>
+        <label class="control-label" for="manual-notch-frequency">NOTCH frequency: <strong id="manual-notch-frequency-value">--</strong></label>
+        <input id="manual-notch-frequency" type="range" min="10" max="3200" step="10" value="1000" disabled>
+
+        <div class="switch-row separated">
+          <label class="switch-label" for="contour-enabled">CONTOUR</label>
+          <input id="contour-enabled" type="checkbox" disabled>
+        </div>
+        <label class="control-label" for="contour-frequency">CONTOUR frequency: <strong id="contour-frequency-value">--</strong></label>
+        <input id="contour-frequency" type="range" min="10" max="3200" step="1" value="1500" disabled>
       </article>
 
       <article class="card panel-card" data-panel-id="noise-reduction">
@@ -435,7 +498,7 @@
         <h2>Radio status</h2>
         <dl class="status-list">
           <div><dt>Radio power</dt><dd id="status-radio-power">--</dd></div>
-          <div><dt>FT8 / noVNC</dt><dd id="status-ft8">OFF</dd></div>
+          <div><dt>FT8 / Xpra</dt><dd id="status-ft8">OFF</dd></div>
           <div><dt>CAT-2 port</dt><dd id="cat2-device">--</dd></div>
           <div><dt>Active VFO</dt><dd id="status-active-vfo">--</dd></div>
           <div><dt>RX / TX</dt><dd id="tx-state">--</dd></div>
@@ -465,6 +528,6 @@
   <script src="config.js?v=1.12.3"></script>
   <script src="cw.js?v=1.12.3"></script>
   <script src="sstv.js?v=1.13.0"></script>
-  <script src="app.js?v=1.13.0"></script>
+  <script src="app.js?v=1.18.1"></script>
 </body>
 </html>

@@ -6,6 +6,14 @@ const MODES = [
   "LSB", "USB", "CW-U", "FM", "AM", "RTTY-L", "CW-L", "DATA-L",
   "RTTY-U", "DATA-FM", "FM-N", "DATA-U", "AM-N", "PSK", "DATA-FM-N"
 ];
+const WIDTH_SSB_HZ = [
+  null, 300, 400, 600, 850, 1100, 1200, 1500, 1650, 1800, 1950, 2100,
+  2250, 2400, 2450, 2500, 2600, 2700, 2800, 2900, 3000, 3200, 3500, 4000,
+];
+const WIDTH_CW_DATA_HZ = [
+  null, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 600, 800,
+  1200, 1400, 1700, 2000, 2400, 3000, 3200, 3500, 4000,
+];
 const PENDING_TTL_MS = 10_000;
 
 const FT710_AUDIO_WORKLET_SOURCE = "\"use strict\";\n\nclass FT710CaptureProcessor extends AudioWorkletProcessor {\n  constructor(options) {\n    super();\n    const requestedMs = Number(options?.processorOptions?.frameMs ?? 20);\n    const frameMs = Math.max(10, Math.min(60, requestedMs));\n    this.frameSamples = Math.max(128, Math.round(sampleRate * frameMs / 1000));\n    this.frame = new Int16Array(this.frameSamples);\n    this.offset = 0;\n    this.enabled = false;\n    this.port.onmessage = (event) => {\n      if (event.data?.type !== \"capture\") return;\n      this.enabled = Boolean(event.data.enabled);\n      this.frame = new Int16Array(this.frameSamples);\n      this.offset = 0;\n    };\n  }\n\n  process(inputs) {\n    if (!this.enabled) return true;\n    const input = inputs[0];\n    if (!input || input.length === 0 || !input[0]) return true;\n    const channel = input[0];\n\n    for (let index = 0; index < channel.length; index += 1) {\n      const sample = Math.max(-1, Math.min(1, channel[index]));\n      this.frame[this.offset] = sample < 0 ? Math.round(sample * 32768) : Math.round(sample * 32767);\n      this.offset += 1;\n      if (this.offset >= this.frame.length) {\n        const completed = this.frame;\n        this.port.postMessage(completed.buffer, [completed.buffer]);\n        this.frame = new Int16Array(this.frameSamples);\n        this.offset = 0;\n      }\n    }\n    return true;\n  }\n}\n\nclass FT710PlaybackProcessor extends AudioWorkletProcessor {\n  constructor(options) {\n    super();\n    const opts = options?.processorOptions || {};\n    const targetMs = Math.max(100, Math.min(350, Number(opts.targetBufferMs ?? 300)));\n    const startMs = Math.max(80, Math.min(targetMs, Number(opts.startBufferMs ?? 280)));\n    const maximumMs = Math.max(targetMs + 100, Math.min(1500, Number(opts.maximumBufferMs ?? 1000)));\n\n    this.capacity = Math.max(4096, Math.round(sampleRate * 2.0));\n    this.ring = new Float32Array(this.capacity);\n    this.totalWritten = 0;\n    this.readPosition = 0;\n    this.started = false;\n    this.lastSample = 0;\n    this.targetSamples = sampleRate * targetMs / 1000;\n    this.startSamples = sampleRate * startMs / 1000;\n    this.maximumSamples = sampleRate * maximumMs / 1000;\n    this.minimumSamples = sampleRate * 0.045;\n    this.underruns = 0;\n    this.overruns = 0;\n    this.reportCounter = 0;\n    this.playbackRate = 1;\n\n    this.port.onmessage = (event) => {\n      if (!(event.data instanceof ArrayBuffer)) return;\n      const samples = new Int16Array(event.data);\n      if (samples.length === 0) return;\n\n      for (let index = 0; index < samples.length; index += 1) {\n        this.ring[this.totalWritten % this.capacity] = samples[index] / 32768;\n        this.totalWritten += 1;\n      }\n\n      let buffered = this.totalWritten - this.readPosition;\n      if (buffered > this.maximumSamples || buffered > this.capacity - 256) {\n        // A stalled tab/network must not leave seconds of stale receive audio.\n        // Jump back to the target delay and restart with a clean short buffer.\n        this.readPosition = Math.max(0, this.totalWritten - this.targetSamples);\n        this.started = true;\n        this.overruns += 1;\n      }\n    };\n  }\n\n  sampleAt(position) {\n    if (position < 0 || position >= this.totalWritten) return 0;\n    return this.ring[Math.floor(position) % this.capacity];\n  }\n\n  fillSilence(channel) {\n    channel.fill(0);\n    for (let index = 1; index < channel.length; index += 1) channel[index] = 0;\n  }\n\n  process(_inputs, outputs) {\n    const output = outputs[0];\n    if (!output || output.length === 0) return true;\n    const channel = output[0];\n    let buffered = this.totalWritten - this.readPosition;\n\n    if (!this.started) {\n      if (buffered < this.startSamples) {\n        channel.fill(0);\n        for (let outputIndex = 1; outputIndex < output.length; outputIndex += 1) {\n          output[outputIndex].fill(0);\n        }\n        this.report(output[0].length);\n        return true;\n      }\n      this.started = true;\n      this.lastSample = 0;\n    }\n\n    // Correct clock drift gently. High buffer -> consume a little faster;\n    // low buffer -> consume a little slower. The correction is inaudible but\n    // prevents periodic drop-outs between the radio USB clock and Mac clock.\n    buffered = this.totalWritten - this.readPosition;\n    const normalizedError = (buffered - this.targetSamples) / Math.max(1, this.targetSamples);\n    const correction = Math.max(-0.012, Math.min(0.012, normalizedError * 0.018));\n    this.playbackRate = 1 + correction;\n\n    let produced = 0;\n    for (; produced < channel.length; produced += 1) {\n      if (this.readPosition + 1 >= this.totalWritten) break;\n      const base = Math.floor(this.readPosition);\n      const fraction = this.readPosition - base;\n      const first = this.sampleAt(base);\n      const second = this.sampleAt(base + 1);\n      const value = first + (second - first) * fraction;\n      channel[produced] = value;\n      this.lastSample = value;\n      this.readPosition += this.playbackRate;\n    }\n\n    if (produced < channel.length) {\n      // Smoothly fade the last render quantum rather than producing a click.\n      const remaining = channel.length - produced;\n      for (let index = 0; index < remaining; index += 1) {\n        channel[produced + index] = this.lastSample * (1 - (index + 1) / remaining);\n      }\n      this.readPosition = this.totalWritten;\n      this.started = false;\n      this.underruns += 1;\n    } else if ((this.totalWritten - this.readPosition) < this.minimumSamples) {\n      // Slow down before a true underrun; do not force a rebuffer yet.\n      this.playbackRate = Math.min(this.playbackRate, 0.988);\n    }\n\n    for (let outputIndex = 1; outputIndex < output.length; outputIndex += 1) {\n      output[outputIndex].set(channel);\n    }\n    this.report(channel.length);\n    return true;\n  }\n\n  report(renderedSamples) {\n    this.reportCounter += renderedSamples;\n    if (this.reportCounter < sampleRate) return;\n    this.reportCounter -= sampleRate;\n    const bufferedMs = Math.max(0, (this.totalWritten - this.readPosition) * 1000 / sampleRate);\n    this.port.postMessage({\n      type: \"rx-stats\",\n      bufferedMs: Math.round(bufferedMs),\n      underruns: this.underruns,\n      overruns: this.overruns,\n      playbackRate: Number(this.playbackRate.toFixed(5)),\n    });\n  }\n}\n\nregisterProcessor(\"ft710-capture\", FT710CaptureProcessor);\nregisterProcessor(\"ft710-playback\", FT710PlaybackProcessor);\n";
@@ -25,6 +33,8 @@ const stationBusy = { radio: false, ft8: false };
 let ft8StatusTimer = null;
 let clickTuneSending = false;
 let clickTuneHover = null;
+let rfSqlModeSwitching = false;
+let vfoSplitSwitching = false;
 
 const CLICK_TUNING_DEFAULTS = Object.freeze({
   nativeWidth: 800,
@@ -249,6 +259,39 @@ function formatFrequency(hz) {
   return String(Math.round(Number(hz))).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 }
 
+function formatSignedHz(value) {
+  if (value == null || value === "") return "--";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "--";
+  const rounded = Math.round(numeric);
+  return `${rounded > 0 ? "+" : ""}${rounded} Hz`;
+}
+
+function formatWidthCode(value, mode) {
+  if (value == null || value === "") return "--";
+  const code = Number(value);
+  if (!Number.isFinite(code)) return "--";
+  const normalizedCode = Math.max(0, Math.min(23, Math.round(code)));
+  const normalizedMode = String(mode ?? "").trim().toUpperCase();
+
+  if (normalizedCode === 0) return "Default";
+
+  let bandwidthHz = null;
+  if (normalizedMode === "LSB" || normalizedMode === "USB") {
+    bandwidthHz = WIDTH_SSB_HZ[normalizedCode] ?? null;
+  } else if (["CW-U", "CW-L", "RTTY-L", "RTTY-U", "DATA-L", "DATA-U", "PSK"].includes(normalizedMode)) {
+    bandwidthHz = WIDTH_CW_DATA_HZ[normalizedCode] ?? null;
+  } else if (normalizedMode === "AM-N" && normalizedCode === 1) {
+    bandwidthHz = 6000;
+  } else if (["AM", "FM-N", "DATA-FM-N"].includes(normalizedMode) && normalizedCode === 2) {
+    bandwidthHz = 9000;
+  } else if (["FM", "DATA-FM"].includes(normalizedMode) && normalizedCode === 3) {
+    bandwidthHz = 16000;
+  }
+
+  return bandwidthHz == null ? "--" : `${bandwidthHz} Hz`;
+}
+
 function setInputValue(id, value, formatter = (x) => x) {
   const element = byId(id);
   if (value == null || document.activeElement === element) return;
@@ -382,6 +425,167 @@ function initStationControls() {
   });
 }
 
+function renderRfSqlControl(state) {
+  const mode = effectiveValue("rf_sql_vr", state.rf_sql_vr);
+  setSelectValue("rf-sql-vr", mode);
+
+  const range = byId("rf-sql-level");
+  const label = byId("rf-sql-level-label");
+  const output = byId("rf-sql-level-value");
+  const statusWrap = byId("squelch-status-wrap");
+  const isRfGain = mode === "RF";
+  const isSquelch = mode === "SQL" || mode === "SQL_FM";
+
+  range.disabled = rfSqlModeSwitching || (!isRfGain && !isSquelch);
+  range.min = "0";
+  range.max = isRfGain ? "255" : "100";
+  label.textContent = isRfGain
+    ? "RF gain"
+    : (mode === "SQL_FM" ? "Squelch (FM only)" : "Squelch");
+  statusWrap.hidden = !isSquelch;
+
+  const value = isRfGain
+    ? effectiveValue("rf_gain", state.rf_gain)
+    : (isSquelch ? effectiveValue("squelch_level", state.squelch_level) : null);
+
+  if (rfSqlModeSwitching) {
+    output.textContent = "sync…";
+  } else {
+    if (value != null && document.activeElement !== range) range.value = value;
+    output.textContent = value ?? "--";
+  }
+  byId("squelch-status").textContent = state.squelch_open == null
+    ? "--"
+    : (state.squelch_open ? "OPEN" : "CLOSED");
+}
+
+function renderFilterControls(state) {
+  const radioOn = state.radio_power === "ON";
+  const mode = effectiveValue("mode", state.mode);
+
+  const widthCode = effectiveValue("width_code", state.width_code);
+  const width = byId("filter-width");
+  if (widthCode != null && document.activeElement !== width) width.value = widthCode;
+  width.disabled = !radioOn || widthCode == null;
+  byId("filter-width-value").textContent = formatWidthCode(widthCode, mode);
+
+  const shiftHz = effectiveValue("if_shift_hz", state.if_shift_hz);
+  const shift = byId("filter-shift");
+  if (shiftHz != null && document.activeElement !== shift) shift.value = shiftHz;
+  shift.disabled = !radioOn || shiftHz == null;
+  byId("filter-shift-value").textContent = formatSignedHz(shiftHz);
+
+  const manualNotch = effectiveValue("manual_notch", state.manual_notch);
+  const manualNotchToggle = byId("manual-notch-enabled");
+  if (manualNotch != null && document.activeElement !== manualNotchToggle) {
+    manualNotchToggle.checked = Boolean(manualNotch);
+  }
+  manualNotchToggle.disabled = !radioOn || manualNotch == null;
+
+  const manualNotchHz = effectiveValue("manual_notch_hz", state.manual_notch_hz);
+  const manualNotchFrequency = byId("manual-notch-frequency");
+  if (manualNotchHz != null && document.activeElement !== manualNotchFrequency) {
+    manualNotchFrequency.value = manualNotchHz;
+  }
+  manualNotchFrequency.disabled = !radioOn || manualNotchHz == null;
+  byId("manual-notch-frequency-value").textContent = manualNotchHz == null
+    ? "--"
+    : `${manualNotchHz} Hz`;
+
+  const contour = effectiveValue("contour", state.contour);
+  const contourToggle = byId("contour-enabled");
+  if (contour != null && document.activeElement !== contourToggle) {
+    contourToggle.checked = Boolean(contour);
+  }
+  contourToggle.disabled = !radioOn || contour == null;
+
+  const contourHz = effectiveValue("contour_hz", state.contour_hz);
+  const contourFrequency = byId("contour-frequency");
+  if (contourHz != null && document.activeElement !== contourFrequency) {
+    contourFrequency.value = contourHz;
+  }
+  contourFrequency.disabled = !radioOn || contourHz == null;
+  byId("contour-frequency-value").textContent = contourHz == null
+    ? "--"
+    : `${contourHz} Hz`;
+}
+
+function splitModeFromState(state, activeVfo = null) {
+  const active = activeVfo || effectiveValue("active_vfo", state?.active_vfo);
+  const enabled = effectiveValue("split_enabled", state?.split_enabled);
+  if (!active || enabled == null) return "";
+  if (!enabled) return "OFF";
+  return active === "A" ? "A_TO_B" : "B_TO_A";
+}
+
+function renderVfoRouting(state, activeVfo) {
+  const splitEnabled = effectiveValue("split_enabled", state.split_enabled);
+  const rxVfo = effectiveValue("rx_vfo", state.rx_vfo) || activeVfo;
+  const fallbackTx = splitEnabled && activeVfo
+    ? (activeVfo === "A" ? "B" : "A")
+    : activeVfo;
+  const txVfo = effectiveValue("tx_vfo", state.tx_vfo) || fallbackTx;
+  const splitMode = splitModeFromState(state, activeVfo);
+  const select = byId("vfo-split-mode");
+  const status = byId("vfo-split-status");
+
+  if (!vfoSplitSwitching) setSelectValue("vfo-split-mode", splitMode);
+  select.disabled = vfoSplitSwitching || splitEnabled == null || !activeVfo;
+
+  if (vfoSplitSwitching) {
+    status.textContent = "Synchronizing RX/TX routing…";
+  } else if (splitEnabled == null || !rxVfo || !txVfo) {
+    status.textContent = "Waiting for radio state…";
+  } else if (splitEnabled) {
+    status.textContent = `SPLIT ON · RX VFO ${rxVfo} · TX VFO ${txVfo}`;
+  } else {
+    status.textContent = `SPLIT OFF · RX/TX VFO ${rxVfo}`;
+  }
+
+  for (const vfo of ["A", "B"]) {
+    const roles = [];
+    if (vfo === rxVfo) roles.push("RX");
+    if (vfo === txVfo) roles.push("TX");
+    byId(`vfo-${vfo.toLowerCase()}-role`).textContent = roles.length ? `· ${roles.join(" / ")}` : "";
+    const button = byId(`select-vfo-${vfo.toLowerCase()}`);
+    button.textContent = splitEnabled ? `RX on ${vfo}` : `Use ${vfo}`;
+    if (vfoSplitSwitching) button.disabled = true;
+  }
+}
+
+async function applyVfoSplitMode(mode, { button = null, successMessage = null } = {}) {
+  if (vfoSplitSwitching) return null;
+  const select = byId("vfo-split-mode");
+  vfoSplitSwitching = true;
+  if (select) {
+    select.value = mode;
+    select.disabled = true;
+  }
+  if (button) button.disabled = true;
+  if (lastState) renderState(lastState);
+
+  try {
+    const result = await post("/api/v1/radio/vfo/split", { mode });
+    if (result?.state) updateState(result.state);
+    if (successMessage) showToast(successMessage);
+    return result;
+  } catch (error) {
+    showToast(error.message, true);
+    throw error;
+  } finally {
+    vfoSplitSwitching = false;
+    if (select) {
+      select.disabled = false;
+      select.blur();
+    }
+    for (const vfo of ["A", "B"]) {
+      byId(`select-vfo-${vfo.toLowerCase()}`).disabled = false;
+    }
+    if (button) button.disabled = false;
+    if (lastState) renderState(lastState);
+  }
+}
+
 function renderState(state) {
   setConnected(Boolean(state.connected), state.last_error, state.radio_power);
   updateMemoryControls();
@@ -391,6 +595,7 @@ function renderState(state) {
   byId("status-active-vfo").textContent = activeVfo || "--";
   document.querySelector('[data-vfo="A"]').classList.toggle("active", activeVfo === "A");
   document.querySelector('[data-vfo="B"]').classList.toggle("active", activeVfo === "B");
+  renderVfoRouting(state, activeVfo);
 
   const frequencyHz = effectiveValue("frequency_hz", state.frequency_hz);
   byId("frequency-readout").textContent = formatFrequency(frequencyHz);
@@ -406,14 +611,14 @@ function renderState(state) {
   setSelectValue("mode", effectiveValue("mode", state.mode));
   setSelectValue("preamp", effectiveValue("preamp", state.preamp));
   if (state.attenuator_db != null) setSelectValue("attenuator", effectiveValue("attenuator_db", state.attenuator_db));
+  setSelectValue("agc", effectiveValue("agc", state.agc));
   setSelectValue("meter-display", effectiveValue("meter_display", state.meter_display));
   setSelectValue("scope-mode", publicScopeMode(effectiveValue("scope_mode", state.scope_mode)));
   setSelectValue("scope-speed", effectiveValue("scope_speed", state.scope_speed));
   setSelectValue("scope-span", effectiveValue("scope_span", state.scope_span));
 
-  const rfGain = effectiveValue("rf_gain", state.rf_gain);
-  if (rfGain != null && document.activeElement !== byId("rf-gain")) byId("rf-gain").value = rfGain;
-  byId("rf-gain-value").textContent = rfGain ?? "--";
+  renderRfSqlControl(state);
+  renderFilterControls(state);
 
   const txPower = effectiveValue("tx_power_w", state.tx_power_w);
   if (txPower != null && document.activeElement !== byId("tx-power")) byId("tx-power").value = txPower;
@@ -800,13 +1005,16 @@ function bindAutomaticSelect(id, buildSetting) {
   });
 }
 
-function bindAutomaticRange(inputId, outputId, suffix, buildSetting) {
+function bindAutomaticRange(inputId, outputId, suffixOrFormatter, buildSetting) {
   const input = byId(inputId);
   const queueKey = `range-${inputId}`;
+  const formatter = typeof suffixOrFormatter === "function"
+    ? suffixOrFormatter
+    : (value) => `${value}${suffixOrFormatter}`;
 
   const schedule = (delay) => {
     const value = Number(input.value);
-    byId(outputId).textContent = `${value}${suffix}`;
+    byId(outputId).textContent = formatter(value);
     queueAutomaticSetting({ queueKey, ...buildSetting(value), delay });
   };
 
@@ -904,6 +1112,17 @@ function bindControls() {
 
   for (const vfo of ["A", "B"]) {
     byId(`select-vfo-${vfo.toLowerCase()}`).addEventListener("click", async (event) => {
+      const splitEnabled = Boolean(lastState?.split_enabled);
+      if (splitEnabled) {
+        const mode = vfo === "A" ? "A_TO_B" : "B_TO_A";
+        const other = vfo === "A" ? "B" : "A";
+        await applyVfoSplitMode(mode, {
+          button: event.currentTarget,
+          successMessage: `Split enabled: RX VFO ${vfo}, TX VFO ${other}`,
+        }).catch(() => {});
+        return;
+      }
+
       await submitSetting({
         key: "active_vfo", value: vfo,
         path: "/api/v1/radio/vfo/select", payload: { vfo },
@@ -911,6 +1130,17 @@ function bindControls() {
       }).catch(() => {});
     });
   }
+
+  byId("vfo-split-mode").addEventListener("change", async (event) => {
+    const mode = event.currentTarget.value;
+    if (!mode) return;
+    const messages = {
+      OFF: "Split disabled",
+      A_TO_B: "Split enabled: RX VFO A, TX VFO B",
+      B_TO_A: "Split enabled: RX VFO B, TX VFO A",
+    };
+    await applyVfoSplitMode(mode, { successMessage: messages[mode] }).catch(() => {});
+  });
 
   for (const [id, action, message] of [
     ["copy-a-b", "copy_a_to_b", "VFO A copied to VFO B"],
@@ -937,10 +1167,86 @@ function bindControls() {
       path: "/api/v1/radio/attenuator", payload: { db },
     };
   });
-
-  bindAutomaticRange("rf-gain", "rf-gain-value", "", (value) => ({
-    key: "rf_gain", value, path: "/api/v1/radio/rf-gain", payload: { value },
+  bindAutomaticSelect("agc", (value) => ({
+    queueKey: "select-agc", key: "agc", value,
+    path: "/api/v1/radio/agc", payload: { value },
   }));
+
+  byId("rf-sql-vr").addEventListener("change", async (event) => {
+    const select = event.currentTarget;
+    const value = select.value;
+    if (!value || rfSqlModeSwitching) return;
+
+    rfSqlModeSwitching = true;
+    select.disabled = true;
+    try {
+      await submitSetting({
+        key: "rf_sql_vr",
+        value,
+        path: "/api/v1/radio/rf-sql-vr",
+        payload: { value },
+      });
+    } catch (_) {
+      // submitSetting already restores pending state and reports the error.
+    } finally {
+      rfSqlModeSwitching = false;
+      select.disabled = false;
+      if (lastState) renderState(lastState);
+    }
+  });
+  bindAutomaticRange("rf-sql-level", "rf-sql-level-value", "", (value) => {
+    const mode = byId("rf-sql-vr").value;
+    if (mode === "RF") {
+      return {
+        queueKey: "range-rf-gain", key: "rf_gain", value,
+        path: "/api/v1/radio/rf-gain", payload: { value },
+      };
+    }
+    return {
+      queueKey: "range-squelch", key: "squelch_level", value,
+      path: "/api/v1/radio/squelch", payload: { value },
+    };
+  });
+  bindAutomaticRange(
+    "filter-width",
+    "filter-width-value",
+    (code) => formatWidthCode(code, effectiveValue("mode", lastState?.mode)),
+    (widthCode) => ({
+      key: "width_code", value: widthCode,
+      path: "/api/v1/radio/filter", payload: { width_code: widthCode },
+    }),
+  );
+  bindAutomaticRange("filter-shift", "filter-shift-value", formatSignedHz, (shiftHz) => ({
+    key: "if_shift_hz", value: shiftHz,
+    path: "/api/v1/radio/filter", payload: { shift_hz: shiftHz },
+  }));
+  bindAutomaticRange(
+    "manual-notch-frequency",
+    "manual-notch-frequency-value",
+    (frequencyHz) => `${frequencyHz} Hz`,
+    (frequencyHz) => ({
+      key: "manual_notch_hz", value: frequencyHz,
+      path: "/api/v1/radio/filter", payload: { manual_notch_hz: frequencyHz },
+    }),
+  );
+  bindAutomaticRange(
+    "contour-frequency",
+    "contour-frequency-value",
+    (frequencyHz) => `${frequencyHz} Hz`,
+    (frequencyHz) => ({
+      key: "contour_hz", value: frequencyHz,
+      path: "/api/v1/radio/filter", payload: { contour_hz: frequencyHz },
+    }),
+  );
+  bindAutomaticCheckbox("manual-notch-enabled", (enabled) => ({
+    key: "manual_notch", value: enabled,
+    path: "/api/v1/radio/filter", payload: { manual_notch_enabled: enabled },
+  }));
+  bindAutomaticCheckbox("contour-enabled", (enabled) => ({
+    key: "contour", value: enabled,
+    path: "/api/v1/radio/filter", payload: { contour_enabled: enabled },
+  }));
+
   bindAutomaticRange("tx-power", "tx-power-value", " W", (watts) => ({
     key: "tx_power_w", value: watts, path: "/api/v1/radio/tx-power", payload: { watts },
   }));

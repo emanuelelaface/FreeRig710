@@ -29,6 +29,9 @@ class StateStore:
             "radio_id": None,
             "radio_power": None,
             "active_vfo": None,
+            "split_enabled": None,
+            "rx_vfo": None,
+            "tx_vfo": None,
             "frequency_hz": None,
             "vfo_a_hz": None,
             "vfo_b_hz": None,
@@ -37,12 +40,22 @@ class StateStore:
             "vfo_b_mode": None,
             "tx_state": None,
             "hi_swr": None,
+            "squelch_open": None,
             "tuner": None,
             "tuner_busy": None,
             "tx_power_w": None,
+            "rf_sql_vr": None,
             "rf_gain": None,
+            "squelch_level": None,
+            "agc": None,
             "preamp": None,
             "attenuator_db": None,
+            "width_code": None,
+            "if_shift_hz": None,
+            "manual_notch": None,
+            "manual_notch_hz": None,
+            "contour": None,
+            "contour_hz": None,
             "dnr": None,
             "dnr_level": None,
             "noise_blanker": None,
@@ -81,6 +94,10 @@ class RadioPoller:
         self.store = store
         self.poll_interval = max(0.25, float(poll_interval))
         self.settings_poll_interval = max(0.15, float(settings_poll_interval))
+        # Filter controls are read as one coherent group. Poll them more often
+        # than the round-robin secondary settings so physical knob changes do
+        # not take many seconds to appear in the browser.
+        self.filter_poll_interval = max(1.0, self.settings_poll_interval * 3.0)
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -91,7 +108,10 @@ class RadioPoller:
 
         self._optional_readers: tuple[tuple[str, Callable[..., Any]], ...] = (
             ("tx_power_w", self.client.read_tx_power),
+            ("rf_sql_vr", self.client.read_rf_sql_vr),
             ("rf_gain", self.client.read_rf_gain),
+            ("squelch_level", self.client.read_squelch_level),
+            ("agc", self.client.read_agc),
             ("tuner", self.client.read_tuner_state),
             ("preamp", self.client.read_preamp),
             ("attenuator_db", self.client.read_attenuator),
@@ -176,6 +196,9 @@ class RadioPoller:
             "last_error": None,
             "radio_power": "OFF",
             "active_vfo": None,
+            "split_enabled": None,
+            "rx_vfo": None,
+            "tx_vfo": None,
             "frequency_hz": None,
             "vfo_a_hz": None,
             "vfo_b_hz": None,
@@ -184,12 +207,22 @@ class RadioPoller:
             "vfo_b_mode": None,
             "tx_state": "RX",
             "hi_swr": False,
+            "squelch_open": None,
             "tuner": None,
             "tuner_busy": False,
             "tx_power_w": None,
+            "rf_sql_vr": None,
             "rf_gain": None,
+            "squelch_level": None,
+            "agc": None,
             "preamp": None,
             "attenuator_db": None,
+            "width_code": None,
+            "if_shift_hz": None,
+            "manual_notch": None,
+            "manual_notch_hz": None,
+            "contour": None,
+            "contour_hz": None,
             "dnr": None,
             "dnr_level": None,
             "noise_blanker": None,
@@ -217,6 +250,9 @@ class RadioPoller:
             return self.powered_off_values()
 
         active_vfo = self._call(generation, self.client.read_active_vfo)
+        split_enabled = self._call(generation, self.client.read_split)
+        rx_vfo = active_vfo
+        tx_vfo = ({"A": "B", "B": "A"}[active_vfo] if split_enabled else active_vfo)
         vfo_a_hz = self._call(generation, self.client.read_frequency, "A")
         vfo_b_hz = self._call(generation, self.client.read_frequency, "B")
         vfo_a_mode, vfo_b_mode = self._call(
@@ -230,6 +266,9 @@ class RadioPoller:
             "last_error": None,
             "radio_power": "ON",
             "active_vfo": active_vfo,
+            "split_enabled": split_enabled,
+            "rx_vfo": rx_vfo,
+            "tx_vfo": tx_vfo,
             "vfo_a_hz": vfo_a_hz,
             "vfo_b_hz": vfo_b_hz,
             "frequency_hz": vfo_a_hz if active_vfo == "A" else vfo_b_hz,
@@ -264,6 +303,7 @@ class RadioPoller:
     def _run(self) -> None:
         first_success = True
         next_optional = 0.0
+        next_filter = 0.0
 
         while not self._stop.is_set():
             started = time.monotonic()
@@ -274,6 +314,7 @@ class RadioPoller:
                     self._commit_if_current(generation, values)
                     first_success = True
                     next_optional = 0.0
+                    next_filter = 0.0
                     elapsed = time.monotonic() - started
                     wait_time = max(0.05, self.poll_interval - elapsed)
                     self._wake.wait(wait_time)
@@ -288,6 +329,14 @@ class RadioPoller:
                     # Publish frequency, active VFO and real mode immediately.
                     self._commit_if_current(generation, values)
                     first_success = False
+                    try:
+                        filter_values = self._call(generation, self.client.read_filter_state)
+                        self._commit_if_current(generation, filter_values)
+                    except PollCycleSuperseded:
+                        raise
+                    except (SerialCatError, ValueError, TypeError) as exc:
+                        self._log_optional_error("filter", exc)
+                    next_filter = time.monotonic() + self.filter_poll_interval
                     # Prime every secondary setting, publishing each result as it
                     # arrives so the interface never starts with invented values.
                     for key, reader in self._optional_readers:
@@ -300,7 +349,16 @@ class RadioPoller:
                             self._log_optional_error(key, exc)
                     next_optional = time.monotonic() + self.settings_poll_interval
                 else:
-                    if time.monotonic() >= next_optional:
+                    now = time.monotonic()
+                    if now >= next_filter:
+                        try:
+                            values.update(self._call(generation, self.client.read_filter_state))
+                        except PollCycleSuperseded:
+                            raise
+                        except (SerialCatError, ValueError, TypeError) as exc:
+                            self._log_optional_error("filter", exc)
+                        next_filter = time.monotonic() + self.filter_poll_interval
+                    if now >= next_optional:
                         values.update(self._read_one_optional(generation))
                         next_optional = time.monotonic() + self.settings_poll_interval
                     self._commit_if_current(generation, values)
@@ -314,6 +372,7 @@ class RadioPoller:
                 self.store.update(connected=False, last_error=str(exc))
                 self.client.close()
                 first_success = True
+                next_filter = 0.0
 
             elapsed = time.monotonic() - started
             wait_time = max(0.05, self.poll_interval - elapsed)
