@@ -120,6 +120,18 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
 .toast.error { background: #421d25; border-color: #8f3b48; }
 .toast.visible { opacity: 1; transform: translateY(0); }
 
+/* On phones/tablets, let the sticky radio display use the entire workspace
+   as its containing block. Without this, it stops sticking at the end of
+   .primary-column (immediately after the frequency card). */
+@media (max-width: 959px) {
+  .primary-column { display: contents; }
+
+  .video-card {
+    top: max(6px, env(safe-area-inset-top));
+    z-index: 100;
+  }
+}
+
 @media (max-width: 850px) {
   .topbar { align-items: stretch; flex-direction: column; }
   .connection { max-width: none; text-align: left; }
