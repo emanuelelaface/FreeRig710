@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 
 from fastapi import Body, FastAPI, HTTPException, Request, WebSocket, status
@@ -29,6 +30,7 @@ from .direct_cat import (
 )
 from .ft8 import FT8ManagerError, FT8NoVNCManager
 from .memories import MemoryRepository
+from .qrz import QrzLogbookClient, QrzLogbookError
 from .state import FrequencyJogger, RadioPoller, StateStore
 from .video import VideoRelay
 
@@ -63,6 +65,7 @@ video = VideoRelay(settings)
 audio = AudioBridge(settings)
 ft8 = FT8NoVNCManager(settings)
 memories = MemoryRepository(settings.memories_db)
+qrz_logbook = QrzLogbookClient()
 
 
 @asynccontextmanager
@@ -88,7 +91,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="FT-710 Raspberry API",
-    version="1.18.1",
+    version="1.19.0",
     root_path=settings.root_path,
     lifespan=lifespan,
 )
@@ -214,6 +217,11 @@ class FT8Request(BaseModel):
     enabled: bool
 
 
+class QrzLogRequest(BaseModel):
+    call: str = Field(min_length=3, max_length=16, pattern=r"^[A-Za-z0-9/]+$")
+    mode: Literal["AUTO", "FT8", "FT4", "PSK31", "RTTY", "SSB", "CW", "AM", "FM", "SSTV"] = "AUTO"
+
+
 class CWSendRequest(BaseModel):
     message: str = Field(min_length=1, max_length=50)
     wpm: int = Field(default=25, ge=4, le=60)
@@ -256,6 +264,34 @@ def _snapshot() -> dict:
 def _active_vfo_from_state() -> str:
     value = _snapshot().get("active_vfo")
     return value if value in {"A", "B"} else "A"
+
+
+def _qrz_radio_context(state: dict) -> tuple[int, int | None, str, int | None]:
+    active_vfo = state.get("active_vfo") if state.get("active_vfo") in {"A", "B"} else "A"
+    rx_vfo = state.get("rx_vfo") if state.get("rx_vfo") in {"A", "B"} else active_vfo
+    tx_vfo = state.get("tx_vfo") if state.get("tx_vfo") in {"A", "B"} else active_vfo
+
+    frequencies = {
+        "A": state.get("vfo_a_hz"),
+        "B": state.get("vfo_b_hz"),
+    }
+    modes = {
+        "A": state.get("vfo_a_mode"),
+        "B": state.get("vfo_b_mode"),
+    }
+    tx_frequency = frequencies.get(tx_vfo) or state.get("frequency_hz")
+    rx_frequency = frequencies.get(rx_vfo) or state.get("frequency_hz")
+    tx_mode = modes.get(tx_vfo) or state.get("mode")
+
+    if not isinstance(tx_frequency, int) or not tx_mode:
+        raise QrzLogbookError("Radio frequency or mode is not available yet")
+    if not isinstance(rx_frequency, int):
+        rx_frequency = None
+
+    tx_power = state.get("tx_power_w")
+    if not isinstance(tx_power, int):
+        tx_power = None
+    return tx_frequency, rx_frequency, str(tx_mode), tx_power
 
 
 async def run_cat_call(callable_, *args, stop_jog: bool = True):
@@ -464,7 +500,7 @@ async def root():
     prefix = settings.root_path
     return {
         "service": "FT-710 Raspberry API",
-        "version": "1.18.1",
+        "version": "1.19.0",
         "cat2_device": settings.cat2_device,
         "docs": f"{prefix}/docs",
         "state": f"{prefix}/api/v1/state",
@@ -483,6 +519,8 @@ async def root():
         "cw_stop": f"{prefix}/api/v1/cw/stop",
         "memories": f"{prefix}/api/v1/memories",
         "memories_sync": f"{prefix}/api/v1/memories/sync",
+        "qrz_status": f"{prefix}/api/v1/qrz/status",
+        "qrz_log": f"{prefix}/api/v1/qrz/log",
     }
 
 
@@ -501,6 +539,7 @@ async def health():
         "ft8": ft8.status(),
         "cw": _cw_status(),
         "memories_db": settings.memories_db,
+        "qrz": qrz_logbook.public_status(),
         "last_error": state["last_error"],
     }
 
@@ -548,6 +587,10 @@ async def capabilities():
         "ft8_enabled": settings.ft8_enabled,
         "ft8_url": settings.ft8_url,
         "raw_cat_enabled": settings.allow_raw_cat,
+        "qrz_log": {
+            **qrz_logbook.public_status(),
+            "mode_overrides": ["AUTO", "FT8", "FT4", "PSK31", "RTTY", "SSB", "CW", "AM", "FM", "SSTV"],
+        },
     }
 
 
@@ -563,6 +606,34 @@ def _wait_for_radio_power(expected: str, timeout: float) -> bool:
             pass
         time.sleep(0.35)
     return False
+
+
+@app.get("/api/v1/qrz/status")
+async def qrz_status():
+    return {"ok": True, "qrz": qrz_logbook.public_status()}
+
+
+@app.post("/api/v1/qrz/log")
+async def qrz_log(payload: QrzLogRequest):
+    state = _snapshot()
+    if state.get("radio_power") != "ON":
+        raise HTTPException(status_code=409, detail="The radio must be powered on before logging a QSO")
+    try:
+        tx_frequency, rx_frequency, radio_mode, tx_power = _qrz_radio_context(state)
+        qso = await asyncio.to_thread(
+            qrz_logbook.insert_qso,
+            call=payload.call,
+            timestamp_utc=datetime.now(timezone.utc),
+            frequency_hz=tx_frequency,
+            rx_frequency_hz=rx_frequency,
+            radio_mode=radio_mode,
+            mode_override=payload.mode,
+            tx_power_w=tx_power,
+        )
+    except QrzLogbookError as exc:
+        status_code = 503 if not qrz_logbook.configured else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return {"ok": True, "qso": qso}
 
 
 @app.get("/api/v1/ft8/status")

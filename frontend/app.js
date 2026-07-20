@@ -35,6 +35,8 @@ let clickTuneSending = false;
 let clickTuneHover = null;
 let rfSqlModeSwitching = false;
 let vfoSplitSwitching = false;
+let qrzState = { configured: false, station_callsign: null };
+let qrzLogging = false;
 
 const CLICK_TUNING_DEFAULTS = Object.freeze({
   nativeWidth: 800,
@@ -252,6 +254,143 @@ async function submitSetting({ key, value, path, payload, successMessage = null,
   } finally {
     if (button) button.disabled = false;
   }
+}
+
+
+function qrzBandFromFrequency(frequencyHz) {
+  const hz = Number(frequencyHz);
+  if (!Number.isFinite(hz)) return "--";
+  const bands = [
+    [135700, 137800, "2190m"], [472000, 479000, "630m"],
+    [1800000, 2000000, "160m"], [3500000, 4000000, "80m"],
+    [5060000, 5450000, "60m"], [7000000, 7300000, "40m"],
+    [10100000, 10150000, "30m"], [14000000, 14350000, "20m"],
+    [18068000, 18168000, "17m"], [21000000, 21450000, "15m"],
+    [24890000, 24990000, "12m"], [28000000, 29700000, "10m"],
+    [50000000, 54000000, "6m"], [70000000, 71000000, "4m"],
+  ];
+  return bands.find(([lower, upper]) => hz >= lower && hz <= upper)?.[2] || "OUT OF BAND";
+}
+
+function qrzRadioContext(state = lastState) {
+  if (!state) return { txFrequency: null, rxFrequency: null, radioMode: null, txPower: null };
+  const activeVfo = ["A", "B"].includes(state.active_vfo) ? state.active_vfo : "A";
+  const rxVfo = ["A", "B"].includes(state.rx_vfo) ? state.rx_vfo : activeVfo;
+  const txVfo = ["A", "B"].includes(state.tx_vfo) ? state.tx_vfo : activeVfo;
+  const frequencies = { A: state.vfo_a_hz, B: state.vfo_b_hz };
+  const modes = { A: state.vfo_a_mode, B: state.vfo_b_mode };
+  const txValue = frequencies[txVfo] ?? state.frequency_hz;
+  const rxValue = frequencies[rxVfo] ?? state.frequency_hz;
+  return {
+    txFrequency: txValue == null ? null : Number(txValue),
+    rxFrequency: rxValue == null ? null : Number(rxValue),
+    radioMode: modes[txVfo] || state.mode || null,
+    txPower: state.tx_power_w == null ? null : Number(state.tx_power_w),
+  };
+}
+
+function qrzUtcText() {
+  return new Date().toISOString().slice(0, 19).replace("T", " ");
+}
+
+function setQrzLogStatus(text, state = "") {
+  const element = byId("qrz-log-status");
+  if (!element) return;
+  element.textContent = text;
+  element.className = `qrz-status${state ? ` ${state}` : ""}`;
+}
+
+function updateQrzLogButton() {
+  const button = byId("qrz-log-submit");
+  if (!button) return;
+  const context = qrzRadioContext();
+  const call = byId("qrz-call")?.value.trim();
+  const radioReady = lastState?.radio_power === "ON"
+    && Number.isFinite(context.txFrequency)
+    && Boolean(context.radioMode);
+  button.disabled = qrzLogging || !qrzState.configured || !radioReady || !call;
+}
+
+function renderQrzPreview(state = lastState) {
+  if (!byId("qrz-tx-frequency")) return;
+  const context = qrzRadioContext(state);
+  byId("qrz-station-call").textContent = qrzState.station_callsign || "Not configured";
+  byId("qrz-tx-frequency").textContent = Number.isFinite(context.txFrequency)
+    ? `${formatFrequency(context.txFrequency)} Hz`
+    : "--.---.---";
+  byId("qrz-rx-frequency").textContent = Number.isFinite(context.rxFrequency)
+    ? `${formatFrequency(context.rxFrequency)} Hz`
+    : "--.---.---";
+  byId("qrz-band").textContent = qrzBandFromFrequency(context.txFrequency);
+  byId("qrz-radio-mode").textContent = context.radioMode || "--";
+  byId("qrz-tx-power").textContent = context.txPower == null ? "--" : `${context.txPower} W`;
+  byId("qrz-utc").textContent = `${qrzUtcText()} UTC`;
+  updateQrzLogButton();
+}
+
+async function initQrzLog() {
+  const form = byId("qrz-log-form");
+  if (!form) return;
+  const callInput = byId("qrz-call");
+  const resultElement = byId("qrz-log-result");
+
+  callInput.addEventListener("input", () => {
+    const start = callInput.selectionStart;
+    callInput.value = callInput.value.toUpperCase().replace(/[^A-Z0-9/]/g, "");
+    if (start != null) callInput.setSelectionRange(start, start);
+    updateQrzLogButton();
+  });
+  byId("qrz-log-mode").addEventListener("change", () => renderQrzPreview());
+
+  try {
+    const response = await api("/api/v1/qrz/status");
+    qrzState = response.qrz || qrzState;
+    if (qrzState.configured) {
+      setQrzLogStatus("READY", "ready");
+      resultElement.textContent = "Ready. QSO time is captured when you press LOG QSO TO QRZ.";
+    } else {
+      setQrzLogStatus("NOT CONFIGURED", "error");
+      resultElement.textContent = "Set FT710_QRZ_LOGBOOK_KEY and FT710_QRZ_STATION_CALLSIGN, then restart the API.";
+    }
+  } catch (error) {
+    setQrzLogStatus("ERROR", "error");
+    resultElement.textContent = error.message;
+  }
+  renderQrzPreview();
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (qrzLogging) return;
+    const call = callInput.value.trim().toUpperCase();
+    if (!call) return;
+
+    qrzLogging = true;
+    setQrzLogStatus("LOGGING", "working");
+    resultElement.textContent = `Sending ${call} to QRZ…`;
+    updateQrzLogButton();
+    try {
+      const response = await post("/api/v1/qrz/log", {
+        call,
+        mode: byId("qrz-log-mode").value,
+      });
+      const qso = response.qso || {};
+      const modeText = qso.submode || qso.mode || "--";
+      const logIdText = qso.logid ? ` · Log ID ${qso.logid}` : "";
+      setQrzLogStatus("LOGGED", "ready");
+      resultElement.textContent = `${qso.call} logged on ${qso.band} · ${modeText} · ${formatFrequency(qso.frequency_hz)} Hz${logIdText}`;
+      callInput.value = "";
+      showToast(`${qso.call} logged to QRZ`);
+    } catch (error) {
+      setQrzLogStatus("ERROR", "error");
+      resultElement.textContent = error.message;
+      showToast(error.message, true);
+    } finally {
+      qrzLogging = false;
+      updateQrzLogButton();
+    }
+  });
+
+  window.setInterval(() => renderQrzPreview(), 1000);
 }
 
 function formatFrequency(hz) {
@@ -646,6 +785,7 @@ function renderState(state) {
     byId("jog-speed").textContent = formatJogSpeed(speed);
   }
   renderStationControls();
+  renderQrzPreview(state);
   refreshClickTuneOverlay();
 }
 
@@ -2202,6 +2342,7 @@ connectEvents();
 initClickTuning();
 initVideo();
 initMemories();
+void initQrzLog();
 window.FT710_CW?.init();
 window.FT710_SSTV?.init();
 initAudio();

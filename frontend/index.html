@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Yaesu FT-710 Remote</title>
-  <link rel="stylesheet" href="styles.css?v=1.13.1">
+  <link rel="stylesheet" href="styles.css?v=1.14.0">
 </head>
 <body>
   <main class="shell">
@@ -494,6 +494,49 @@
         <p class="help">TUNE may transmit at low power.</p>
       </article>
 
+
+      <article class="card panel-card qrz-card" data-panel-id="qrz-log">
+        <div class="panel-heading-row">
+          <h2>QRZ Log</h2>
+          <span id="qrz-log-status" class="qrz-status">CHECKING</span>
+        </div>
+        <p class="help">Logs the current TX frequency, RX frequency when split, band, mode, power and UTC time. The QRZ API key remains on the Raspberry.</p>
+
+        <dl class="status-list qrz-preview">
+          <div><dt>My call</dt><dd id="qrz-station-call">Not configured</dd></div>
+          <div><dt>TX frequency</dt><dd id="qrz-tx-frequency">--.---.---</dd></div>
+          <div><dt>RX frequency</dt><dd id="qrz-rx-frequency">--.---.---</dd></div>
+          <div><dt>Band</dt><dd id="qrz-band">--</dd></div>
+          <div><dt>Radio mode</dt><dd id="qrz-radio-mode">--</dd></div>
+          <div><dt>Power</dt><dd id="qrz-tx-power">--</dd></div>
+          <div><dt>UTC</dt><dd id="qrz-utc">--</dd></div>
+        </dl>
+
+        <form id="qrz-log-form" class="qrz-log-form">
+          <label>
+            <span class="control-label">CALL</span>
+            <input id="qrz-call" class="qrz-call-input" type="text" minlength="3" maxlength="16" pattern="[A-Za-z0-9/]+" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="IZ0ABC" required>
+          </label>
+          <label>
+            <span class="control-label">QRZ mode</span>
+            <select id="qrz-log-mode">
+              <option value="AUTO">AUTO · from radio</option>
+              <option value="FT8">FT8</option>
+              <option value="FT4">FT4</option>
+              <option value="PSK31">PSK31</option>
+              <option value="RTTY">RTTY</option>
+              <option value="SSB">SSB</option>
+              <option value="CW">CW</option>
+              <option value="AM">AM</option>
+              <option value="FM">FM</option>
+              <option value="SSTV">SSTV</option>
+            </select>
+          </label>
+          <button id="qrz-log-submit" class="wide" type="submit" disabled>LOG QSO TO QRZ</button>
+        </form>
+        <p id="qrz-log-result" class="help qrz-result" aria-live="polite">Configure the QRZ Logbook key in /etc/ft710-api.env.</p>
+      </article>
+
       <article class="card panel-card" data-panel-id="radio-status">
         <h2>Radio status</h2>
         <dl class="status-list">
@@ -528,6 +571,6 @@
   <script src="config.js?v=1.12.3"></script>
   <script src="cw.js?v=1.12.3"></script>
   <script src="sstv.js?v=1.13.0"></script>
-  <script src="app.js?v=1.18.1"></script>
+  <script src="app.js?v=1.19.0"></script>
 </body>
 </html>
