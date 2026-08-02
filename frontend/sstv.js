@@ -91,7 +91,7 @@
       this.sampleRate = 44100;
       this.decimation = 2;
       this.frequencyRate = this.sampleRate / this.decimation;
-      this.ringSeconds = 4;
+      this.ringSeconds = 8;
       this.resetDemodulator();
       this.resetProtocol(false);
     }
@@ -116,7 +116,7 @@
       const angular = 2 * Math.PI * 1900 / this.sampleRate;
       this.oscillatorStepCos = Math.cos(angular);
       this.oscillatorStepSin = Math.sin(angular);
-      this.lowPassAlpha = 1 - Math.exp(-2 * Math.PI * 1050 / this.sampleRate);
+      this.lowPassAlpha = 1 - Math.exp(-2 * Math.PI * 1400 / this.sampleRate);
       this.frequencyCapacity = Math.max(8192, Math.ceil(this.frequencyRate * this.ringSeconds));
       this.frequencyRing = new Float32Array(this.frequencyCapacity);
       this.magnitudeRing = new Float32Array(this.frequencyCapacity);
@@ -175,10 +175,17 @@
       this.lastSyncStart = -Infinity;
       this.lastQueuedSync = -Infinity;
       this.nextExpectedSync = null;
+      this.syncCandidates = [];
+      this.acquisitionStartedAt = null;
+      this.syntheticSinceReal = 0;
+      this.segmentRows = 0;
+      this.segmentActive = false;
       this.syncRunStart = null;
       this.syncRunFrequencySum = 0;
       this.syncRunValidCount = 0;
       this.syncRunDurationMs = 0;
+      this.syncRunValidMs = 0;
+      this.syncRunGapMs = 0;
       this.pendingLines = [];
       this.robot36Pair = null;
       this.lastStatusAt = 0;
@@ -193,6 +200,7 @@
       this.leader2Sum = 0;
       this.leader2Count = 0;
       this.visBins = [];
+      this.visFrequencyOffset = 0;
       if (clearImage) this.callbacks.clearImage?.();
     }
 
@@ -206,6 +214,11 @@
       this.lastSyncStart = -Infinity;
       this.lastQueuedSync = -Infinity;
       this.nextExpectedSync = null;
+      this.syncCandidates = [];
+      this.acquisitionStartedAt = null;
+      this.syntheticSinceReal = 0;
+      this.segmentRows = 0;
+      this.segmentActive = false;
       this.imageStartIndex = this.frequencyIndex;
       this.callbacks.mode?.({ ...mode, source, offsetHz: Math.round(this.frequencyOffset) });
       this.emitStatus("sync", `${mode.label} · waiting for line sync`);
@@ -268,7 +281,7 @@
       else if (delta < -Math.PI) delta += 2 * Math.PI;
       this.unwrappedPhase += delta;
       const frequency = 1900 + delta * this.sampleRate / (2 * Math.PI * this.decimation);
-      const valid = magnitude >= 0.0012 && Number.isFinite(frequency) && frequency >= 650 && frequency <= 2850;
+      const valid = magnitude >= 0.0012 && Number.isFinite(frequency) && frequency >= 450 && frequency <= 3250;
       this.writeFrequency(valid ? frequency : NaN, magnitude, this.unwrappedPhase);
     }
 
@@ -372,7 +385,7 @@
         }
         if (this.breakMs >= 5 && this.breakMs <= 35 && nearLeader) {
           const leaderAverage = this.leader1Count ? this.leader1Sum / this.leader1Count : 1900;
-          this.frequencyOffset = clamp(leaderAverage - 1900, -250, 250);
+          this.visFrequencyOffset = clamp(leaderAverage - 1900, -700, 700);
           this.visState = "leader2";
           this.leader2Ms = duration;
           this.leader2Sum = frequency;
@@ -393,7 +406,7 @@
         if (nearSync && this.leader2Ms >= 180) {
           const secondAverage = this.leader2Count ? this.leader2Sum / this.leader2Count : 1900;
           const secondOffset = secondAverage - 1900;
-          this.frequencyOffset = clamp((this.frequencyOffset + secondOffset) / 2, -250, 250);
+          this.visFrequencyOffset = clamp((this.visFrequencyOffset + secondOffset) / 2, -700, 700);
           this.visState = "vis";
           this.visBins = [bin];
           this.callbacks.visStage?.({ stage: "code" });
@@ -417,7 +430,7 @@
           for (let index = start; index < end; index += 1) {
             const value = this.visBins[index].frequency;
             if (!Number.isFinite(value)) continue;
-            sum += value - this.frequencyOffset;
+            sum += value - this.visFrequencyOffset;
             count += 1;
           }
           tones.push(count ? sum / count : NaN);
@@ -449,42 +462,103 @@
 
     expectedSyncRange() {
       if (!this.mode) return [0, 0];
-      if (this.mode.family === "martin") return [3.2, 7.2];
-      if (this.mode.family === "pd") return [14.0, 27.0];
-      return [6.2, 12.8];
+      if (this.mode.family === "martin") return [3.0, 7.6];
+      if (this.mode.family === "pd") return [13.5, 28.0];
+      return [5.8, 13.5];
     }
 
-    processSyncBin(frequency, magnitude, durationMs, binStart) {
-      const corrected = frequency - this.frequencyOffset;
-      const isSync = Number.isFinite(corrected) && magnitude >= 0.0012 && Math.abs(corrected - 1200) <= 170;
-      if (isSync) {
-        if (this.syncRunStart == null) {
-          this.syncRunStart = binStart;
-          this.syncRunFrequencySum = Number.isFinite(frequency) ? frequency : 0;
-          this.syncRunValidCount = Number.isFinite(frequency) ? 1 : 0;
-          this.syncRunDurationMs = durationMs;
-        } else {
-          if (Number.isFinite(frequency)) {
-            this.syncRunFrequencySum += frequency;
-            this.syncRunValidCount += 1;
-          }
-          this.syncRunDurationMs += durationMs;
-        }
-        return;
-      }
-      if (this.syncRunStart == null) return;
-      const runStart = this.syncRunStart;
-      const runDurationMs = this.syncRunDurationMs;
-      const averageFrequency = this.syncRunValidCount
-        ? this.syncRunFrequencySum / this.syncRunValidCount
-        : 1200 + this.frequencyOffset;
+    resetSyncRun() {
       this.syncRunStart = null;
       this.syncRunFrequencySum = 0;
       this.syncRunValidCount = 0;
       this.syncRunDurationMs = 0;
+      this.syncRunValidMs = 0;
+      this.syncRunGapMs = 0;
+    }
+
+    startSyncRun(frequency, durationMs, binStart) {
+      this.syncRunStart = binStart;
+      this.syncRunFrequencySum = frequency;
+      this.syncRunValidCount = 1;
+      this.syncRunDurationMs = durationMs;
+      this.syncRunValidMs = durationMs;
+      this.syncRunGapMs = 0;
+    }
+
+    finishSyncRun() {
+      if (this.syncRunStart == null) return;
+      const runStart = this.syncRunStart;
+      const runDurationMs = Math.max(0, this.syncRunDurationMs - this.syncRunGapMs);
+      const validDurationMs = this.syncRunValidMs;
+      const averageFrequency = this.syncRunValidCount
+        ? this.syncRunFrequencySum / this.syncRunValidCount
+        : NaN;
+      this.resetSyncRun();
+
       const [minimum, maximum] = this.expectedSyncRange();
-      if (runDurationMs < minimum || runDurationMs > maximum) return;
+      const validFraction = runDurationMs > 0 ? validDurationMs / runDurationMs : 0;
+      if (!Number.isFinite(averageFrequency)
+          || runDurationMs < minimum
+          || runDurationMs > maximum
+          || validFraction < 0.55) return;
       this.acceptSync(runStart, averageFrequency, runDurationMs);
+    }
+
+    processSyncBin(frequency, magnitude, durationMs, binStart) {
+      if (!this.mode) return;
+      const strong = Number.isFinite(frequency) && magnitude >= 0.0012;
+      const acquisition = this.nextExpectedSync == null;
+
+      if (acquisition) {
+        // Before lock, accept only tones in a broad window around the nominal
+        // 1200 Hz sync. Coherent timing across several lines chooses the real
+        // sync and rejects repeated image details.
+        const isAcquisitionSync = strong && Math.abs(frequency - 1200) <= 300;
+        const allowedGapMs = this.mode.family === "martin"
+          ? 1.5
+          : (this.mode.family === "pd" ? 2.8 : 2.0);
+        if (isAcquisitionSync) {
+          if (this.syncRunStart == null) this.startSyncRun(frequency, durationMs, binStart);
+          else {
+            this.syncRunFrequencySum += frequency;
+            this.syncRunValidCount += 1;
+            this.syncRunDurationMs += durationMs;
+            this.syncRunValidMs += durationMs;
+            this.syncRunGapMs = 0;
+          }
+          return;
+        }
+        if (this.syncRunStart == null) return;
+        this.syncRunGapMs += durationMs;
+        this.syncRunDurationMs += durationMs;
+        if (this.syncRunGapMs <= allowedGapMs) return;
+        this.finishSyncRun();
+        return;
+      }
+
+      const corrected = frequency - this.frequencyOffset;
+      const isSync = strong && Math.abs(corrected - 1200) <= 115;
+      const allowedGapMs = this.mode.family === "martin"
+        ? 1.5
+        : (this.mode.family === "pd" ? 2.8 : 2.0);
+
+      if (isSync) {
+        if (this.syncRunStart == null) this.startSyncRun(frequency, durationMs, binStart);
+        else {
+          this.syncRunFrequencySum += frequency;
+          this.syncRunValidCount += 1;
+          this.syncRunDurationMs += durationMs;
+          this.syncRunValidMs += durationMs;
+          this.syncRunGapMs = 0;
+        }
+        return;
+      }
+
+      if (this.syncRunStart == null) return;
+      this.syncRunGapMs += durationMs;
+      this.syncRunDurationMs += durationMs;
+      if (this.syncRunGapMs <= allowedGapMs) return;
+      this.finishSyncRun();
     }
 
     lineDurationMs(mode = this.mode) {
@@ -512,23 +586,200 @@
     syncSearchWindowMs() {
       if (!this.mode) return 0;
       if (this.mode.family === "pd") return 18;
-      if (this.mode.family === "martin") return 10;
-      return 16;
+      if (this.mode.family === "martin") return 9;
+      return 14;
+    }
+
+    maximumBridgedLines() {
+      if (!this.mode) return 0;
+      // Real HF recordings can lose several sync pulses during fading. Bridge
+      // briefly, but never continue across silence for the rest of the buffer.
+      if (this.mode.family === "pd") return 8;
+      if (this.mode.family === "martin") return 12;
+      return 18;
+    }
+
+    rowsPerDecodedLine() {
+      return this.mode?.family === "pd" ? 2 : 1;
+    }
+
+    alignNextSegment() {
+      if (!this.mode) return;
+      if (this.lineIndex > 0 && (this.lineIndex % this.mode.height) !== 0) {
+        this.lineIndex = Math.ceil(this.lineIndex / this.mode.height) * this.mode.height;
+      }
+      this.segmentRows = 0;
+      this.segmentActive = true;
+    }
+
+    unlockLineClock(message = "searching for coherent line sync") {
+      this.processPendingLines();
+      this.nextExpectedSync = null;
+      this.syncCandidates = [];
+      this.acquisitionStartedAt = null;
+      this.syntheticSinceReal = 0;
+      this.segmentActive = false;
+      this.lastQueuedSync = -Infinity;
+      this.resetSyncRun();
+      this.emitStatus("sync", `${this.mode.label} · ${message}`);
+    }
+
+    rememberSyncCandidate(candidate) {
+      const period = this.msToSamples(this.lineDurationMs());
+      const keepAfter = candidate.start - period * 10;
+      this.syncCandidates.push(candidate);
+      this.syncCandidates = this.syncCandidates.filter((item) => item.start >= keepAfter);
+      if (this.acquisitionStartedAt == null) this.acquisitionStartedAt = candidate.start;
+    }
+
+    candidateNear(target, window, frequency, beforeIndex = Infinity) {
+      let best = null;
+      let bestError = Infinity;
+      for (const candidate of this.syncCandidates) {
+        if (candidate.start >= beforeIndex) continue;
+        if (Math.abs(candidate.averageFrequency - frequency) > 85) continue;
+        const error = Math.abs(candidate.start - target);
+        if (error <= window && error < bestError) {
+          best = candidate;
+          bestError = error;
+        }
+      }
+      return best;
+    }
+
+    acquisitionPattern() {
+      if (this.mode?.family === "pd") return { slots: 6, required: 5 };
+      return { slots: 8, required: 6 };
+    }
+
+    coherentChains() {
+      const period = this.msToSamples(this.lineDurationMs());
+      const window = this.msToSamples(this.syncSearchWindowMs());
+      const { slots, required } = this.acquisitionPattern();
+      const chains = [];
+
+      for (const latest of this.syncCandidates) {
+        const matches = [];
+        for (let slot = 0; slot < slots; slot += 1) {
+          const target = latest.start - slot * period;
+          const match = this.candidateNear(target, window, latest.averageFrequency, latest.start + 1);
+          if (match && !matches.includes(match)) matches.push(match);
+        }
+        if (matches.length < required) continue;
+        const frequencies = matches.map((item) => item.averageFrequency);
+        const spread = Math.max(...frequencies) - Math.min(...frequencies);
+        if (spread > 68) continue;
+        const averageFrequency = frequencies.reduce((sum, value) => sum + value, 0) / frequencies.length;
+        let timingError = 0;
+        for (const match of matches) {
+          const slot = Math.round((latest.start - match.start) / period);
+          timingError += Math.abs(match.start - (latest.start - slot * period));
+        }
+        chains.push({ latest, matches, averageFrequency, spread, timingError, slots });
+      }
+      return chains;
+    }
+
+    acquisitionQuality(chain) {
+      const offset = chain.averageFrequency - 1200;
+      const period = this.msToSamples(this.lineDurationMs());
+      const start = chain.latest.start - (chain.slots - 1) * period;
+      const end = chain.latest.start;
+      let finite = 0;
+      let video = 0;
+      let invalid = 0;
+      const bins = new Set();
+      for (let index = Math.max(0, start); index < end; index += 8) {
+        const magnitude = this.ringMagnitudeAt(index);
+        const raw = this.ringFrequencyAt(index);
+        if (!Number.isFinite(raw) || magnitude < 0.0012) {
+          invalid += 1;
+          continue;
+        }
+        const corrected = raw - offset;
+        finite += 1;
+        if (corrected >= 1400 && corrected <= 2450) {
+          video += 1;
+          bins.add(Math.floor((corrected - 1400) / 50));
+        }
+      }
+      return {
+        videoFraction: finite ? video / finite : 0,
+        validFraction: (finite + invalid) ? finite / (finite + invalid) : 0,
+        videoBins: bins.size,
+      };
+    }
+
+    tryAcquireLineClock(candidate) {
+      const period = this.msToSamples(this.lineDurationMs());
+      this.rememberSyncCandidate(candidate);
+      const { slots } = this.acquisitionPattern();
+      if (candidate.start - this.acquisitionStartedAt < period * (slots - 0.8)) return false;
+
+      const chains = this.coherentChains();
+      if (!chains.length) return false;
+      for (const chain of chains) chain.quality = this.acquisitionQuality(chain);
+      const maximumTimingError = this.msToSamples(this.mode.family === "pd" ? 6 : 3.2);
+      const viable = chains.filter((chain) =>
+        chain.timingError <= maximumTimingError
+        && chain.quality.videoFraction >= 0.70
+        && chain.quality.validFraction >= 0.55
+        && chain.quality.videoBins >= 10);
+      if (!viable.length) return false;
+
+      // The real sync is below the video tones. Prefer the lowest coherent,
+      // image-like chain, then the most precise clock.
+      viable.sort((left, right) =>
+        (left.averageFrequency - right.averageFrequency)
+        || (right.matches.length - left.matches.length)
+        || (left.timingError - right.timingError));
+      const selected = viable[0];
+      const offset = selected.averageFrequency - 1200;
+      if (offset < -500 || offset > 650) return false;
+
+      this.frequencyOffset = clamp(offset, -500, 650);
+      this.alignNextSegment();
+      this.lastQueuedSync = -Infinity;
+      for (let slot = selected.slots - 1; slot >= 0; slot -= 1) {
+        const predicted = selected.latest.start - slot * period;
+        let best = null;
+        let bestError = Infinity;
+        for (const match of selected.matches) {
+          const error = Math.abs(match.start - predicted);
+          if (error < bestError) {
+            best = match;
+            bestError = error;
+          }
+        }
+        const tracked = best && bestError <= this.msToSamples(this.syncSearchWindowMs())
+          ? predicted + (best.start - predicted) * 0.35
+          : predicted;
+        this.queueTrackedLine(tracked, best?.durationMs || 0, !best || bestError > this.msToSamples(this.syncSearchWindowMs()));
+      }
+      this.lastSyncStart = selected.latest.start;
+      this.nextExpectedSync = selected.latest.start + period;
+      this.syntheticSinceReal = 0;
+      this.syncCandidates = [];
+      this.acquisitionStartedAt = null;
+      this.processPendingLines();
+      this.emitStatus("receiving", `${this.mode.label} · line clock locked · correction ${Math.round(this.frequencyOffset)} Hz`);
+      return true;
     }
 
     queueTrackedLine(syncStart, durationMs = 0, synthetic = false) {
-      if (!this.mode) return false;
+      if (!this.mode || !this.segmentActive) return false;
+      const rowsPerLine = this.rowsPerDecodedLine();
+      if (this.segmentRows + this.pendingLines.length * rowsPerLine >= this.mode.height) return false;
       const lineSamples = this.msToSamples(this.lineDurationMs());
       const minimumGap = Math.max(this.msToSamples(40), lineSamples * 0.48);
       if (syncStart - this.lastQueuedSync < minimumGap) return false;
       this.lastQueuedSync = syncStart;
 
-      const mode = this.mode;
       let earliest = syncStart;
       let end = syncStart + lineSamples;
-      if (mode.family === "scottie") {
-        earliest = syncStart - this.msToSamples(2 * mode.channelMs + mode.separatorMs);
-        end = syncStart + this.msToSamples(mode.syncMs + mode.porchMs + mode.channelMs);
+      if (this.mode.family === "scottie") {
+        earliest = syncStart - this.msToSamples(2 * this.mode.channelMs + this.mode.separatorMs);
+        end = syncStart + this.msToSamples(this.mode.syncMs + this.mode.porchMs + this.mode.channelMs);
       }
       const oldestAvailable = Math.max(0, this.frequencyIndex - this.frequencyCapacity + 2);
       if (earliest < oldestAvailable || earliest < this.imageStartIndex) return false;
@@ -537,41 +788,51 @@
     }
 
     processLineClock() {
-      if (!this.mode || this.nextExpectedSync == null) return;
+      if (!this.mode || this.nextExpectedSync == null || !this.segmentActive) return;
       const period = this.msToSamples(this.lineDurationMs());
       const window = this.msToSamples(this.syncSearchWindowMs());
       while (this.frequencyIndex > this.nextExpectedSync + window) {
-        this.queueTrackedLine(this.nextExpectedSync, 0, true);
+        if (this.syntheticSinceReal >= this.maximumBridgedLines()) {
+          this.unlockLineClock("sync lost · searching again");
+          return;
+        }
+        if (!this.queueTrackedLine(this.nextExpectedSync, 0, true)) return;
+        this.syntheticSinceReal += 1;
         this.nextExpectedSync += period;
       }
     }
 
     acceptSync(syncStart, averageFrequency, durationMs) {
       if (!this.mode) return;
-      const period = this.msToSamples(this.lineDurationMs());
-      const window = this.msToSamples(this.syncSearchWindowMs());
-      const measuredOffset = averageFrequency - 1200;
-      this.frequencyOffset = clamp(this.frequencyOffset * 0.82 + measuredOffset * 0.18, -250, 250);
-      this.lastSyncStart = syncStart;
-
+      const candidate = { start: syncStart, averageFrequency, durationMs };
       if (this.nextExpectedSync == null) {
-        this.queueTrackedLine(syncStart, durationMs, false);
-        this.nextExpectedSync = syncStart + period;
-        this.processPendingLines();
+        this.tryAcquireLineClock(candidate);
         return;
       }
 
-      while (syncStart > this.nextExpectedSync + window) {
-        this.queueTrackedLine(this.nextExpectedSync, 0, true);
+      const period = this.msToSamples(this.lineDurationMs());
+      const window = this.msToSamples(this.syncSearchWindowMs());
+      const measuredOffset = averageFrequency - 1200;
+      if (Math.abs(measuredOffset - this.frequencyOffset) > 85) return;
+
+      const delta = syncStart - this.nextExpectedSync;
+      const missed = Math.max(0, Math.round(delta / period));
+      const predicted = this.nextExpectedSync + missed * period;
+      if (missed > this.maximumBridgedLines() || Math.abs(syncStart - predicted) > window) return;
+
+      while (this.nextExpectedSync < predicted - window / 2) {
+        if (!this.queueTrackedLine(this.nextExpectedSync, 0, true)) break;
+        this.syntheticSinceReal += 1;
         this.nextExpectedSync += period;
       }
 
-      if (Math.abs(syncStart - this.nextExpectedSync) <= window) {
-        const error = syncStart - this.nextExpectedSync;
-        const trackedSync = this.nextExpectedSync + error * 0.35;
-        this.queueTrackedLine(trackedSync, durationMs, false);
-        this.nextExpectedSync = trackedSync + period;
-      }
+      const error = syncStart - this.nextExpectedSync;
+      const trackedSync = this.nextExpectedSync + error * 0.35;
+      this.queueTrackedLine(trackedSync, durationMs, false);
+      this.nextExpectedSync = trackedSync + period;
+      this.syntheticSinceReal = 0;
+      this.lastSyncStart = syncStart;
+      this.frequencyOffset = clamp(this.frequencyOffset * 0.88 + measuredOffset * 0.12, -500, 650);
       this.processPendingLines();
     }
 
@@ -580,6 +841,10 @@
       while (this.pendingLines.length && this.pendingLines[0].end <= this.frequencyIndex - 2) {
         const pending = this.pendingLines.shift();
         this.decodeLine(pending);
+        if (!this.segmentActive) {
+          this.pendingLines = [];
+          break;
+        }
       }
     }
 
@@ -746,7 +1011,9 @@
       }
 
       if (output.length) this.callbacks.lines?.(output, { line, mode });
-      this.lineIndex += mode.family === "pd" ? 2 : 1;
+      const decodedRows = mode.family === "pd" ? 2 : 1;
+      this.lineIndex += decodedRows;
+      this.segmentRows += decodedRows;
       const frameLine = this.lineIndex % mode.height;
       const progress = clamp(frameLine / mode.height, 0, 1);
       this.callbacks.progress?.({
@@ -758,7 +1025,11 @@
       if (this.lineIndex > 0 && frameLine === 0) {
         this.callbacks.complete?.({ mode, line: this.lineIndex });
       }
-      this.emitStatus("receiving", `${mode.label} · ${this.lineIndex} decoded rows`);
+      if (this.segmentRows >= mode.height) {
+        this.unlockLineClock("image complete · searching for the next transmission");
+      } else {
+        this.emitStatus("receiving", `${mode.label} · ${this.segmentRows}/${mode.height} rows in current image`);
+      }
     }
 
     maybeEmitSignalStatus() {
