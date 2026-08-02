@@ -25,6 +25,11 @@
       width: 320, height: 256, family: "scottie",
       syncMs: 9.0, porchMs: 1.5, separatorMs: 1.5, channelMs: 88.064,
     }),
+    scottiedx: Object.freeze({
+      key: "scottiedx", label: "Scottie DX", vis: 76,
+      width: 320, height: 256, family: "scottie",
+      syncMs: 9.0, porchMs: 1.5, separatorMs: 1.5, channelMs: 345.600,
+    }),
     robot36: Object.freeze({
       key: "robot36", label: "Robot 36", vis: 8,
       width: 320, height: 240, family: "robot36",
@@ -36,6 +41,41 @@
       width: 320, height: 240, family: "robot72",
       syncMs: 9.0, porchMs: 3.0, yMs: 138.0,
       separatorMs: 4.5, separatorPorchMs: 1.5, crMs: 69.0, cbMs: 69.0,
+    }),
+    pd50: Object.freeze({
+      key: "pd50", label: "PD50", vis: 93,
+      width: 320, height: 256, family: "pd",
+      syncMs: 20.0, porchMs: 2.08, channelMs: 91.520,
+    }),
+    pd90: Object.freeze({
+      key: "pd90", label: "PD90", vis: 99,
+      width: 320, height: 256, family: "pd",
+      syncMs: 20.0, porchMs: 2.08, channelMs: 170.240,
+    }),
+    pd120: Object.freeze({
+      key: "pd120", label: "PD120", vis: 95,
+      width: 640, height: 496, family: "pd",
+      syncMs: 20.0, porchMs: 2.08, channelMs: 121.600,
+    }),
+    pd160: Object.freeze({
+      key: "pd160", label: "PD160", vis: 98,
+      width: 512, height: 400, family: "pd",
+      syncMs: 20.0, porchMs: 2.08, channelMs: 195.584,
+    }),
+    pd180: Object.freeze({
+      key: "pd180", label: "PD180", vis: 96,
+      width: 640, height: 496, family: "pd",
+      syncMs: 20.0, porchMs: 2.08, channelMs: 183.040,
+    }),
+    pd240: Object.freeze({
+      key: "pd240", label: "PD240", vis: 97,
+      width: 640, height: 496, family: "pd",
+      syncMs: 20.0, porchMs: 2.08, channelMs: 244.480,
+    }),
+    pd290: Object.freeze({
+      key: "pd290", label: "PD290", vis: 94,
+      width: 800, height: 616, family: "pd",
+      syncMs: 20.0, porchMs: 2.08, channelMs: 228.800,
     }),
   });
 
@@ -405,6 +445,7 @@
     expectedSyncRange() {
       if (!this.mode) return [0, 0];
       if (this.mode.family === "martin") return [3.2, 7.2];
+      if (this.mode.family === "pd") return [14.0, 27.0];
       return [6.2, 12.8];
     }
 
@@ -452,9 +493,15 @@
       if (mode.family === "robot36") {
         return mode.syncMs + mode.porchMs + mode.yMs + mode.separatorMs + mode.separatorPorchMs + mode.chromaMs;
       }
-      return mode.syncMs + mode.porchMs + mode.yMs
-        + mode.separatorMs + mode.separatorPorchMs + mode.crMs
-        + mode.separatorMs + mode.separatorPorchMs + mode.cbMs;
+      if (mode.family === "robot72") {
+        return mode.syncMs + mode.porchMs + mode.yMs
+          + mode.separatorMs + mode.separatorPorchMs + mode.crMs
+          + mode.separatorMs + mode.separatorPorchMs + mode.cbMs;
+      }
+      if (mode.family === "pd") {
+        return mode.syncMs + mode.porchMs + 4 * mode.channelMs;
+      }
+      return 0;
     }
 
     acceptSync(syncStart, averageFrequency, durationMs) {
@@ -634,10 +681,23 @@
         position += this.msToSamples(mode.crMs + mode.separatorMs + mode.separatorPorchMs);
         const cb = this.extractPixels(position, mode.cbMs, width);
         output.push({ y: line, row: this.ycbcrLine(yChannel, cb, cr) });
+      } else if (mode.family === "pd") {
+        let position = syncStart + this.msToSamples(mode.syncMs + mode.porchMs);
+        const yFirst = this.extractPixels(position, mode.channelMs, width);
+        position += this.msToSamples(mode.channelMs);
+        const cr = this.extractPixels(position, mode.channelMs, width);
+        position += this.msToSamples(mode.channelMs);
+        const cb = this.extractPixels(position, mode.channelMs, width);
+        position += this.msToSamples(mode.channelMs);
+        const ySecond = this.extractPixels(position, mode.channelMs, width);
+        output.push({ y: line, row: this.ycbcrLine(yFirst, cb, cr) });
+        if (line + 1 < mode.height) {
+          output.push({ y: line + 1, row: this.ycbcrLine(ySecond, cb, cr) });
+        }
       }
 
       if (output.length) this.callbacks.lines?.(output, { line, mode });
-      this.lineIndex += 1;
+      this.lineIndex += mode.family === "pd" ? 2 : 1;
       const progress = clamp(this.lineIndex / mode.height, 0, 1);
       this.callbacks.progress?.({ line: this.lineIndex, total: mode.height, progress });
       if (this.lineIndex >= mode.height) {
