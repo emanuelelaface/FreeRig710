@@ -120,18 +120,6 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
 .toast.error { background: #421d25; border-color: #8f3b48; }
 .toast.visible { opacity: 1; transform: translateY(0); }
 
-/* On phones/tablets, let the sticky radio display use the entire workspace
-   as its containing block. Without this, it stops sticking at the end of
-   .primary-column (immediately after the frequency card). */
-@media (max-width: 959px) {
-  .primary-column { display: contents; }
-
-  .video-card {
-    top: max(6px, env(safe-area-inset-top));
-    z-index: 100;
-  }
-}
-
 @media (max-width: 850px) {
   .topbar { align-items: stretch; flex-direction: column; }
   .connection { max-width: none; text-align: left; }
@@ -665,6 +653,7 @@ body.panel-reorder-active {
   margin: 7px 0 10px;
   accent-color: var(--accent);
 }
+.sstv-vis-hint,
 .sstv-detail,
 .sstv-signal {
   padding: 8px 10px;
@@ -676,6 +665,7 @@ body.panel-reorder-active {
   font-size: .72rem;
   line-height: 1.35;
 }
+.sstv-vis-hint { margin-top: 7px; }
 .sstv-signal { margin-top: 7px; }
 .sstv-canvas-wrap {
   display: flex;
@@ -703,7 +693,7 @@ body.panel-reorder-active {
 }
 .sstv-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 8px;
   margin-top: 10px;
 }
@@ -711,28 +701,3 @@ body.panel-reorder-active {
   .sstv-meta { align-items: flex-start; flex-direction: column; gap: 4px; }
   .sstv-actions { grid-template-columns: 1fr; }
 }
-
-/* QRZ Logbook integration */
-.qrz-card { min-width: 0; }
-.qrz-status {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 3px 9px;
-  border: 1px solid #806b35;
-  border-radius: 999px;
-  color: #ffe09a;
-  background: rgba(255,200,87,.08);
-  font-size: .72rem;
-  font-weight: 850;
-  letter-spacing: .08em;
-}
-.qrz-status.ready { border-color: #397759; color: #aaf2c1; background: rgba(95,224,139,.09); }
-.qrz-status.working { border-color: #36789e; color: #c9efff; background: rgba(66,184,255,.09); }
-.qrz-status.error { border-color: #8f3b48; color: #ffc1c8; background: rgba(255,100,116,.12); }
-.qrz-preview { margin-top: 14px; }
-.qrz-log-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
-.qrz-log-form .wide { grid-column: 1 / -1; }
-.qrz-call-input { text-transform: uppercase; font: 800 1.05rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .06em; }
-.qrz-result { min-height: 1.3em; overflow-wrap: anywhere; }
-@media (max-width: 620px) { .qrz-log-form { grid-template-columns: 1fr; } .qrz-log-form .wide { grid-column: auto; } }

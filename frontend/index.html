@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Yaesu FT-710 Remote</title>
-  <link rel="stylesheet" href="styles.css?v=1.14.0">
+  <link rel="stylesheet" href="styles.css?v=1.15.0">
 </head>
 <body>
   <main class="shell">
@@ -451,12 +451,11 @@
           <input id="sstv-enabled" type="checkbox" disabled>
         </div>
 
-        <label class="control-label" for="sstv-mode">Mode detection</label>
+        <label class="control-label" for="sstv-mode">Decode mode</label>
         <select id="sstv-mode" disabled>
-          <option value="auto" selected>AUTO · VIS</option>
           <option value="martin1">Martin M1</option>
           <option value="martin2">Martin M2</option>
-          <option value="scottie1">Scottie S1</option>
+          <option value="scottie1" selected>Scottie S1</option>
           <option value="scottie2">Scottie S2</option>
           <option value="scottiedx">Scottie DX</option>
           <option value="robot36">Robot 36</option>
@@ -471,9 +470,10 @@
         </select>
 
         <div class="sstv-meta">
-          <span id="sstv-vis">VIS --</span>
-          <span id="sstv-progress-label">0 / -- · 0%</span>
+          <span id="sstv-buffer">Buffer 00:00 / 06:00</span>
+          <span id="sstv-progress-label">Live · 0 rows</span>
         </div>
+        <div id="sstv-vis" class="sstv-vis-hint">VIS suggestion --</div>
         <progress id="sstv-progress" class="sstv-progress" max="256" value="0"></progress>
         <div id="sstv-detail" class="sstv-detail">Enable audio first</div>
         <div id="sstv-signal" class="sstv-signal">Tone -- Hz · waiting for audio</div>
@@ -483,10 +483,11 @@
         </div>
 
         <div class="sstv-actions">
-          <button id="sstv-reset" type="button">Reset / wait next image</button>
+          <button id="sstv-reset" type="button">Replay buffer</button>
+          <button id="sstv-freeze" type="button">Freeze image</button>
           <button id="sstv-save" type="button" disabled>Save PNG</button>
         </div>
-        <p class="help">For HF reception use USB, a voice-width filter, and disable DNR/NB if they distort the tones. AUTO supports Martin M1/M2, Scottie S1/S2/DX, Robot 36/72 and PD50/90/120/160/180/240/290. Manual mode can recover an image when the VIS header is lost.</p>
+        <p class="help">The decoder keeps the last six minutes of RX audio. Change mode to re-decode the complete buffer; VIS is only a suggestion and never blocks decoding. The canvas scrolls continuously, so freeze it when the complete image is visible and then save the PNG.</p>
       </article>
 
       <article class="card panel-card" data-panel-id="transmitter-and-tuner">
@@ -578,7 +579,7 @@
 
   <script src="config.js?v=1.12.3"></script>
   <script src="cw.js?v=1.12.3"></script>
-  <script src="sstv.js?v=1.14.0"></script>
+  <script src="sstv.js?v=1.15.0"></script>
   <script src="app.js?v=1.19.0"></script>
 </body>
 </html>

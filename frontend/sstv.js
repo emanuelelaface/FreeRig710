@@ -85,7 +85,8 @@
     constructor(callbacks = {}) {
       this.callbacks = callbacks;
       this.enabled = false;
-      this.modePreference = "auto";
+      // VIS is now advisory only. Decoding always runs in the selected mode.
+      this.modePreference = "scottie1";
       this.mode = null;
       this.sampleRate = 44100;
       this.decimation = 2;
@@ -143,19 +144,17 @@
         this.emitStatus("off", "Decoder off");
         return;
       }
-      if (this.modePreference !== "auto") this.activateMode(this.modePreference, "manual");
-      else this.emitStatus("waiting", "Waiting for VIS header");
+      this.activateMode(this.modePreference, "manual");
     }
 
     setModePreference(modeKey) {
-      const next = modeKey === "auto" || MODES[modeKey] ? modeKey : "auto";
+      const next = MODES[modeKey] ? modeKey : "scottie1";
       if (next === this.modePreference) return;
       this.modePreference = next;
       if (!this.enabled) return;
       this.resetDemodulator();
       this.resetProtocol(true);
-      if (next === "auto") this.emitStatus("waiting", "Waiting for VIS header");
-      else this.activateMode(next, "manual");
+      this.activateMode(next, "manual");
     }
 
     reset(clearImage = true) {
@@ -163,8 +162,6 @@
       this.resetProtocol(clearImage);
       if (!this.enabled) {
         this.emitStatus("off", "Decoder off");
-      } else if (this.modePreference === "auto") {
-        this.emitStatus("waiting", "Waiting for VIS header");
       } else {
         this.activateMode(this.modePreference, "manual");
       }
@@ -176,6 +173,9 @@
       this.imageStartIndex = 0;
       this.lineIndex = 0;
       this.lastSyncStart = -Infinity;
+      this.lastQueuedSync = -Infinity;
+      this.nextExpectedSync = null;
+      this.consecutiveSynthetic = 0;
       this.syncRunStart = null;
       this.syncRunFrequencySum = 0;
       this.syncRunValidCount = 0;
@@ -205,6 +205,9 @@
       this.pendingLines = [];
       this.robot36Pair = null;
       this.lastSyncStart = -Infinity;
+      this.lastQueuedSync = -Infinity;
+      this.nextExpectedSync = null;
+      this.consecutiveSynthetic = 0;
       this.imageStartIndex = this.frequencyIndex;
       this.callbacks.mode?.({ ...mode, source, offsetHz: Math.round(this.frequencyOffset) });
       this.emitStatus("sync", `${mode.label} · waiting for line sync`);
@@ -297,7 +300,7 @@
         this.binFrequencySum = 0;
         this.binMagnitudeSum = 0;
         this.binValidCount = 0;
-        if (this.modePreference === "auto" && !this.mode) this.processVisBin(bin);
+        this.processVisBin(bin);
       }
 
       this.syncBinCount += 1;
@@ -317,7 +320,10 @@
         this.syncBinValidCount = 0;
         if (this.mode) this.processSyncBin(syncFrequency, syncMagnitude, durationMs, syncBinStart);
       }
-      if ((this.frequencyIndex & 1023) === 0) this.processPendingLines();
+      if ((this.frequencyIndex & 255) === 0) {
+        this.processLineClock();
+        this.processPendingLines();
+      }
       this.maybeEmitSignalStatus();
     }
 
@@ -355,7 +361,7 @@
         }
         if (this.leader1Ms >= 180) {
           this.visState = "break";
-          this.emitStatus("vis", "VIS leader detected");
+          this.callbacks.visStage?.({ stage: "leader" });
         }
         return;
       }
@@ -392,7 +398,7 @@
           this.frequencyOffset = clamp((this.frequencyOffset + secondOffset) / 2, -250, 250);
           this.visState = "vis";
           this.visBins = [bin];
-          this.emitStatus("vis", "Reading VIS code");
+          this.callbacks.visStage?.({ stage: "code" });
           return;
         }
         this.resetVisSearch();
@@ -433,12 +439,13 @@
         const parityOkay = ((ones + parity) & 1) === 0;
         const modeKey = VIS_TO_MODE.get(code);
         if (startOkay && stopOkay && parityOkay && modeKey) {
-          this.activateMode(modeKey, "vis");
+          const mode = MODES[modeKey];
+          this.callbacks.visDetected?.({ code, modeKey, mode });
+          this.resetVisSearch();
           return;
         }
         this.callbacks.visError?.({ code, startOkay, stopOkay, parityOkay });
         this.resetVisSearch();
-        this.emitStatus("waiting", `VIS not recognized${VIS_TO_MODE.has(code) ? "" : ` · code ${code}`}`);
       }
     }
 
@@ -504,13 +511,19 @@
       return 0;
     }
 
-    acceptSync(syncStart, averageFrequency, durationMs) {
+    syncSearchWindowMs() {
+      if (!this.mode) return 0;
+      if (this.mode.family === "pd") return 18;
+      if (this.mode.family === "martin") return 10;
+      return 16;
+    }
+
+    queueTrackedLine(syncStart, durationMs = 0, synthetic = false) {
+      if (!this.mode) return false;
       const lineSamples = this.msToSamples(this.lineDurationMs());
       const minimumGap = Math.max(this.msToSamples(40), lineSamples * 0.48);
-      if (syncStart - this.lastSyncStart < minimumGap) return;
-      this.lastSyncStart = syncStart;
-      const measuredOffset = averageFrequency - 1200;
-      this.frequencyOffset = clamp(this.frequencyOffset * 0.82 + measuredOffset * 0.18, -250, 250);
+      if (syncStart - this.lastQueuedSync < minimumGap) return false;
+      this.lastQueuedSync = syncStart;
 
       const mode = this.mode;
       let earliest = syncStart;
@@ -520,8 +533,72 @@
         end = syncStart + this.msToSamples(mode.syncMs + mode.porchMs + mode.channelMs);
       }
       const oldestAvailable = Math.max(0, this.frequencyIndex - this.frequencyCapacity + 2);
-      if (earliest < oldestAvailable || earliest < this.imageStartIndex) return;
-      this.pendingLines.push({ syncStart, earliest, end, durationMs });
+      if (earliest < oldestAvailable || earliest < this.imageStartIndex) return false;
+      this.pendingLines.push({ syncStart, earliest, end, durationMs, synthetic });
+      return true;
+    }
+
+    processLineClock() {
+      if (!this.mode || this.nextExpectedSync == null) return;
+      const period = this.msToSamples(this.lineDurationMs());
+      const window = this.msToSamples(this.syncSearchWindowMs());
+      while (this.frequencyIndex > this.nextExpectedSync + window) {
+        // Bridge only very short fades. During silence or between images, stop
+        // the line clock and wait for a real sync instead of generating endless
+        // synthetic rows that would scroll valid pictures away.
+        if (this.consecutiveSynthetic >= 2) {
+          this.nextExpectedSync = null;
+          this.consecutiveSynthetic = 0;
+          return;
+        }
+        if (this.queueTrackedLine(this.nextExpectedSync, 0, true)) {
+          this.consecutiveSynthetic += 1;
+        }
+        this.nextExpectedSync += period;
+      }
+    }
+
+    acceptSync(syncStart, averageFrequency, durationMs) {
+      if (!this.mode) return;
+      const period = this.msToSamples(this.lineDurationMs());
+      const window = this.msToSamples(this.syncSearchWindowMs());
+      const measuredOffset = averageFrequency - 1200;
+      this.frequencyOffset = clamp(this.frequencyOffset * 0.82 + measuredOffset * 0.18, -250, 250);
+      this.lastSyncStart = syncStart;
+
+      if (this.nextExpectedSync == null) {
+        this.queueTrackedLine(syncStart, durationMs, false);
+        this.nextExpectedSync = syncStart + period;
+        this.consecutiveSynthetic = 0;
+        this.processPendingLines();
+        return;
+      }
+
+      const missedPeriods = Math.floor((syncStart - this.nextExpectedSync + window) / Math.max(1, period));
+      if (missedPeriods > 2) {
+        // A new burst/image started. Re-anchor to the measured sync.
+        this.nextExpectedSync = null;
+        this.consecutiveSynthetic = 0;
+        this.queueTrackedLine(syncStart, durationMs, false);
+        this.nextExpectedSync = syncStart + period;
+        this.processPendingLines();
+        return;
+      }
+
+      while (syncStart > this.nextExpectedSync + window) {
+        if (this.queueTrackedLine(this.nextExpectedSync, 0, true)) {
+          this.consecutiveSynthetic += 1;
+        }
+        this.nextExpectedSync += period;
+      }
+
+      if (Math.abs(syncStart - this.nextExpectedSync) <= window) {
+        const error = syncStart - this.nextExpectedSync;
+        const trackedSync = this.nextExpectedSync + error * 0.35;
+        this.queueTrackedLine(trackedSync, durationMs, false);
+        this.nextExpectedSync = trackedSync + period;
+        this.consecutiveSynthetic = 0;
+      }
       this.processPendingLines();
     }
 
@@ -529,7 +606,6 @@
       if (!this.mode || !this.pendingLines.length) return;
       while (this.pendingLines.length && this.pendingLines[0].end <= this.frequencyIndex - 2) {
         const pending = this.pendingLines.shift();
-        if (this.lineIndex >= this.mode.height) break;
         this.decodeLine(pending);
       }
     }
@@ -698,14 +774,18 @@
 
       if (output.length) this.callbacks.lines?.(output, { line, mode });
       this.lineIndex += mode.family === "pd" ? 2 : 1;
-      const progress = clamp(this.lineIndex / mode.height, 0, 1);
-      this.callbacks.progress?.({ line: this.lineIndex, total: mode.height, progress });
-      if (this.lineIndex >= mode.height) {
-        this.callbacks.complete?.({ mode });
-        this.emitStatus("complete", `${mode.label} · complete`);
-      } else {
-        this.emitStatus("receiving", `${mode.label} · line ${this.lineIndex}/${mode.height}`);
+      const frameLine = this.lineIndex % mode.height;
+      const progress = clamp(frameLine / mode.height, 0, 1);
+      this.callbacks.progress?.({
+        line: this.lineIndex,
+        frameLine,
+        total: mode.height,
+        progress,
+      });
+      if (this.lineIndex > 0 && frameLine === 0) {
+        this.callbacks.complete?.({ mode, line: this.lineIndex });
       }
+      this.emitStatus("receiving", `${mode.label} · ${this.lineIndex} decoded rows`);
     }
 
     maybeEmitSignalStatus() {
@@ -726,17 +806,92 @@
     }
   }
 
+  class AudioHistory {
+    constructor(seconds = 360) {
+      this.seconds = Math.max(60, Number(seconds) || 360);
+      this.sampleRate = 0;
+      this.capacity = 0;
+      this.samples = new Int16Array(0);
+      this.totalWritten = 0;
+    }
+
+    configure(sampleRate) {
+      const nextRate = Math.max(8000, Math.round(Number(sampleRate) || 44100));
+      if (nextRate === this.sampleRate && this.capacity > 0) return false;
+      this.sampleRate = nextRate;
+      this.capacity = Math.max(1, Math.round(this.sampleRate * this.seconds));
+      this.samples = new Int16Array(this.capacity);
+      this.totalWritten = 0;
+      return true;
+    }
+
+    clear() {
+      this.totalWritten = 0;
+      if (this.samples.length) this.samples.fill(0);
+    }
+
+    append(incoming, sampleRate) {
+      const reset = this.configure(sampleRate);
+      if (!(incoming instanceof Int16Array) || incoming.length === 0) return reset;
+      let offset = 0;
+      while (offset < incoming.length) {
+        const position = this.totalWritten % this.capacity;
+        const count = Math.min(incoming.length - offset, this.capacity - position);
+        this.samples.set(incoming.subarray(offset, offset + count), position);
+        this.totalWritten += count;
+        offset += count;
+      }
+      return reset;
+    }
+
+    get availableSamples() {
+      return Math.min(this.totalWritten, this.capacity);
+    }
+
+    get oldestIndex() {
+      return this.totalWritten - this.availableSamples;
+    }
+
+    get durationSeconds() {
+      return this.sampleRate ? this.availableSamples / this.sampleRate : 0;
+    }
+
+    read(startIndex, maximumSamples) {
+      if (!this.capacity || maximumSamples <= 0) return { start: this.totalWritten, samples: new Int16Array(0) };
+      const start = Math.max(this.oldestIndex, Math.min(this.totalWritten, Math.floor(startIndex)));
+      const end = Math.min(this.totalWritten, start + Math.max(0, Math.floor(maximumSamples)));
+      const output = new Int16Array(Math.max(0, end - start));
+      if (!output.length) return { start, samples: output };
+      const position = start % this.capacity;
+      const first = Math.min(output.length, this.capacity - position);
+      output.set(this.samples.subarray(position, position + first), 0);
+      if (first < output.length) output.set(this.samples.subarray(0, output.length - first), first);
+      return { start, samples: output };
+    }
+  }
+
   const controller = {
     DecoderClass: SSTVDecoder,
+    HistoryClass: AudioHistory,
     Modes: MODES,
     initialized: false,
     audioReady: false,
     decoder: null,
+    history: new AudioHistory(360),
     canvas: null,
     context: null,
-    imageData: null,
     statusState: "off",
+    decoderStatusText: "Decoder off",
     lastSignal: null,
+    visibleRows: 0,
+    totalRenderedRows: 0,
+    frozen: false,
+    replayActive: false,
+    replayCursor: 0,
+    replayStart: 0,
+    replayGeneration: 0,
+    replayScheduled: false,
+    suggestedModeKey: null,
 
     init() {
       if (this.initialized) return;
@@ -749,33 +904,19 @@
       const modeSelect = byId("sstv-mode");
       const enabled = byId("sstv-enabled");
 
+      if (!MODES[modeSelect.value]) modeSelect.value = "scottie1";
+
       this.decoder = new SSTVDecoder({
         clearImage: () => this.clearCanvas(),
         mode: (mode) => {
           this.prepareCanvas(mode.width, mode.height);
-          byId("sstv-vis").textContent = mode.source === "vis"
-            ? `VIS ${mode.vis} · ${mode.label}`
-            : `Manual · ${mode.label}`;
+          this.updateProgressUi();
           this.render();
         },
-        lines: (lines) => {
-          if (!this.imageData) return;
-          for (const item of lines) {
-            if (item.y < 0 || item.y >= this.canvas.height) continue;
-            this.imageData.data.set(item.row, item.y * this.canvas.width * 4);
-            this.context.putImageData(this.imageData, 0, 0, 0, item.y, this.canvas.width, 1);
-          }
-        },
-        progress: ({ line, total, progress }) => {
-          const progressElement = byId("sstv-progress");
-          progressElement.max = total;
-          progressElement.value = line;
-          byId("sstv-progress-label").textContent = `${line} / ${total} · ${Math.round(progress * 100)}%`;
-          byId("sstv-save").disabled = line === 0;
-        },
+        lines: (lines) => this.appendRows(lines),
+        progress: () => this.updateProgressUi(),
         complete: () => {
-          byId("sstv-save").disabled = false;
-          this.render();
+          byId("sstv-save").disabled = this.visibleRows === 0;
         },
         signal: (signal) => {
           this.lastSignal = signal;
@@ -786,36 +927,62 @@
         },
         status: ({ state, text }) => {
           this.statusState = state;
-          byId("sstv-detail").textContent = text;
+          this.decoderStatusText = text;
+          if (!this.replayActive && !this.frozen) byId("sstv-detail").textContent = text;
           this.render();
         },
+        visStage: ({ stage }) => {
+          if (stage === "leader") byId("sstv-vis").textContent = "VIS candidate · reading header";
+          else byId("sstv-vis").textContent = "VIS candidate · reading code";
+        },
+        visDetected: ({ code, modeKey, mode }) => {
+          this.suggestedModeKey = modeKey;
+          byId("sstv-vis").textContent = `VIS ${code} suggests ${mode.label}`;
+        },
         visError: ({ code }) => {
-          byId("sstv-vis").textContent = `Unrecognized VIS ${code}`;
+          byId("sstv-vis").textContent = `VIS uncertain · code ${code}`;
         },
       });
 
       enabled.addEventListener("change", () => {
         const active = Boolean(enabled.checked && this.audioReady);
         enabled.checked = active;
+        this.cancelReplay();
+        this.history.clear();
+        this.frozen = false;
+        this.updateFreezeButton();
+        this.decoder.setModePreference(modeSelect.value);
         this.decoder.setEnabled(active);
         modeSelect.disabled = !active;
+        byId("sstv-reset").disabled = !active;
+        byId("sstv-freeze").disabled = !active;
+        if (active) {
+          this.clearCanvas();
+          byId("sstv-vis").textContent = "VIS suggestion --";
+          byId("sstv-detail").textContent = `${MODES[modeSelect.value].label} · live decoding`;
+        }
+        this.updateBufferUi();
         this.render();
       });
+
       modeSelect.addEventListener("change", () => {
+        if (!MODES[modeSelect.value]) return;
+        this.frozen = false;
+        this.updateFreezeButton();
         this.decoder.setModePreference(modeSelect.value);
+        if (enabled.checked && this.audioReady) this.startReplay("mode changed");
       });
-      byId("sstv-reset").addEventListener("click", () => {
-        this.decoder.reset(true);
-        byId("sstv-save").disabled = true;
-        byId("sstv-progress").value = 0;
-        byId("sstv-progress-label").textContent = "0 / -- · 0%";
-        byId("sstv-vis").textContent = modeSelect.value === "auto" ? "VIS --" : `Manual · ${MODES[modeSelect.value]?.label || "--"}`;
-      });
+
+      byId("sstv-reset").addEventListener("click", () => this.startReplay("manual replay"));
+      byId("sstv-freeze").addEventListener("click", () => this.toggleFreeze());
       byId("sstv-save").addEventListener("click", () => this.savePng());
 
       modeSelect.disabled = true;
       enabled.disabled = true;
+      byId("sstv-reset").disabled = true;
+      byId("sstv-freeze").disabled = true;
       this.clearCanvas();
+      this.updateBufferUi();
       this.render();
     },
 
@@ -826,54 +993,246 @@
       enabled.disabled = !this.audioReady;
       if (!this.audioReady && enabled.checked) {
         enabled.checked = false;
+        this.cancelReplay();
+        this.history.clear();
         this.decoder?.setEnabled(false);
       }
-      byId("sstv-mode").disabled = !this.audioReady || !enabled.checked;
+      const active = Boolean(this.audioReady && enabled.checked);
+      byId("sstv-mode").disabled = !active;
+      byId("sstv-reset").disabled = !active;
+      byId("sstv-freeze").disabled = !active;
       if (!this.audioReady) {
         byId("sstv-detail").textContent = "Enable audio first";
         byId("sstv-signal").textContent = "Tone -- Hz · waiting for audio";
       }
+      this.updateBufferUi();
       this.render();
     },
 
     feedAudio(buffer, sampleRate) {
-      this.decoder?.feed(buffer, sampleRate);
+      if (!(buffer instanceof ArrayBuffer)) return;
+      const enabled = Boolean(this.initialized && this.audioReady && byId("sstv-enabled")?.checked);
+      if (!enabled) return;
+      const incoming = new Int16Array(buffer);
+      if (!incoming.length) return;
+      const rateReset = this.history.append(incoming, sampleRate);
+      this.updateBufferUi();
+
+      if (rateReset) {
+        this.cancelReplay();
+        this.decoder.reset(true);
+      }
+
+      if (this.replayActive) {
+        this.scheduleReplay();
+        return;
+      }
+      this.decoder.feed(buffer, sampleRate);
+    },
+
+    startReplay(reason = "replay") {
+      if (!this.decoder?.enabled) return;
+      this.cancelReplay();
+      this.frozen = false;
+      this.updateFreezeButton();
+      this.decoder.reset(true);
+      this.visibleRows = 0;
+      this.totalRenderedRows = 0;
+      byId("sstv-save").disabled = true;
+
+      if (this.history.availableSamples === 0) {
+        byId("sstv-detail").textContent = `${MODES[byId("sstv-mode").value].label} · buffer empty, decoding live`;
+        this.updateProgressUi();
+        this.render();
+        return;
+      }
+
+      this.replayActive = true;
+      this.replayStart = this.history.oldestIndex;
+      this.replayCursor = this.replayStart;
+      this.replayGeneration += 1;
+      byId("sstv-detail").textContent = `Re-decoding audio buffer · ${reason}`;
+      this.updateProgressUi();
+      this.render();
+      this.scheduleReplay();
+    },
+
+    cancelReplay() {
+      this.replayGeneration += 1;
+      this.replayActive = false;
+      this.replayScheduled = false;
+    },
+
+    scheduleReplay() {
+      if (!this.replayActive || this.replayScheduled) return;
+      this.replayScheduled = true;
+      const generation = this.replayGeneration;
+      const callback = (deadline) => {
+        if (generation === this.replayGeneration) this.replayScheduled = false;
+        this.pumpReplay(generation, deadline);
+      };
+      if (typeof window.requestIdleCallback === "function") {
+        window.requestIdleCallback(callback, { timeout: 40 });
+      } else {
+        window.setTimeout(() => callback(null), 0);
+      }
+    },
+
+    pumpReplay(generation, deadline) {
+      if (!this.replayActive || generation !== this.replayGeneration) return;
+      const started = performance.now();
+      const chunkSamples = Math.max(4096, Math.round(this.history.sampleRate * 0.35));
+      let chunks = 0;
+
+      while (this.replayActive && generation === this.replayGeneration) {
+        const oldest = this.history.oldestIndex;
+        if (this.replayCursor < oldest) {
+          // The circular buffer overtook a very slow replay. Restart from the
+          // oldest audio still available so timing remains internally coherent.
+          this.replayCursor = oldest;
+          this.replayStart = oldest;
+          this.decoder.reset(true);
+          this.visibleRows = 0;
+          this.totalRenderedRows = 0;
+        }
+
+        const target = this.history.totalWritten;
+        if (this.replayCursor >= target) break;
+        const part = this.history.read(this.replayCursor, chunkSamples);
+        if (!part.samples.length) break;
+        this.decoder.feed(part.samples.buffer, this.history.sampleRate);
+        this.replayCursor = part.start + part.samples.length;
+        chunks += 1;
+
+        const idleLow = deadline && typeof deadline.timeRemaining === "function" && deadline.timeRemaining() < 3;
+        if (chunks >= 4 || idleLow || performance.now() - started > 16) break;
+      }
+
+      this.updateProgressUi();
+      if (this.replayCursor < this.history.totalWritten) {
+        this.scheduleReplay();
+        return;
+      }
+
+      this.replayActive = false;
+      byId("sstv-detail").textContent = `${MODES[byId("sstv-mode").value].label} · live decoding`;
+      this.updateProgressUi();
+      this.render();
+    },
+
+    toggleFreeze() {
+      if (!this.decoder?.enabled) return;
+      if (!this.frozen) {
+        this.frozen = true;
+        byId("sstv-detail").textContent = "Image frozen · audio buffer continues recording";
+        this.updateFreezeButton();
+        this.render();
+        return;
+      }
+      this.frozen = false;
+      this.updateFreezeButton();
+      this.startReplay("resume after freeze");
+    },
+
+    updateFreezeButton() {
+      const button = byId("sstv-freeze");
+      if (!button) return;
+      button.textContent = this.frozen ? "Resume / replay" : "Freeze image";
+    },
+
+    appendRows(lines) {
+      if (!this.context || !this.canvas || this.frozen || !Array.isArray(lines)) return;
+      const width = this.canvas.width;
+      const height = this.canvas.height;
+      for (const item of lines) {
+        if (!(item.row instanceof Uint8ClampedArray) || item.row.length !== width * 4) continue;
+        const rowImage = this.context.createImageData(width, 1);
+        rowImage.data.set(item.row);
+        let y;
+        if (this.visibleRows < height) {
+          y = this.visibleRows;
+          this.visibleRows += 1;
+        } else {
+          this.context.drawImage(this.canvas, 0, 1, width, height - 1, 0, 0, width, height - 1);
+          y = height - 1;
+        }
+        this.context.putImageData(rowImage, 0, y);
+        this.totalRenderedRows += 1;
+      }
+      byId("sstv-save").disabled = this.visibleRows === 0;
+      byId("sstv-freeze").disabled = this.visibleRows === 0;
+      this.updateProgressUi();
     },
 
     prepareCanvas(width, height) {
-      if (this.canvas.width !== width || this.canvas.height !== height || !this.imageData) {
-        this.canvas.width = width;
-        this.canvas.height = height;
-        this.imageData = this.context.createImageData(width, height);
-      } else {
-        this.imageData.data.fill(0);
-      }
-      for (let index = 3; index < this.imageData.data.length; index += 4) this.imageData.data[index] = 255;
-      this.context.putImageData(this.imageData, 0, 0);
+      this.canvas.width = width;
+      this.canvas.height = height;
+      this.context.imageSmoothingEnabled = false;
+      this.clearCanvas();
       const progress = byId("sstv-progress");
       progress.max = height;
       progress.value = 0;
-      byId("sstv-progress-label").textContent = `0 / ${height} · 0%`;
-      byId("sstv-save").disabled = true;
     },
 
     clearCanvas() {
       const width = this.canvas?.width || 320;
       const height = this.canvas?.height || 256;
       if (!this.context) return;
-      this.imageData = this.context.createImageData(width, height);
-      for (let index = 0; index < this.imageData.data.length; index += 4) {
-        this.imageData.data[index] = 8;
-        this.imageData.data[index + 1] = 12;
-        this.imageData.data[index + 2] = 17;
-        this.imageData.data[index + 3] = 255;
+      const image = this.context.createImageData(width, height);
+      for (let index = 0; index < image.data.length; index += 4) {
+        image.data[index] = 8;
+        image.data[index + 1] = 12;
+        image.data[index + 2] = 17;
+        image.data[index + 3] = 255;
       }
-      this.context.putImageData(this.imageData, 0, 0);
+      this.context.putImageData(image, 0, 0);
+      this.visibleRows = 0;
+      this.totalRenderedRows = 0;
+      const save = byId("sstv-save");
+      if (save) save.disabled = true;
+      const freeze = byId("sstv-freeze");
+      if (freeze) freeze.disabled = !this.decoder?.enabled;
+      this.updateProgressUi();
+    },
+
+    updateBufferUi() {
+      const element = byId("sstv-buffer");
+      if (!element) return;
+      const current = this.formatDuration(this.history.durationSeconds);
+      const maximum = this.formatDuration(this.history.seconds);
+      element.textContent = `Buffer ${current} / ${maximum}`;
+    },
+
+    updateProgressUi() {
+      const progress = byId("sstv-progress");
+      const label = byId("sstv-progress-label");
+      if (!progress || !label) return;
+      const height = this.canvas?.height || 256;
+      progress.max = height;
+      progress.value = Math.min(height, this.visibleRows);
+
+      if (this.replayActive) {
+        const end = Math.max(this.replayStart + 1, this.history.totalWritten);
+        const ratio = clamp((this.replayCursor - this.replayStart) / (end - this.replayStart), 0, 1);
+        label.textContent = `Replay ${Math.round(ratio * 100)}% · ${this.totalRenderedRows} rows`;
+      } else if (this.frozen) {
+        label.textContent = `Frozen · ${this.visibleRows}/${height} visible rows`;
+      } else {
+        label.textContent = `Live · ${this.visibleRows}/${height} visible · ${this.totalRenderedRows} total`;
+      }
+    },
+
+    formatDuration(seconds) {
+      const total = Math.max(0, Math.floor(Number(seconds) || 0));
+      const minutes = Math.floor(total / 60);
+      const remainder = total % 60;
+      return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
     },
 
     savePng() {
-      if (!this.canvas) return;
-      const mode = this.decoder?.mode?.label?.replace(/\s+/g, "-").toLowerCase() || "sstv";
+      if (!this.canvas || this.visibleRows === 0) return;
+      const selected = MODES[byId("sstv-mode")?.value];
+      const mode = selected?.label?.replace(/\s+/g, "-").toLowerCase() || "sstv";
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const link = document.createElement("a");
       link.href = this.canvas.toDataURL("image/png");
@@ -888,15 +1247,15 @@
       badge.className = "sstv-status";
       if (!enabled) {
         badge.textContent = "OFF";
-      } else if (this.statusState === "complete") {
-        badge.textContent = "DONE";
+      } else if (this.frozen) {
+        badge.textContent = "HOLD";
         badge.classList.add("complete");
-      } else if (this.statusState === "receiving") {
-        badge.textContent = "RX";
-        badge.classList.add("receiving");
-      } else if (this.statusState === "vis") {
-        badge.textContent = "VIS";
+      } else if (this.replayActive) {
+        badge.textContent = "REPLAY";
         badge.classList.add("vis");
+      } else if (this.statusState === "receiving") {
+        badge.textContent = "LIVE";
+        badge.classList.add("receiving");
       } else {
         badge.textContent = "WAIT";
         badge.classList.add("waiting");
