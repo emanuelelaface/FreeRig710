@@ -147,11 +147,11 @@
       this.activateMode(this.modePreference, "manual");
     }
 
-    setModePreference(modeKey) {
+    setModePreference(modeKey, restart = true) {
       const next = MODES[modeKey] ? modeKey : "scottie1";
-      if (next === this.modePreference) return;
+      const changed = next !== this.modePreference;
       this.modePreference = next;
-      if (!this.enabled) return;
+      if (!this.enabled || !restart || !changed) return;
       this.resetDemodulator();
       this.resetProtocol(true);
       this.activateMode(next, "manual");
@@ -175,7 +175,6 @@
       this.lastSyncStart = -Infinity;
       this.lastQueuedSync = -Infinity;
       this.nextExpectedSync = null;
-      this.consecutiveSynthetic = 0;
       this.syncRunStart = null;
       this.syncRunFrequencySum = 0;
       this.syncRunValidCount = 0;
@@ -207,7 +206,6 @@
       this.lastSyncStart = -Infinity;
       this.lastQueuedSync = -Infinity;
       this.nextExpectedSync = null;
-      this.consecutiveSynthetic = 0;
       this.imageStartIndex = this.frequencyIndex;
       this.callbacks.mode?.({ ...mode, source, offsetHz: Math.round(this.frequencyOffset) });
       this.emitStatus("sync", `${mode.label} · waiting for line sync`);
@@ -543,17 +541,7 @@
       const period = this.msToSamples(this.lineDurationMs());
       const window = this.msToSamples(this.syncSearchWindowMs());
       while (this.frequencyIndex > this.nextExpectedSync + window) {
-        // Bridge only very short fades. During silence or between images, stop
-        // the line clock and wait for a real sync instead of generating endless
-        // synthetic rows that would scroll valid pictures away.
-        if (this.consecutiveSynthetic >= 2) {
-          this.nextExpectedSync = null;
-          this.consecutiveSynthetic = 0;
-          return;
-        }
-        if (this.queueTrackedLine(this.nextExpectedSync, 0, true)) {
-          this.consecutiveSynthetic += 1;
-        }
+        this.queueTrackedLine(this.nextExpectedSync, 0, true);
         this.nextExpectedSync += period;
       }
     }
@@ -569,26 +557,12 @@
       if (this.nextExpectedSync == null) {
         this.queueTrackedLine(syncStart, durationMs, false);
         this.nextExpectedSync = syncStart + period;
-        this.consecutiveSynthetic = 0;
-        this.processPendingLines();
-        return;
-      }
-
-      const missedPeriods = Math.floor((syncStart - this.nextExpectedSync + window) / Math.max(1, period));
-      if (missedPeriods > 2) {
-        // A new burst/image started. Re-anchor to the measured sync.
-        this.nextExpectedSync = null;
-        this.consecutiveSynthetic = 0;
-        this.queueTrackedLine(syncStart, durationMs, false);
-        this.nextExpectedSync = syncStart + period;
         this.processPendingLines();
         return;
       }
 
       while (syncStart > this.nextExpectedSync + window) {
-        if (this.queueTrackedLine(this.nextExpectedSync, 0, true)) {
-          this.consecutiveSynthetic += 1;
-        }
+        this.queueTrackedLine(this.nextExpectedSync, 0, true);
         this.nextExpectedSync += period;
       }
 
@@ -597,7 +571,6 @@
         const trackedSync = this.nextExpectedSync + error * 0.35;
         this.queueTrackedLine(trackedSync, durationMs, false);
         this.nextExpectedSync = trackedSync + period;
-        this.consecutiveSynthetic = 0;
       }
       this.processPendingLines();
     }
@@ -880,12 +853,18 @@
     history: new AudioHistory(360),
     canvas: null,
     context: null,
+    canvasWrap: null,
+    frameCanvases: [],
+    frameContexts: [],
+    frameWidth: 320,
+    frameHeight: 256,
     statusState: "off",
     decoderStatusText: "Decoder off",
     lastSignal: null,
-    visibleRows: 0,
     totalRenderedRows: 0,
     frozen: false,
+    followLive: true,
+    programmaticScroll: false,
     replayActive: false,
     replayCursor: 0,
     replayStart: 0,
@@ -896,15 +875,28 @@
     init() {
       if (this.initialized) return;
       const canvas = byId("sstv-canvas");
-      if (!canvas) return;
+      const canvasWrap = byId("sstv-canvas-wrap");
+      if (!canvas || !canvasWrap) return;
       this.initialized = true;
       this.canvas = canvas;
+      this.canvasWrap = canvasWrap;
       this.context = canvas.getContext("2d", { alpha: false });
       this.context.imageSmoothingEnabled = false;
+      this.frameCanvases = [canvas];
+      this.frameContexts = [this.context];
       const modeSelect = byId("sstv-mode");
       const enabled = byId("sstv-enabled");
 
       if (!MODES[modeSelect.value]) modeSelect.value = "scottie1";
+
+      this.canvasWrap.addEventListener("scroll", () => {
+        if (this.programmaticScroll) return;
+        const remaining = this.canvasWrap.scrollHeight
+          - this.canvasWrap.clientHeight
+          - this.canvasWrap.scrollTop;
+        this.followLive = remaining <= 12;
+        this.updateProgressUi();
+      }, { passive: true });
 
       this.decoder = new SSTVDecoder({
         clearImage: () => this.clearCanvas(),
@@ -916,7 +908,7 @@
         lines: (lines) => this.appendRows(lines),
         progress: () => this.updateProgressUi(),
         complete: () => {
-          byId("sstv-save").disabled = this.visibleRows === 0;
+          byId("sstv-save").disabled = this.totalRenderedRows === 0;
         },
         signal: (signal) => {
           this.lastSignal = signal;
@@ -950,11 +942,11 @@
         this.cancelReplay();
         this.history.clear();
         this.frozen = false;
+        this.followLive = true;
         this.updateFreezeButton();
-        this.decoder.setModePreference(modeSelect.value);
+        this.decoder.setModePreference(modeSelect.value, false);
         this.decoder.setEnabled(active);
         modeSelect.disabled = !active;
-        byId("sstv-reset").disabled = !active;
         byId("sstv-freeze").disabled = !active;
         if (active) {
           this.clearCanvas();
@@ -968,20 +960,19 @@
       modeSelect.addEventListener("change", () => {
         if (!MODES[modeSelect.value]) return;
         this.frozen = false;
+        this.followLive = true;
         this.updateFreezeButton();
-        this.decoder.setModePreference(modeSelect.value);
-        if (enabled.checked && this.audioReady) this.startReplay("mode changed");
+        this.decoder.setModePreference(modeSelect.value, false);
+        if (enabled.checked && this.audioReady) this.redecodeEntireBuffer("mode changed");
       });
 
-      byId("sstv-reset").addEventListener("click", () => this.startReplay("manual replay"));
       byId("sstv-freeze").addEventListener("click", () => this.toggleFreeze());
-      byId("sstv-save").addEventListener("click", () => this.savePng());
+      byId("sstv-save").addEventListener("click", () => this.saveVisiblePng());
 
       modeSelect.disabled = true;
       enabled.disabled = true;
-      byId("sstv-reset").disabled = true;
       byId("sstv-freeze").disabled = true;
-      this.clearCanvas();
+      this.prepareCanvas(this.frameWidth, this.frameHeight);
       this.updateBufferUi();
       this.render();
     },
@@ -999,7 +990,6 @@
       }
       const active = Boolean(this.audioReady && enabled.checked);
       byId("sstv-mode").disabled = !active;
-      byId("sstv-reset").disabled = !active;
       byId("sstv-freeze").disabled = !active;
       if (!this.audioReady) {
         byId("sstv-detail").textContent = "Enable audio first";
@@ -1020,6 +1010,7 @@
 
       if (rateReset) {
         this.cancelReplay();
+        this.followLive = true;
         this.decoder.reset(true);
       }
 
@@ -1030,13 +1021,13 @@
       this.decoder.feed(buffer, sampleRate);
     },
 
-    startReplay(reason = "replay") {
+    redecodeEntireBuffer(reason = "mode changed") {
       if (!this.decoder?.enabled) return;
       this.cancelReplay();
       this.frozen = false;
+      this.followLive = true;
       this.updateFreezeButton();
       this.decoder.reset(true);
-      this.visibleRows = 0;
       this.totalRenderedRows = 0;
       byId("sstv-save").disabled = true;
 
@@ -1051,7 +1042,7 @@
       this.replayStart = this.history.oldestIndex;
       this.replayCursor = this.replayStart;
       this.replayGeneration += 1;
-      byId("sstv-detail").textContent = `Re-decoding audio buffer · ${reason}`;
+      byId("sstv-detail").textContent = `Re-decoding complete audio buffer · ${reason}`;
       this.updateProgressUi();
       this.render();
       this.scheduleReplay();
@@ -1087,12 +1078,9 @@
       while (this.replayActive && generation === this.replayGeneration) {
         const oldest = this.history.oldestIndex;
         if (this.replayCursor < oldest) {
-          // The circular buffer overtook a very slow replay. Restart from the
-          // oldest audio still available so timing remains internally coherent.
           this.replayCursor = oldest;
           this.replayStart = oldest;
           this.decoder.reset(true);
-          this.visibleRows = 0;
           this.totalRenderedRows = 0;
         }
 
@@ -1130,64 +1118,84 @@
         return;
       }
       this.frozen = false;
+      this.followLive = true;
       this.updateFreezeButton();
-      this.startReplay("resume after freeze");
+      this.redecodeEntireBuffer("resume after freeze");
     },
 
     updateFreezeButton() {
       const button = byId("sstv-freeze");
       if (!button) return;
-      button.textContent = this.frozen ? "Resume / replay" : "Freeze image";
+      button.textContent = this.frozen ? "Resume decoding" : "Freeze image";
+    },
+
+    makeFrameCanvas(index) {
+      const frame = index === 0 ? this.canvas : document.createElement("canvas");
+      frame.width = this.frameWidth;
+      frame.height = this.frameHeight;
+      frame.className = "sstv-frame-canvas";
+      frame.setAttribute("aria-label", `Decoded SSTV buffer frame ${index + 1}`);
+      if (index > 0) this.canvasWrap.appendChild(frame);
+      const context = frame.getContext("2d", { alpha: false });
+      context.imageSmoothingEnabled = false;
+      this.fillContextBackground(context, this.frameWidth, this.frameHeight);
+      this.frameCanvases[index] = frame;
+      this.frameContexts[index] = context;
+      return context;
+    },
+
+    ensureFrame(index) {
+      while (this.frameCanvases.length <= index) this.makeFrameCanvas(this.frameCanvases.length);
+      return this.frameContexts[index];
     },
 
     appendRows(lines) {
       if (!this.context || !this.canvas || this.frozen || !Array.isArray(lines)) return;
-      const width = this.canvas.width;
-      const height = this.canvas.height;
       for (const item of lines) {
-        if (!(item.row instanceof Uint8ClampedArray) || item.row.length !== width * 4) continue;
-        const rowImage = this.context.createImageData(width, 1);
+        if (!(item.row instanceof Uint8ClampedArray) || item.row.length !== this.frameWidth * 4) continue;
+        const absoluteRow = Math.max(0, Math.floor(Number(item.y) || 0));
+        const frameIndex = Math.floor(absoluteRow / this.frameHeight);
+        const frameRow = absoluteRow % this.frameHeight;
+        const context = this.ensureFrame(frameIndex);
+        const rowImage = context.createImageData(this.frameWidth, 1);
         rowImage.data.set(item.row);
-        let y;
-        if (this.visibleRows < height) {
-          y = this.visibleRows;
-          this.visibleRows += 1;
-        } else {
-          this.context.drawImage(this.canvas, 0, 1, width, height - 1, 0, 0, width, height - 1);
-          y = height - 1;
-        }
-        this.context.putImageData(rowImage, 0, y);
-        this.totalRenderedRows += 1;
+        context.putImageData(rowImage, 0, frameRow);
+        this.totalRenderedRows = Math.max(this.totalRenderedRows, absoluteRow + 1);
       }
-      byId("sstv-save").disabled = this.visibleRows === 0;
-      byId("sstv-freeze").disabled = this.visibleRows === 0;
+      byId("sstv-save").disabled = this.totalRenderedRows === 0;
+      byId("sstv-freeze").disabled = this.totalRenderedRows === 0;
       this.updateProgressUi();
+      if (this.followLive) this.scrollToLatest();
     },
 
     prepareCanvas(width, height) {
-      this.canvas.width = width;
-      this.canvas.height = height;
-      this.context.imageSmoothingEnabled = false;
+      this.frameWidth = Math.max(1, Math.floor(width || 320));
+      this.frameHeight = Math.max(1, Math.floor(height || 256));
+      this.canvasWrap.style.setProperty("--sstv-frame-width", String(this.frameWidth));
+      this.canvasWrap.style.setProperty("--sstv-frame-height", String(this.frameHeight));
       this.clearCanvas();
       const progress = byId("sstv-progress");
-      progress.max = height;
+      progress.max = this.frameHeight;
       progress.value = 0;
     },
 
+    fillContextBackground(context, width, height) {
+      context.fillStyle = "rgb(8, 12, 17)";
+      context.fillRect(0, 0, width, height);
+    },
+
     clearCanvas() {
-      const width = this.canvas?.width || 320;
-      const height = this.canvas?.height || 256;
-      if (!this.context) return;
-      const image = this.context.createImageData(width, height);
-      for (let index = 0; index < image.data.length; index += 4) {
-        image.data[index] = 8;
-        image.data[index + 1] = 12;
-        image.data[index + 2] = 17;
-        image.data[index + 3] = 255;
-      }
-      this.context.putImageData(image, 0, 0);
-      this.visibleRows = 0;
+      if (!this.canvasWrap || !this.canvas) return;
+      for (const frame of this.frameCanvases.slice(1)) frame.remove();
+      this.frameCanvases = [];
+      this.frameContexts = [];
+      this.canvas.width = this.frameWidth;
+      this.canvas.height = this.frameHeight;
+      this.canvas.className = "sstv-frame-canvas";
+      this.context = this.makeFrameCanvas(0);
       this.totalRenderedRows = 0;
+      this.followLive = true;
+      this.setScrollTop(0);
       const save = byId("sstv-save");
       if (save) save.disabled = true;
       const freeze = byId("sstv-freeze");
@@ -1195,30 +1203,66 @@
       this.updateProgressUi();
     },
 
+    setScrollTop(value) {
+      if (!this.canvasWrap) return;
+      this.programmaticScroll = true;
+      this.canvasWrap.scrollTop = Math.max(0, value);
+      window.requestAnimationFrame(() => {
+        this.programmaticScroll = false;
+        this.updateProgressUi();
+      });
+    },
+
+    scrollToLatest() {
+      if (!this.canvasWrap) return;
+      window.requestAnimationFrame(() => {
+        if (!this.followLive) return;
+        this.setScrollTop(this.canvasWrap.scrollHeight - this.canvasWrap.clientHeight);
+      });
+    },
+
+    visibleRowRange() {
+      if (!this.canvasWrap || !this.frameCanvases.length || this.totalRenderedRows <= 0) {
+        return { start: 0, end: 0 };
+      }
+      const firstHeight = this.frameCanvases[0].getBoundingClientRect().height || this.frameHeight;
+      const scale = this.frameHeight / Math.max(1, firstHeight);
+      const start = clamp(Math.floor(this.canvasWrap.scrollTop * scale), 0, Math.max(0, this.totalRenderedRows - 1));
+      const end = Math.min(this.totalRenderedRows, start + this.frameHeight);
+      return { start, end };
+    },
+
     updateBufferUi() {
       const element = byId("sstv-buffer");
       if (!element) return;
       const current = this.formatDuration(this.history.durationSeconds);
       const maximum = this.formatDuration(this.history.seconds);
-      element.textContent = `Buffer ${current} / ${maximum}`;
+      element.textContent = `Audio buffer ${current} / ${maximum}`;
     },
 
     updateProgressUi() {
       const progress = byId("sstv-progress");
       const label = byId("sstv-progress-label");
       if (!progress || !label) return;
-      const height = this.canvas?.height || 256;
-      progress.max = height;
-      progress.value = Math.min(height, this.visibleRows);
+      progress.max = this.frameHeight;
+      const frameLine = this.totalRenderedRows === 0
+        ? 0
+        : ((this.totalRenderedRows - 1) % this.frameHeight) + 1;
+      progress.value = frameLine;
 
       if (this.replayActive) {
         const end = Math.max(this.replayStart + 1, this.history.totalWritten);
         const ratio = clamp((this.replayCursor - this.replayStart) / (end - this.replayStart), 0, 1);
-        label.textContent = `Replay ${Math.round(ratio * 100)}% · ${this.totalRenderedRows} rows`;
+        label.textContent = `Re-decode ${Math.round(ratio * 100)}% · ${this.totalRenderedRows} rows`;
       } else if (this.frozen) {
-        label.textContent = `Frozen · ${this.visibleRows}/${height} visible rows`;
+        const range = this.visibleRowRange();
+        label.textContent = `Frozen · rows ${range.start + 1}-${range.end} / ${this.totalRenderedRows}`;
+      } else if (this.totalRenderedRows > 0) {
+        const range = this.visibleRowRange();
+        const position = this.followLive ? "latest" : "scrolled";
+        label.textContent = `Live · ${position} · rows ${range.start + 1}-${range.end} / ${this.totalRenderedRows}`;
       } else {
-        label.textContent = `Live · ${this.visibleRows}/${height} visible · ${this.totalRenderedRows} total`;
+        label.textContent = "Live · 0 decoded rows";
       }
     },
 
@@ -1229,14 +1273,45 @@
       return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
     },
 
-    savePng() {
-      if (!this.canvas || this.visibleRows === 0) return;
+    saveVisiblePng() {
+      if (!this.canvasWrap || this.totalRenderedRows === 0) return;
+      const output = document.createElement("canvas");
+      output.width = this.frameWidth;
+      output.height = this.frameHeight;
+      const outputContext = output.getContext("2d", { alpha: false });
+      outputContext.imageSmoothingEnabled = false;
+      this.fillContextBackground(outputContext, this.frameWidth, this.frameHeight);
+
+      const range = this.visibleRowRange();
+      let sourceRow = range.start;
+      let destinationRow = 0;
+      let remaining = this.frameHeight;
+      while (remaining > 0 && sourceRow < this.totalRenderedRows) {
+        const frameIndex = Math.floor(sourceRow / this.frameHeight);
+        const frameRow = sourceRow % this.frameHeight;
+        const available = Math.min(
+          remaining,
+          this.frameHeight - frameRow,
+          this.totalRenderedRows - sourceRow,
+        );
+        const sourceCanvas = this.frameCanvases[frameIndex];
+        if (!sourceCanvas || available <= 0) break;
+        outputContext.drawImage(
+          sourceCanvas,
+          0, frameRow, this.frameWidth, available,
+          0, destinationRow, this.frameWidth, available,
+        );
+        sourceRow += available;
+        destinationRow += available;
+        remaining -= available;
+      }
+
       const selected = MODES[byId("sstv-mode")?.value];
       const mode = selected?.label?.replace(/\s+/g, "-").toLowerCase() || "sstv";
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const link = document.createElement("a");
-      link.href = this.canvas.toDataURL("image/png");
-      link.download = `ft710-${mode}-${stamp}.png`;
+      link.href = output.toDataURL("image/png");
+      link.download = `ft710-${mode}-rows-${range.start + 1}-${range.start + this.frameHeight}-${stamp}.png`;
       link.click();
     },
 
@@ -1251,7 +1326,7 @@
         badge.textContent = "HOLD";
         badge.classList.add("complete");
       } else if (this.replayActive) {
-        badge.textContent = "REPLAY";
+        badge.textContent = "RE-DECODE";
         badge.classList.add("vis");
       } else if (this.statusState === "receiving") {
         badge.textContent = "LIVE";

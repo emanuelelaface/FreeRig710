@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Yaesu FT-710 Remote</title>
-  <link rel="stylesheet" href="styles.css?v=1.15.0">
+  <link rel="stylesheet" href="styles.css?v=1.15.2">
 </head>
 <body>
   <main class="shell">
@@ -478,16 +478,15 @@
         <div id="sstv-detail" class="sstv-detail">Enable audio first</div>
         <div id="sstv-signal" class="sstv-signal">Tone -- Hz · waiting for audio</div>
 
-        <div class="sstv-canvas-wrap">
+        <div id="sstv-canvas-wrap" class="sstv-canvas-wrap" aria-label="Scrollable decoded SSTV buffer">
           <canvas id="sstv-canvas" width="320" height="256" aria-label="Decoded SSTV image"></canvas>
         </div>
 
         <div class="sstv-actions">
-          <button id="sstv-reset" type="button">Replay buffer</button>
           <button id="sstv-freeze" type="button">Freeze image</button>
-          <button id="sstv-save" type="button" disabled>Save PNG</button>
+          <button id="sstv-save" type="button" disabled>Save visible PNG</button>
         </div>
-        <p class="help">The decoder keeps the last six minutes of RX audio. Change mode to re-decode the complete buffer; VIS is only a suggestion and never blocks decoding. The canvas scrolls continuously, so freeze it when the complete image is visible and then save the PNG.</p>
+        <p class="help">The decoder keeps the last six minutes of RX audio. Every mode change automatically clears the decoded view and re-decodes the complete audio buffer with the selected mode. Scroll the decoded buffer vertically to find and align a complete image; Save visible PNG exports exactly one image-height viewport. VIS is only a suggestion and never blocks decoding.</p>
       </article>
 
       <article class="card panel-card" data-panel-id="transmitter-and-tuner">
@@ -579,7 +578,7 @@
 
   <script src="config.js?v=1.12.3"></script>
   <script src="cw.js?v=1.12.3"></script>
-  <script src="sstv.js?v=1.15.0"></script>
+  <script src="sstv.js?v=1.15.2"></script>
   <script src="app.js?v=1.19.0"></script>
 </body>
 </html>

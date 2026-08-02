@@ -668,12 +668,15 @@ body.panel-reorder-active {
 .sstv-vis-hint { margin-top: 7px; }
 .sstv-signal { margin-top: 7px; }
 .sstv-canvas-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: block;
   width: 100%;
-  margin-top: 12px;
-  overflow: hidden;
+  max-width: 640px;
+  aspect-ratio: var(--sstv-frame-width, 320) / var(--sstv-frame-height, 256);
+  margin: 12px auto 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
   border: 1px solid var(--line);
   border-radius: 10px;
   background:
@@ -683,17 +686,17 @@ body.panel-reorder-active {
   background-position: 0 0, 8px 8px;
   background-size: 16px 16px;
 }
-#sstv-canvas {
+#sstv-canvas,
+.sstv-frame-canvas {
   display: block;
   width: 100%;
-  max-width: 640px;
   height: auto;
   image-rendering: pixelated;
   background: #080c11;
 }
 .sstv-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 10px;
 }
