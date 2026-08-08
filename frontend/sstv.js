@@ -720,9 +720,14 @@
       if (!chains.length) return false;
       for (const chain of chains) chain.quality = this.acquisitionQuality(chain);
       const maximumTimingError = this.msToSamples(this.mode.family === "pd" ? 6 : 3.2);
+      // The instantaneous FM estimator is noisier on real Scottie signals:
+      // valid HF recordings can put about one third of samples just outside
+      // the nominal 1400..2450 Hz image band even when the 9 ms / line-period
+      // sync chain is exact. Keep the stricter gate for other families.
+      const minimumVideoFraction = this.mode.family === "scottie" ? 0.60 : 0.70;
       const viable = chains.filter((chain) =>
         chain.timingError <= maximumTimingError
-        && chain.quality.videoFraction >= 0.70
+        && chain.quality.videoFraction >= minimumVideoFraction
         && chain.quality.validFraction >= 0.55
         && chain.quality.videoBins >= 10);
       if (!viable.length) return false;
