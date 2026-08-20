@@ -2205,6 +2205,10 @@ function initAudio() {
   const rxVolumeValue = byId("rx-volume-value");
   const txMicGain = byId("tx-mic-gain");
   const txMicGainValue = byId("tx-mic-gain-value");
+  const recordAudioButton = byId("record-audio-button");
+  const playAudioButton = byId("play-audio-button");
+  const playAudioFile = byId("play-audio-file");
+  const audioFileStatus = byId("audio-file-status");
 
   let socket = null;
   let context = null;
@@ -2219,6 +2223,16 @@ function initAudio() {
   let speakerLimiter = null;
   let audioReady = false;
   let receivePcmSampleRate = 48000;
+  let transmitPcmSampleRate = 48000;
+  let recordingActive = false;
+  let recordingChunks = [];
+  let recordingBytes = 0;
+  let recordingSampleRate = 48000;
+  let recordingStartedAt = 0;
+  let recordingUiTimer = null;
+  let filePlaybackActive = false;
+  let filePlaybackAbort = false;
+  let filePlaybackSequence = 0;
   let starting = false;
   let stopping = false;
   let pttActive = false;
@@ -2252,12 +2266,263 @@ function initAudio() {
   };
 
   const setControlsEnabled = (enabled) => {
-    pttButton.disabled = !enabled;
+    pttButton.disabled = !enabled || pttPending || filePlaybackActive;
     rxVolume.disabled = !enabled;
-    txMicGain.disabled = !enabled;
+    txMicGain.disabled = !enabled || filePlaybackActive;
+    recordAudioButton.disabled = !enabled || filePlaybackActive;
+    playAudioButton.disabled = !enabled || recordingActive;
     window.FT710_CW?.setAudioReady(enabled);
     window.FT710_SSTV?.setAudioReady(enabled);
     window.FT710_FT8?.setAudioReady(enabled);
+  };
+
+  const updateCaptureState = () => {
+    captureNode?.port.postMessage({ type: "capture", enabled: pttActive && !filePlaybackActive });
+  };
+
+  const formatAudioDuration = (seconds) => {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const minutes = Math.floor(total / 60);
+    const secs = total % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  };
+
+  const wavHeader = (pcmBytes, sampleRate) => {
+    const header = new ArrayBuffer(44);
+    const view = new DataView(header);
+    const text = (offset, value) => {
+      for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
+    };
+    text(0, "RIFF");
+    view.setUint32(4, 36 + pcmBytes, true);
+    text(8, "WAVE");
+    text(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    text(36, "data");
+    view.setUint32(40, pcmBytes, true);
+    return header;
+  };
+
+  const recordingFilename = () => {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, "0");
+    return `FreeRig710-RX-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.wav`;
+  };
+
+  const startRecording = () => {
+    if (!audioReady || recordingActive || filePlaybackActive) return;
+    recordingActive = true;
+    recordingChunks = [];
+    recordingBytes = 0;
+    recordingSampleRate = receivePcmSampleRate || 48000;
+    recordingStartedAt = performance.now();
+    recordAudioButton.textContent = "Stop Recording";
+    recordAudioButton.classList.add("recording");
+    setControlsEnabled(audioReady);
+    const render = () => {
+      if (!recordingActive) return;
+      const seconds = (performance.now() - recordingStartedAt) / 1000;
+      audioFileStatus.textContent = `Recording RX · ${formatAudioDuration(seconds)} · WAV ${recordingSampleRate} Hz mono`;
+    };
+    render();
+    clearInterval(recordingUiTimer);
+    recordingUiTimer = window.setInterval(render, 250);
+    showToast("RX recording started");
+  };
+
+  const finishRecording = () => {
+    if (!recordingActive) return null;
+    recordingActive = false;
+    clearInterval(recordingUiTimer);
+    recordingUiTimer = null;
+    recordAudioButton.textContent = "Record Audio";
+    recordAudioButton.classList.remove("recording");
+    setControlsEnabled(audioReady);
+    const chunks = recordingChunks;
+    const bytes = recordingBytes;
+    const sampleRate = recordingSampleRate || 48000;
+    recordingChunks = [];
+    recordingBytes = 0;
+    if (!bytes) {
+      audioFileStatus.textContent = "Recording stopped · no RX audio received";
+      showToast("Recording contains no RX audio", true);
+      return null;
+    }
+    const blob = new Blob([wavHeader(bytes, sampleRate), ...chunks], { type: "audio/wav" });
+    audioFileStatus.textContent = `Recording ready · ${(bytes / 2 / sampleRate).toFixed(1)} s · ${(blob.size / 1024 / 1024).toFixed(1)} MiB`;
+    return { blob, filename: recordingFilename() };
+  };
+
+  const saveRecording = async (recording) => {
+    if (!recording) return;
+    if (typeof window.showSaveFilePicker === "function") {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: recording.filename,
+          types: [{ description: "WAV audio", accept: { "audio/wav": [".wav"] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(recording.blob);
+        await writable.close();
+        audioFileStatus.textContent = `Saved ${recording.filename}`;
+        showToast("RX recording saved");
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          audioFileStatus.textContent = "Recording save cancelled";
+          return;
+        }
+        // Fall through to the download fallback on browsers without a usable
+        // File System Access implementation.
+      }
+    }
+    const url = URL.createObjectURL(recording.blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = recording.filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    audioFileStatus.textContent = `Saved ${recording.filename}`;
+    showToast("RX recording saved");
+  };
+
+  const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, Math.max(0, ms)));
+
+  const waitForPttState = async (enabled, timeoutMs = 4500) => {
+    const startedAt = performance.now();
+    while (performance.now() - startedAt < timeoutMs) {
+      if (!audioReady || !socket || socket.readyState !== WebSocket.OPEN) throw new Error("Audio connection is not ready");
+      if (!pttPending && pttActive === Boolean(enabled)) return;
+      if (enabled && !pttPending && !pttActive && performance.now() - startedAt > 150) throw new Error("PTT was not armed");
+      await sleep(20);
+    }
+    throw new Error(enabled ? "Timed out waiting for PTT ON" : "Timed out waiting for PTT OFF");
+  };
+
+  const decodeAudioFile = async (file) => {
+    if (!context) throw new Error("Enable audio first");
+    const encoded = await file.arrayBuffer();
+    const decoded = await context.decodeAudioData(encoded.slice(0));
+    if (!decoded.length || !decoded.numberOfChannels) throw new Error("Audio file is empty");
+
+    const sourceLength = decoded.length;
+    const channels = [];
+    for (let channel = 0; channel < decoded.numberOfChannels; channel += 1) channels.push(decoded.getChannelData(channel));
+    const sourceRate = decoded.sampleRate || transmitPcmSampleRate || 48000;
+    const targetRate = transmitPcmSampleRate || 48000;
+    const outputLength = Math.max(1, Math.round(sourceLength * targetRate / sourceRate));
+    const output = new Int16Array(outputLength);
+
+    for (let index = 0; index < outputLength; index += 1) {
+      const sourcePosition = index * sourceRate / targetRate;
+      const firstIndex = Math.min(sourceLength - 1, Math.floor(sourcePosition));
+      const secondIndex = Math.min(sourceLength - 1, firstIndex + 1);
+      const fraction = sourcePosition - firstIndex;
+      let first = 0;
+      let second = 0;
+      for (const channel of channels) {
+        first += channel[firstIndex];
+        second += channel[secondIndex];
+      }
+      first /= channels.length;
+      second /= channels.length;
+      const sample = Math.max(-1, Math.min(1, first + (second - first) * fraction));
+      output[index] = sample < 0 ? Math.round(sample * 32768) : Math.round(sample * 32767);
+    }
+    return { pcm: output, sampleRate: targetRate, duration: output.length / targetRate };
+  };
+
+  const stopFilePlayback = () => {
+    if (!filePlaybackActive) return;
+    filePlaybackAbort = true;
+    playAudioButton.textContent = "Stopping…";
+    if (pttActive && !pttPending) requestPtt(false);
+  };
+
+  const transmitAudioFile = async (file) => {
+    if (!audioReady || filePlaybackActive || recordingActive) return;
+    const sequence = ++filePlaybackSequence;
+    filePlaybackActive = true;
+    filePlaybackAbort = false;
+    playAudioButton.textContent = "Stop Audio";
+    playAudioButton.classList.add("playing");
+    updateCaptureState();
+    setControlsEnabled(audioReady);
+    audioFileStatus.textContent = `Loading ${file.name}…`;
+
+    try {
+      const decoded = await decodeAudioFile(file);
+      if (filePlaybackAbort || sequence !== filePlaybackSequence) return;
+      audioFileStatus.textContent = `TX file ready · ${formatAudioDuration(decoded.duration)} · ${decoded.sampleRate} Hz mono`;
+
+      if (!requestPtt(true) && !pttActive) throw new Error("Unable to request PTT");
+      await waitForPttState(true);
+      if (filePlaybackAbort || sequence !== filePlaybackSequence) return;
+
+      const frameSamples = Math.max(1, Math.round(decoded.sampleRate * txPacketMs / 1000));
+      const startedAt = performance.now();
+      let lastUiUpdate = 0;
+      for (let offset = 0; offset < decoded.pcm.length; offset += frameSamples) {
+        if (filePlaybackAbort || sequence !== filePlaybackSequence) break;
+        if (!audioReady || !socket || socket.readyState !== WebSocket.OPEN || !pttActive) {
+          throw new Error("TX stopped before audio file completed");
+        }
+        const targetAt = startedAt + offset * 1000 / decoded.sampleRate;
+        const waitMs = targetAt - performance.now();
+        if (waitMs > 1) await sleep(waitMs);
+        while (socket.bufferedAmount > maxWebSocketBacklogBytes) {
+          if (filePlaybackAbort || !pttActive) break;
+          await sleep(5);
+        }
+        if (filePlaybackAbort || !pttActive) break;
+        const end = Math.min(decoded.pcm.length, offset + frameSamples);
+        socket.send(decoded.pcm.subarray(offset, end));
+        const elapsed = offset / decoded.sampleRate;
+        if (performance.now() - lastUiUpdate > 250) {
+          audioFileStatus.textContent = `Transmitting ${file.name} · ${formatAudioDuration(elapsed)} / ${formatAudioDuration(decoded.duration)}`;
+          lastUiUpdate = performance.now();
+        }
+      }
+
+      if (!filePlaybackAbort) {
+        const finishAt = startedAt + decoded.duration * 1000 + 120;
+        await sleep(Math.max(0, finishAt - performance.now()));
+        audioFileStatus.textContent = `Transmission complete · ${file.name}`;
+      } else {
+        audioFileStatus.textContent = `Transmission stopped · ${file.name}`;
+      }
+    } catch (error) {
+      if (!filePlaybackAbort) {
+        audioFileStatus.textContent = `TX file error · ${error?.message || String(error)}`;
+        showToast(error?.message || "Audio file transmission failed", true);
+      }
+    } finally {
+      const pendingDeadline = performance.now() + 800;
+      while (pttPending && performance.now() < pendingDeadline) await sleep(20);
+      if (pttPending) {
+        // WebSocket frames are ordered: queue an explicit OFF even if the ON
+        // acknowledgement is late, then clear the local state immediately.
+        releasePtt();
+      } else if (pttActive) {
+        requestPtt(false);
+        try { await waitForPttState(false, 3000); } catch (_) { releasePtt(); }
+      }
+      filePlaybackActive = false;
+      filePlaybackAbort = false;
+      playAudioButton.textContent = "Play Audio";
+      playAudioButton.classList.remove("playing");
+      playAudioFile.value = "";
+      updateCaptureState();
+      setControlsEnabled(audioReady);
+    }
   };
 
   const sendControl = (payload) => {
@@ -2290,7 +2555,7 @@ function initAudio() {
     pttActive = Boolean(enabled && audioReady);
     pttPending = false;
     if (pttActive) pttConfirmedAt = performance.now();
-    captureNode?.port.postMessage({ type: "capture", enabled: pttActive });
+    updateCaptureState();
     stopPttKeepalive();
     if (pttActive) {
       pttKeepalive = setInterval(() => {
@@ -2298,7 +2563,7 @@ function initAudio() {
       }, 500);
     }
     window.FT710_CW?.setVoicePtt(pttActive);
-    pttButton.disabled = !audioReady;
+    setControlsEnabled(audioReady);
     renderPtt();
   };
 
@@ -2307,11 +2572,11 @@ function initAudio() {
     const requested = Boolean(enabled);
     if (requested === pttActive) return true;
     pttPending = true;
-    pttButton.disabled = true;
+    setControlsEnabled(audioReady);
     pttButton.textContent = requested ? "PTT…" : "RX…";
     if (!sendControl({ type: "ptt", enabled: requested })) {
       pttPending = false;
-      pttButton.disabled = !audioReady;
+      setControlsEnabled(audioReady);
       renderPtt();
       return false;
     }
@@ -2326,7 +2591,7 @@ function initAudio() {
     captureNode?.port.postMessage({ type: "capture", enabled: false });
     window.FT710_CW?.setVoicePtt(false);
     if (mustNotifyRadio) sendControl({ type: "ptt", enabled: false });
-    pttButton.disabled = !audioReady;
+    setControlsEnabled(audioReady);
     renderPtt();
   };
 
@@ -2340,6 +2605,22 @@ function initAudio() {
   };
 
   const cleanupGraph = async () => {
+    filePlaybackAbort = true;
+    filePlaybackSequence += 1;
+    filePlaybackActive = false;
+    playAudioButton.textContent = "Play Audio";
+    playAudioButton.classList.remove("playing");
+    playAudioFile.value = "";
+    if (recordingActive) {
+      recordingActive = false;
+      clearInterval(recordingUiTimer);
+      recordingUiTimer = null;
+      recordingChunks = [];
+      recordingBytes = 0;
+      recordAudioButton.textContent = "Record Audio";
+      recordAudioButton.classList.remove("recording");
+      audioFileStatus.textContent = "Recording stopped because audio was disabled";
+    }
     releasePtt();
     audioReady = false;
     setControlsEnabled(false);
@@ -2516,7 +2797,7 @@ function initAudio() {
     };
 
     captureNode.port.onmessage = (event) => {
-      if (!audioReady || !pttActive || !socket || socket.readyState !== WebSocket.OPEN) return;
+      if (!audioReady || !pttActive || filePlaybackActive || !socket || socket.readyState !== WebSocket.OPEN) return;
       if (!(event.data instanceof ArrayBuffer)) return;
       if (socket.bufferedAmount > maxWebSocketBacklogBytes) return;
       socket.send(event.data);
@@ -2561,7 +2842,10 @@ function initAudio() {
             applyPttState(false);
             const serverRate = Number(message.sample_rate);
             receivePcmSampleRate = Number.isFinite(serverRate) && serverRate > 0 ? serverRate : 48000;
-            detail.textContent = `FreeRig710 WebSocket audio · ${receivePcmSampleRate} Hz · latching PTT · watchdog ${message.ptt_watchdog_ms || 1500} ms`;
+            const txServerRate = Number(message.tx_sample_rate);
+            transmitPcmSampleRate = Number.isFinite(txServerRate) && txServerRate > 0 ? txServerRate : 48000;
+            audioFileStatus.textContent = "RX recorder idle · TX file player idle";
+            detail.textContent = `FreeRig710 WebSocket audio · RX ${receivePcmSampleRate} Hz · TX ${transmitPcmSampleRate} Hz · latching PTT · watchdog ${message.ptt_watchdog_ms || 1500} ms`;
             showToast("Audio enabled");
           } else if (message.type === "ptt") {
             applyPttState(Boolean(message.enabled));
@@ -2576,6 +2860,11 @@ function initAudio() {
           return;
         }
         if (event.data instanceof ArrayBuffer && playbackNode) {
+          if (recordingActive) {
+            const chunk = event.data.slice(0);
+            recordingChunks.push(chunk);
+            recordingBytes += chunk.byteLength;
+          }
           // The WebSocket payload is radio PCM at the ESP32-declared rate, not
           // necessarily the browser AudioContext rate. DSP must use this clock.
           const receiveSampleRate = receivePcmSampleRate;
@@ -2612,6 +2901,37 @@ function initAudio() {
     else void enableAudio();
   });
 
+  recordAudioButton.addEventListener("click", () => {
+    if (!audioReady) {
+      showToast("Enable audio first", true);
+      return;
+    }
+    if (!recordingActive) {
+      startRecording();
+      return;
+    }
+    const recording = finishRecording();
+    void saveRecording(recording);
+  });
+
+  playAudioButton.addEventListener("click", () => {
+    if (!audioReady) {
+      showToast("Enable audio first", true);
+      return;
+    }
+    if (filePlaybackActive) {
+      stopFilePlayback();
+      return;
+    }
+    playAudioFile.click();
+  });
+
+  playAudioFile.addEventListener("change", () => {
+    const file = playAudioFile.files?.[0];
+    if (!file) return;
+    void transmitAudioFile(file);
+  });
+
   rxVolume.addEventListener("input", () => {
     rxVolumeValue.textContent = `${rxVolume.value}%`;
     try { localStorage.setItem("ft710-rx-volume-v2", rxVolume.value); } catch (_) { /* optional */ }
@@ -2630,7 +2950,7 @@ function initAudio() {
 
   pttButton.addEventListener("click", (event) => {
     event.preventDefault();
-    if (!audioReady) return;
+    if (!audioReady || filePlaybackActive) return;
     requestPtt(!pttActive);
   });
 

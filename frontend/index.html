@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FreeRig710 · Yaesu FT-710</title>
-  <link rel="stylesheet" href="styles.css?v=1.0">
+  <link rel="stylesheet" href="styles.css?v=1.0-audio">
 </head>
 <body>
   <main class="shell">
@@ -375,6 +375,12 @@
         </div>
         <p class="help audio-help">Audio devices remain closed until you enable them manually. Use a headset to prevent acoustic feedback.</p>
         <button id="audio-toggle" class="wide" type="button">Enable audio</button>
+        <div class="audio-file-actions" aria-label="Audio record and playback controls">
+          <button id="record-audio-button" type="button" disabled>Record Audio</button>
+          <button id="play-audio-button" type="button" disabled>Play Audio</button>
+        </div>
+        <input id="play-audio-file" class="visually-hidden" type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.flac">
+        <p id="audio-file-status" class="help audio-file-status">RX recorder idle · TX file player idle</p>
 
         <label class="control-label" for="rx-volume">Speaker boost: <strong id="rx-volume-value">600%</strong></label>
         <input id="rx-volume" type="range" min="0" max="1200" step="10" value="600" disabled>
@@ -596,6 +602,6 @@
   <script src="config.js?v=1.0"></script>
   <script src="cw.js?v=1.0"></script>
   <script src="sstv.js?v=1.0"></script>
-  <script src="app.js?v=1.0"></script>
+  <script src="app.js?v=1.0-audio"></script>
 </body>
 </html>

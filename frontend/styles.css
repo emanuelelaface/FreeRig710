@@ -167,6 +167,39 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
 .audio-status.live { border-color: #397759; color: #aaf2c1; background: rgba(95,224,139,.09); }
 .audio-status.error { border-color: #8f3b48; color: #ffc1c8; background: rgba(255,100,116,.12); }
 .audio-card input[type="range"]:disabled { opacity: .4; }
+.audio-file-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+.audio-file-actions button { min-height: 42px; }
+.audio-file-actions button.recording {
+  border-color: #ff6474;
+  background: linear-gradient(180deg, #6c2430, #421820);
+  color: #fff;
+}
+.audio-file-actions button.playing {
+  border-color: #59b8f2;
+  background: linear-gradient(180deg, #173f58, #102d40);
+  color: #eaf8ff;
+}
+.audio-file-status {
+  min-height: 1.2em;
+  margin: 7px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
 .ptt-button {
   width: 100%;
   min-height: 72px;
