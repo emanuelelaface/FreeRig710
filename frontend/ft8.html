@@ -152,7 +152,7 @@
       <div class="ft8-page-section-title"><strong>Log QSO</strong><span id="ft8-logbook-count">0 worked calls</span></div>
       <div class="ft8-logbook-actions">
         <div id="ft8-adi-drop" class="ft8-adi-drop" tabindex="0" role="button" aria-label="Drop ADIF file here or choose a file"><strong>Import ADI File</strong><span>Drop .adi here</span><input id="ft8-adi-file" type="file" accept=".adi,text/plain"></div>
-        <div class="ft8-qrz-sync-controls" aria-label="QRZ Logbook synchronization"><button id="ft8-qrz-import" class="secondary small" type="button">QRZ Import</button><button id="ft8-qrz-sync" class="secondary small" type="button">QRZ Sync</button><button id="ft8-qrz-cancel" class="secondary small" type="button" disabled>Cancel</button><span id="ft8-qrz-sync-status">QRZ sync idle</span></div>
+        <div class="ft8-qrz-sync-controls" aria-label="QRZ Logbook synchronization"><button id="ft8-qrz-sync" class="secondary small" type="button" title="Authoritative full sync: replace the local worked log with QRZ Logbook">QRZ Sync</button><span id="ft8-qrz-sync-status">QRZ authoritative sync idle</span></div>
         <button id="ft8-log-qso" class="small" type="button" disabled>Log QSO</button>
       </div>
       <div class="ft8-logbook-progress" aria-live="polite"><progress id="ft8-adi-progress" max="100" value="0"></progress><strong id="ft8-adi-status">IndexedDB readying…</strong></div>
@@ -215,11 +215,12 @@
   </main>
 
   <script src="config.js?v=1.0"></script>
-  <script src="ft8-logbook.js?v=1.0"></script>
+  <script src="ft8-cty.js?v=1.0-cty1"></script>
+  <script src="ft8-logbook.js?v=1.0-country3"></script>
   <script src="ft8-geo.js?v=1.0"></script>
-  <script src="ft8-decode-rules.js?v=1.0"></script>
-  <script src="ft8-qso-machine.js?v=1.0-ft8r1"></script>
-  <script src="ft8.js?v=1.0-ft8r1"></script>
-  <script src="ft8-page.js?v=1.0-ft8r1"></script>
+  <script src="ft8-decode-rules.js?v=1.0-cty1"></script>
+  <script src="ft8-qso-machine.js?v=1.0-ft8r2"></script>
+  <script src="ft8.js?v=1.0-cty1-ft8r2"></script>
+  <script src="ft8-page.js?v=1.0-ft8r2"></script>
 </body>
 </html>

@@ -104,7 +104,6 @@
     decodeRows: [],
     txActivityRows: [],
     logbookReady: false,
-    qrzSyncCancelled: false,
     qrzSyncRunning: false,
     qsoCompletionPromise: null,
     qsoCompletionKey: "",
@@ -657,7 +656,7 @@
     },
 
     decodeRuleContext() {
-      return {myCall:this.myCall,myGrid:this.myGrid,selectedCall:this.qso?.dxCall||"",selectedRegion:this.decodeFilters?.region||this.decodeFilters?.continent||"",band:window.FT710_FT8_PAGE?.activeBand||"",mode:"FT8",logbook:window.FreeRig710FT8Logbook};
+      return {myCall:this.myCall,myGrid:this.myGrid,selectedCall:this.qso?.dxCall||"",selectedRegion:this.decodeFilters?.region||this.decodeFilters?.continent||"",band:window.FT710_FT8_PAGE?.activeBand||"",mode:"FT8",logbook:window.FreeRig710FT8Logbook,cty:window.FreeRig710FT8CTY,geo:window.FreeRig710FT8Geo};
     },
 
     async initLogbook() {
@@ -669,7 +668,10 @@
           const counts = await lb.loadIndexCaches();
           this.logbookReady = true;
           if (id("ft8-logbook-count")) id("ft8-logbook-count").textContent = `${counts.calls} worked calls · ${counts.dxcc} DXCC · ${counts.countries||0} countries`;
-          if (status && !status.dataset.importing) status.textContent = `Ready · ADIF ${lb.ADIF_VERSION}`;
+          if (status && !status.dataset.importing) {
+            const ctyStats=window.FreeRig710FT8CTY?.stats?.()||{};
+            status.textContent = ctyStats.loaded ? `Ready · ADIF ${lb.ADIF_VERSION} · CTY ${ctyStats.entities||0} entities` : `Ready · ADIF ${lb.ADIF_VERSION} · CTY database missing`;
+          }
           this.renderDecodeRows(); this.renderSelectedWorked();
           return counts;
         } catch (error) { if (status) status.textContent = `Logbook error: ${error?.message || error}`; }
@@ -696,22 +698,22 @@
       for (const eventName of ["dragenter","dragover"]) drop?.addEventListener(eventName, (event) => { event.preventDefault(); drop.classList.add("dragover"); });
       for (const eventName of ["dragleave","drop"]) drop?.addEventListener(eventName, (event) => { event.preventDefault(); drop.classList.remove("dragover"); });
       drop?.addEventListener("drop", (event) => void importFile(event.dataTransfer?.files?.[0]));
-      id("ft8-qrz-import")?.addEventListener("click", () => void this.runQrzImport(false, renderIndexCount));
-      id("ft8-qrz-sync")?.addEventListener("click", () => void this.runQrzImport(true, renderIndexCount));
-      id("ft8-qrz-cancel")?.addEventListener("click", () => {
-        this.qrzSyncCancelled = true;
-        void window.FreeRig710API?.post?.("/api/v1/qrz/fetch/cancel", {}).catch(() => {});
-      });
+      id("ft8-qrz-sync")?.addEventListener("click", () => void this.runQrzSync(renderIndexCount));
       window.addEventListener("freerig-ft8-logbook-updated", () => void renderIndexCount());
       try {
+        await window.FreeRig710FT8CTY?.ready;
         const wantedSchema=Number(lb.COUNTRY_KEY_SCHEMA||0);
         const haveSchema=Number(await lb.getPreference?.("countryKeySchema",0)||0);
-        if(wantedSchema>haveSchema){
-          if(status)status.textContent="Updating worked-country index…";
+        const ctyStats=window.FreeRig710FT8CTY?.stats?.()||{};
+        if(wantedSchema>haveSchema && ctyStats.loaded){
+          if(status)status.textContent="Reconciling callsign/DXCC country index…";
+          await lb.reconcileCtyMetadata?.();
           await lb.rebuildIndices();
           await lb.setPreference?.("countryKeySchema",wantedSchema);
+        } else if(wantedSchema>haveSchema && !ctyStats.loaded) {
+          console.warn("FT8 CTY database unavailable; country migration deferred",ctyStats.error||"");
         }
-      } catch(error) { console.warn("FT8 country index migration",error); }
+      } catch(error) { console.warn("FT8 CTY/country index migration",error); }
       await renderIndexCount();
     },
 
@@ -807,7 +809,6 @@
       if (typeof api !== "function") throw new Error("API unavailable");
       const deadline = Date.now() + deadlineMs;
       while (Date.now() < deadline) {
-        if (this.qrzSyncCancelled) throw new DOMException("QRZ sync cancelled", "AbortError");
         const status = await api("/api/v1/qrz/fetch/status");
         const job = status?.job;
         if (Number(job?.job_id) !== Number(jobId)) { await new Promise(r => setTimeout(r, 250)); continue; }
@@ -817,22 +818,26 @@
       throw new Error("QRZ FETCH timeout");
     },
 
-    async runQrzImport(incremental = true, renderIndexCount = null) {
+    async runQrzSync(renderIndexCount = null) {
       if (this.qrzSyncRunning) return;
       const lb = window.FreeRig710FT8Logbook, api = window.FreeRig710API?.api, post = window.FreeRig710API?.post;
       if (!lb || typeof api !== "function" || typeof post !== "function") return;
-      const statusEl=id("ft8-qrz-sync-status"), cancel=id("ft8-qrz-cancel"), full=id("ft8-qrz-import"), sync=id("ft8-qrz-sync");
-      this.qrzSyncRunning=true; this.qrzSyncCancelled=false;
-      if(cancel)cancel.disabled=false;if(full)full.disabled=true;if(sync)sync.disabled=true;
-      let totalNew=0,totalDup=0,totalParsed=0,totalFetched=0,pages=0;
+      const statusEl=id("ft8-qrz-sync-status"), sync=id("ft8-qrz-sync");
+      this.qrzSyncRunning=true;
+      if(sync)sync.disabled=true;
+      let totalParsed=0,totalFetched=0,totalErrors=0,pages=0;
+      const stagedRecords=[];
       try {
         const qrz = await api("/api/v1/qrz/status");
         if (!qrz?.qrz?.configured) throw new Error("Configure station callsign and QRZ Logbook API key first");
-        const saved = incremental ? await lb.getSyncState("qrz") : null;
-        let after = incremental ? String(saved?.nextAfterLogId || "0") : "0";
-        if(statusEl)statusEl.textContent=`${incremental?"Sync":"Full import"} · starting after LOGID ${after}`;
+        await window.FreeRig710FT8CTY?.ready;
+        // QRZ Sync is the authoritative logbook reconciliation.  Always fetch
+        // the complete QRZ log from LOGID 0, stage it in memory, and replace
+        // IndexedDB only after every page has completed successfully.  A failed
+        // sync failure therefore leaves the previous local log untouched.
+        let after = "0";
+        if(statusEl)statusEl.textContent="QRZ Sync · authoritative full reconciliation from LOGID 0";
         for (;;) {
-          if(this.qrzSyncCancelled) throw new DOMException("QRZ sync cancelled","AbortError");
           let job=null,lastError=null;
           for(let attempt=0;attempt<3;attempt+=1){
             try{
@@ -846,21 +851,25 @@
           const pageResponse=await fetch(window.FreeRig710API.apiUrl("/api/v1/qrz/fetch/page"),{cache:"no-store"});
           if(!pageResponse.ok)throw new Error(`QRZ page HTTP ${pageResponse.status}`);
           const adif=await pageResponse.text();
-          const imported=adif.trim()?await lb.importAdiText(adif,{source:"qrz",deferRebuild:true}):{imported:0,duplicates:0,parsed:0,errors:0};
-          pages+=1;totalFetched+=Number(job?.count||0);totalNew+=Number(imported.imported||0);totalDup+=Number(imported.duplicates||0);totalParsed+=Number(imported.parsed||0);
+          const parsed=adif.trim()?lb.parseAdi(adif):{records:[],stats:{records:0,errors:0,ignored:0,errorMessages:[]}};
+          const pageParsed=Number(parsed?.stats?.records||0), pageErrors=Number(parsed?.stats?.errors||0);
+          if(Number(job?.count||0)>0 && pageParsed===0) throw new Error(`QRZ returned ${job?.count||0} QSO but the ADIF parser produced 0 records`);
+          stagedRecords.push(...(parsed?.records||[]));
+          pages+=1;totalFetched+=Number(job?.count||0);totalParsed+=pageParsed;totalErrors+=pageErrors;
           after=String(job?.next_after_logid||after);
-          await lb.setSyncState("qrz",{nextAfterLogId:after,lastPageCount:Number(job?.count||0),lastSyncAt:new Date().toISOString(),complete:!job?.has_more});
-          if(statusEl)statusEl.textContent=`QRZ page ${pages} · ${job?.count||0} fetched / ${imported.parsed||0} parsed · ${totalNew} new · ${totalDup} already local`;
+          if(statusEl)statusEl.textContent=`QRZ page ${pages} · ${job?.count||0} fetched / ${pageParsed} parsed · ${totalParsed} staged`;
           if(!job?.has_more || Number(job?.count||0)===0)break;
         }
-        await lb.rebuildIndices();
+        if(statusEl)statusEl.textContent=`QRZ Sync · replacing local log with ${totalParsed} QRZ QSO…`;
+        const replaced=await lb.replaceAllRecords(stagedRecords,{source:"qrz"});
+        await lb.setSyncState("qrz",{nextAfterLogId:after,lastPageCount:pages?Number(stagedRecords.length):0,lastSyncAt:new Date().toISOString(),complete:true,authoritative:true,qsoCount:Number(replaced?.stored||0)});
         const counts=typeof renderIndexCount==="function" ? await renderIndexCount() : await lb.loadIndexCaches();
         window.dispatchEvent(new CustomEvent("freerig-ft8-logbook-updated"));
-        if(statusEl)statusEl.textContent=`QRZ complete · ${totalFetched} fetched · ${totalParsed} QSO parsed · ${totalNew} new · ${totalDup} already local · ${counts?.calls||0} worked calls · ${counts?.dxcc||0} DXCC · ${counts?.countries||0} countries`;
+        if(statusEl)statusEl.textContent=`QRZ complete · ${pages} page${pages===1?"":"s"} · ${totalFetched} fetched · ${replaced?.stored||0} QRZ QSO stored · ${replaced?.duplicates||0} duplicate records · ${counts?.calls||0} worked calls · ${counts?.dxcc||0} DXCC · ${counts?.countries||0} countries${totalErrors?` · ${totalErrors} ADIF warnings`:""}`;
       } catch(error) {
-        if(statusEl)statusEl.textContent=error?.name==="AbortError"?"QRZ sync cancelled":`QRZ sync failed: ${error?.message||error}`;
+        if(statusEl)statusEl.textContent=`QRZ sync failed: ${error?.message||error} · local log unchanged`;
       } finally {
-        this.qrzSyncRunning=false;if(cancel)cancel.disabled=true;if(full)full.disabled=false;if(sync)sync.disabled=false;
+        this.qrzSyncRunning=false;if(sync)sync.disabled=false;
       }
     },
 
@@ -963,8 +972,11 @@
             const details=[];
             if(meta.grid)details.push(meta.grid);
             if(meta.dxcc)details.push(`DXCC ${meta.dxcc}`);
+            if(meta.ctyName)details.push(`${meta.ctyName}${meta.ctyEntity?` · CTY ${meta.ctyEntity}`:""}`);
+            if(meta.ctySource)details.push(meta.ctySource);
             if(meta.geoSource)details.push(meta.geoSource);
-            if(meta.geoApproximate)details.push("location approximate from Maidenhead grid");
+            if(meta.geoCountryConflict)details.push("Maidenhead country conflicts with callsign entity; region/city suppressed");
+            if(meta.geoApproximate&&!meta.geoCountryConflict)details.push("location approximate from Maidenhead grid");
             if(meta.geoNearby&&meta.geoNearbyDistanceKm)details.push(`nearest populated place ~${Math.round(meta.geoNearbyDistanceKm)} km from grid centre`);
             if(details.length)geoTd.title=details.join(" · ");
           }
@@ -1008,8 +1020,9 @@
         this.qsoMachine.identity({myCall:this.myCall,myGrid:this.myGrid,txReport:this.txReport});
         const before=this.qsoMachine.snapshot();
         const terminal=["IDLE","COMPLETE","LOG_PENDING","LOGGED_LOCAL","QRZ_PENDING","QRZ_LOGGED","ABORTED","TIMEOUT","ERROR"].includes(before.state);
-        if(!terminal&&before.dxCall&&before.dxCall!==dx)return false;
-        this.syncQsoFromMachine(this.qsoMachine.resumeFromRx({parsed:p,text:row.text||"",snr:row.snr,df:Math.round(Number(row.df||0)),slotIndex:row.slotIndex,unixMs:this.getServerUnixMs()}));
+        const replacingStoppedQso=!terminal&&Boolean(before.dxCall)&&before.dxCall!==dx&&Boolean(page?.canTakeOverStoppedQso?.());
+        if(!terminal&&before.dxCall&&before.dxCall!==dx&&!replacingStoppedQso)return false;
+        this.syncQsoFromMachine(this.qsoMachine.resumeFromRx({parsed:p,text:row.text||"",snr:row.snr,df:Math.round(Number(row.df||0)),slotIndex:row.slotIndex,unixMs:this.getServerUnixMs(),force:replacingStoppedQso}));
       } else this.qso = { state: p.kind === "CQ" ? "ANSWERING_CQ" : "SELECTED", dxCall: dx, dxGrid: p.grid || "", df: Math.round(Number(row.df || 0)), rxSlotParity: rxParity, txSlotParity: rxParity ^ 1, lastHeard: row.text, lastHeardUnixMs: Date.now(), startedUnixMs: Date.now(), nextMessage: "" };
       this.updateTxReportFromRow(row);
       window.FT710_FT8_PAGE?.qsoSelected?.({ df: this.qso.df, rxSlotParity: this.qso.rxSlotParity, txSlotParity: this.qso.txSlotParity, dxCall: this.qso.dxCall });
@@ -1055,6 +1068,13 @@
       if (!this.qsoMachine) return;
       const snap = this.qsoMachine.abort(reason, {unixMs:this.getServerUnixMs()});
       this.syncQsoFromMachine(snap);
+    },
+
+    failQso(reason = "FT8 TX error") {
+      if (!this.qsoMachine) return;
+      const before = this.qsoMachine.snapshot();
+      if (["IDLE","COMPLETE","LOG_PENDING","LOGGED_LOCAL","QRZ_PENDING","QRZ_LOGGED","ABORTED","TIMEOUT","ERROR"].includes(before.state)) return;
+      this.syncQsoFromMachine(this.qsoMachine.markError(reason, {unixMs:this.getServerUnixMs()}));
     },
 
     renderQso() {

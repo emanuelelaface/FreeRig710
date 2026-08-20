@@ -18,7 +18,6 @@
   // validation latency; it remains authoritative for the hard deadline.
   const AUTO_TX_MAX_LATE_MS = 1450;
   const AUTO_TX_ARM_STALE_RECOVERY_MS = 3200;
-  const AUTO_TX_MAX_REPEATS = 6;
   const TX_AUDIO_CONTEXT_RATE = 48000;
   const TX_CAPTURE_FRAME_MS = 20;
   const TX_WS_BACKLOG_LIMIT = 32768;
@@ -860,6 +859,14 @@
       return !this.autoTxSessionActive && !this.tuneRunning;
     },
 
+    canTakeOverStoppedQso() {
+      // A different decoded station may replace the previous QSO only after
+      // automatic TX is genuinely stopped.  This preserves the active-QSO
+      // anti-steal guard while making timeout/error recovery one-click.
+      return !this.autoTxEnabled && !this.autoTxPreparing && !this.autoTxArming &&
+        !this.autoTxSessionActive && !this.txStreaming && !this.tuneRunning;
+    },
+
     enableAutoTxFromSelection() {
       this.rearmAutoTxFromSelection();
     },
@@ -889,6 +896,18 @@
       this.renderAutoTxState("re-armed from selected decode");
       void (async () => {
         try {
+          // If an automatic stop is still completing, let it finish before a
+          // clicked replacement QSO starts staging.  This removes the old
+          // Enable -> Halt -> click workaround caused by a late STOP/latch.
+          if (this.autoTxHaltPromise) await this.autoTxHaltPromise.catch(() => {});
+          if (!this.txPlanStillCurrent(message, revision)) return;
+          if (!this.autoTxEnabled && !this.autoTxPreparing && !this.autoTxArming && !this.autoTxSessionActive) {
+            this.txAbortRequested = false;
+            this.armedTxMessage = "";
+            this.armedWaveformId = 0;
+            this.armedSlotIndex = null;
+            this.armedPlanRevision = 0;
+          }
           // Serialize STOP before uploading the replacement waveform.  Without
           // this ordering, a late /tx/stop from the old arm could clear a new
           // PSRAM stage that had already finished uploading.
@@ -989,6 +1008,10 @@
       const generate = id("ft8-generate-wave");
       if (generate) generate.disabled = !message || !this.txLevelTuned || this.txStreaming || this.tuneRunning || this.autoTxPreparing || this.autoTxArming || this.autoTxSessionActive;
       if (this.autoTxEnabled && state === "COMPLETE" && !this.autoTxArming && !this.autoTxSessionActive) void this.finishCompletedQso();
+      if (["ABORTED","TIMEOUT","ERROR"].includes(state) && (this.autoTxEnabled || this.autoTxPreparing || this.autoTxArming || this.autoTxSessionActive)) {
+        const reason = state === "TIMEOUT" ? "QSO retry/timeout limit reached" : (state === "ERROR" ? "QSO sequence error" : "QSO aborted");
+        void this.haltAutoTx(reason, false);
+      }
       this.renderAutoTxState();
     },
 
@@ -1580,6 +1603,11 @@
         this.autoTxSessionActive = false;
         this.txStreaming = false;
         this.autoTxTargetSlotIndex = null;
+        this.armedTxMessage = "";
+        this.armedWaveformId = 0;
+        this.armedSlotIndex = null;
+        this.armedPlanRevision = 0;
+        this.invalidateStagedWaveform();
         this.renderAutoTxState(reason);
         id("ft8-tx-progress").textContent = `AUTO TX halted · ${reason}`;
         void this.refreshTxDiagnostics();
@@ -1666,7 +1694,6 @@
       if (!message) return;
       if (String(plan.state || "") === "COMPLETE") { await this.finishCompletedQso(); return; }
       if (message !== this.autoTxLastMessage) { this.autoTxLastMessage = message; this.autoTxRepeatCount = 0; }
-      if (this.autoTxRepeatCount >= AUTO_TX_MAX_REPEATS) { await this.haltAutoTx(`repeat safety limit ${AUTO_TX_MAX_REPEATS} reached`); return; }
 
       const slotIndex = this.nextSelectedTxSlotIndex();
       if (slotIndex == null || slotIndex === this.autoTxLastSlotIndex) return;
@@ -1896,6 +1923,7 @@
           this.renderAutoTxState("recovering · next slot");
         } else {
           if (this.autoTxEnabled) toast(`FT8 TX stopped: ${reason}`, true);
+          window.FT710_FT8?.failQso?.(reason);
           await this.haltAutoTx(reason);
         }
       } finally {

@@ -6,7 +6,7 @@
   if (root) root.FreeRig710FT8Logbook = api;
 })(typeof window !== "undefined" ? window : globalThis, function () {
   const DB_NAME = "freerig710-ft8-logbook";
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
   const ADIF_VERSION = "3.1.7";
   const PRIORITY_FIELDS = new Set([
     "CALL","STATION_CALLSIGN","QSO_DATE","TIME_ON","TIME_OFF","BAND","FREQ","FREQ_RX",
@@ -24,12 +24,13 @@
   // Compare a canonical geopolitical country key, while keeping DXCC entities
   // separate.  Example: England/Scotland/Wales/Northern Ireland all map to the
   // country key UNITED KINGDOM, but their ADIF DXCC numbers are untouched.
-  const COUNTRY_KEY_SCHEMA = 1;
+  const COUNTRY_KEY_SCHEMA = 3;
   const COUNTRY_ALIASES = Object.freeze({
     "UK":"UNITED KINGDOM", "U K":"UNITED KINGDOM", "GREAT BRITAIN":"UNITED KINGDOM", "BRITAIN":"UNITED KINGDOM",
     "ENGLAND":"UNITED KINGDOM", "SCOTLAND":"UNITED KINGDOM", "WALES":"UNITED KINGDOM", "NORTHERN IRELAND":"UNITED KINGDOM",
     "UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND":"UNITED KINGDOM",
     "THE NETHERLANDS":"NETHERLANDS", "HOLLAND":"NETHERLANDS",
+    "REPUBLIC OF KOSOVO":"KOSOVO", "REPUBLIC OF KOSOVA":"KOSOVO", "KOSOVA":"KOSOVO",
     "UNITED STATES OF AMERICA":"UNITED STATES", "USA":"UNITED STATES", "U S A":"UNITED STATES",
     "RUSSIAN FEDERATION":"RUSSIA", "EUROPEAN RUSSIA":"RUSSIA", "ASIATIC RUSSIA":"RUSSIA",
     "CZECH REPUBLIC":"CZECHIA", "SLOVAK REPUBLIC":"SLOVAKIA",
@@ -90,14 +91,20 @@
     for (const name of ["CALL","STATION_CALLSIGN","BAND","MODE","SUBMODE","GRIDSQUARE","MY_GRIDSQUARE","COUNTRY","CONT","STATE","CNTY"]) {
       if (fields[name]) fields[name] = upper(fields[name]);
     }
-    // QRZ exports are not guaranteed to carry every geography field.  When a
-    // worked QSO has a Maidenhead locator, enrich the local index from the
-    // bundled offline geo database so new-country coloring remains useful.
-    const geoApi = typeof globalThis !== "undefined" ? globalThis.FreeRig710FT8Geo : null;
-    const geo = fields.GRIDSQUARE && geoApi?.resolve ? geoApi.resolve(fields.CALL || "", fields.GRIDSQUARE) : null;
-    if (!fields.COUNTRY && geo?.country) fields.COUNTRY = upper(geo.country);
-    if (!fields.CONT && geo?.continent) fields.CONT = upper(geo.continent);
-    if (!fields.STATE && geo?.region) fields.STATE = upper(geo.region);
+    // Country/DXCC entity is derived from the callsign database, never from a
+    // coarse Maidenhead cell.  A 4-character grid can cross national borders.
+    // QRZ fields, when present, remain authoritative; CTY only fills omissions.
+    const ctyApi = typeof globalThis !== "undefined" ? globalThis.FreeRig710FT8CTY : null;
+    const cty = fields.CALL && ctyApi?.lookup ? ctyApi.lookup(fields.CALL) : null;
+    const qrzSource = String(source || "").toLowerCase() === "qrz";
+    const qrzCountry = Boolean(fields.COUNTRY);
+    const qrzContinent = Boolean(fields.CONT);
+    if (!fields.COUNTRY && cty?.name) fields.COUNTRY = upper(cty.name);
+    if (!fields.CONT && cty?.continent) fields.CONT = upper(cty.continent);
+    if (qrzSource) {
+      fields.APP_FREERIG_COUNTRY_SOURCE = qrzCountry ? "QRZ" : (cty?.name ? "CTY" : "");
+      fields.APP_FREERIG_CONT_SOURCE = qrzContinent ? "QRZ" : (cty?.continent ? "CTY" : "");
+    } else if (cty?.name && !fields.APP_FREERIG_COUNTRY_SOURCE) fields.APP_FREERIG_COUNTRY_SOURCE = "CTY";
     const record = {
       id: duplicateKey(fields),
       fields,
@@ -112,6 +119,8 @@
       modeKey: normalizedMode(fields),
       grid: upper(fields.GRIDSQUARE),
       dxcc: text(fields.DXCC),
+      ctyEntity: text(cty?.entityKey),
+      ctyName: text(cty?.name),
       country: text(fields.COUNTRY),
       continent: upper(fields.CONT),
       state: upper(fields.STATE),
@@ -123,16 +132,32 @@
     return record;
   }
 
-  function mergeRecords(existing, incoming) {
+  function mergeRecords(existing, incoming, options = {}) {
     if (!existing) return incoming;
     const aScore = recordRichness(existing), bScore = recordRichness(incoming);
-    const primary = bScore > aScore ? incoming : existing;
+    const authoritative = Boolean(options.authoritative);
+    const primary = authoritative ? incoming : (bScore > aScore ? incoming : existing);
     const secondary = primary === incoming ? existing : incoming;
-    const mergedFields = { ...(secondary.fields || {}), ...(primary.fields || {}) };
-    for (const [k, v] of Object.entries(secondary.fields || {})) {
-      if (!String(mergedFields[k] ?? "").trim() && String(v ?? "").trim()) mergedFields[k] = v;
+    let mergedFields;
+    if (authoritative) {
+      // QRZ reconciliation: values actually returned by QRZ overwrite local/CTY
+      // values. Missing QRZ fields may still be filled by CTY in normalizeRecord.
+      mergedFields = { ...(existing.fields || {}) };
+      for (const [k,v] of Object.entries(incoming.fields || {})) {
+        if (String(v ?? "").trim()) mergedFields[k] = v;
+      }
+      // Remove stale geography fields that were previously inferred from grid.
+      for (const k of ["COUNTRY","CONT","STATE","CNTY"]) {
+        if (!(k in (incoming.fields || {})) || !String(incoming.fields?.[k] ?? "").trim()) delete mergedFields[k];
+      }
+    } else {
+      mergedFields = { ...(secondary.fields || {}), ...(primary.fields || {}) };
+      for (const [k, v] of Object.entries(secondary.fields || {})) {
+        if (!String(mergedFields[k] ?? "").trim() && String(v ?? "").trim()) mergedFields[k] = v;
+      }
     }
-    const normalized = normalizeRecord({ fields: mergedFields, raw: primary.raw || secondary.raw || "" }, (primary.sources || [])[0] || "merge");
+    const source = authoritative ? "qrz" : ((primary.sources || [])[0] || "merge");
+    const normalized = normalizeRecord({ fields: mergedFields, raw: primary.raw || secondary.raw || "" }, source);
     normalized.id = existing.id || incoming.id;
     normalized.importedAt = existing.importedAt || incoming.importedAt || isoNow();
     normalized.updatedAt = isoNow();
@@ -257,6 +282,7 @@
   let dbPromise = null;
   let workedCallCache = new Map();
   let workedDxccCache = new Map();
+  let workedCtyCache = new Map();
   let workedGridCache = new Map();
   let workedGeoCache = new Map();
 
@@ -283,6 +309,7 @@
         const ensureStore = (name, options) => { if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, options); };
         ensureStore("worked_call_index", { keyPath: "key" });
         ensureStore("worked_dxcc_index", { keyPath: "key" });
+        ensureStore("worked_cty_index", { keyPath: "key" });
         ensureStore("worked_grid_index", { keyPath: "key" });
         ensureStore("worked_geo_index", { keyPath: "key" });
         ensureStore("import_jobs", { keyPath: "id", autoIncrement: true });
@@ -295,7 +322,7 @@
     return dbPromise;
   }
 
-  async function putBatch(parsedRecords, source = "adi") {
+  async function putBatch(parsedRecords, source = "adi", options = {}) {
     if (!parsedRecords.length) return { imported: 0, duplicates: 0 };
     const db = await openDb();
     let imported = 0, duplicates = 0;
@@ -305,7 +332,7 @@
       const store = tx.objectStore("qso_records");
       for (const incoming of batch) {
         const existing = await reqPromise(store.get(incoming.id));
-        if (existing) { duplicates += 1; store.put(mergeRecords(existing, incoming)); }
+        if (existing) { duplicates += 1; store.put(mergeRecords(existing, incoming, options)); }
         else { imported += 1; store.put(incoming); }
       }
       await txDone(tx);
@@ -353,7 +380,7 @@
 
   async function rebuildIndices() {
     const db = await openDb();
-    const calls = new Map(), dxccs = new Map(), grids = new Map(), geos = new Map();
+    const calls = new Map(), dxccs = new Map(), ctys = new Map(), grids = new Map(), geos = new Map();
     await new Promise((resolve, reject) => {
       const tx = db.transaction("qso_records", "readonly");
       const req = tx.objectStore("qso_records").openCursor();
@@ -363,6 +390,7 @@
         const r = cur.value;
         updateSummary(calls, r.call, r, "call");
         updateSummary(dxccs, r.dxcc, r, "dxcc");
+        updateSummary(ctys, r.ctyEntity, r, "cty");
         if (r.grid) {
           updateSummary(grids, r.grid.slice(0, 2), r, "grid");
           if (r.grid.length >= 4) updateSummary(grids, r.grid.slice(0, 4), r, "grid");
@@ -373,16 +401,17 @@
       };
       req.onerror = () => reject(req.error || new Error("Unable to scan QSO index"));
     });
-    const tx = db.transaction(["worked_call_index","worked_dxcc_index","worked_grid_index","worked_geo_index"], "readwrite");
-    const sc = tx.objectStore("worked_call_index"), sd = tx.objectStore("worked_dxcc_index"), sg = tx.objectStore("worked_grid_index"), sx = tx.objectStore("worked_geo_index");
-    sc.clear(); sd.clear(); sg.clear(); sx.clear();
+    const tx = db.transaction(["worked_call_index","worked_dxcc_index","worked_cty_index","worked_grid_index","worked_geo_index"], "readwrite");
+    const sc = tx.objectStore("worked_call_index"), sd = tx.objectStore("worked_dxcc_index"), st = tx.objectStore("worked_cty_index"), sg = tx.objectStore("worked_grid_index"), sx = tx.objectStore("worked_geo_index");
+    sc.clear(); sd.clear(); st.clear(); sg.clear(); sx.clear();
     for (const v of calls.values()) sc.put(v);
     for (const v of dxccs.values()) sd.put(v);
+    for (const v of ctys.values()) st.put(v);
     for (const v of grids.values()) sg.put(v);
     for (const v of geos.values()) sx.put(v);
     await txDone(tx);
-    workedCallCache = calls; workedDxccCache = dxccs; workedGridCache = grids; workedGeoCache = geos;
-    const detail = { calls: calls.size, dxcc: dxccs.size, grids: grids.size, geo: geos.size };
+    workedCallCache = calls; workedDxccCache = dxccs; workedCtyCache = ctys; workedGridCache = grids; workedGeoCache = geos;
+    const detail = { calls: calls.size, dxcc: dxccs.size, cty: ctys.size, grids: grids.size, geo: geos.size };
     if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("freerig-ft8-logbook-updated", { detail }));
     return detail;
   }
@@ -397,18 +426,39 @@
     };
     workedCallCache = await readAll("worked_call_index");
     workedDxccCache = await readAll("worked_dxcc_index");
+    workedCtyCache = await readAll("worked_cty_index");
     workedGridCache = await readAll("worked_grid_index");
     workedGeoCache = await readAll("worked_geo_index");
     const countries = Array.from(workedGeoCache.keys()).filter((key) => String(key).startsWith("COUNTRY:")).length;
-    return { calls: workedCallCache.size, dxcc: workedDxccCache.size, countries, grids: workedGridCache.size, geo: workedGeoCache.size };
+    return { calls: workedCallCache.size, dxcc: workedDxccCache.size, cty: workedCtyCache.size, countries, grids: workedGridCache.size, geo: workedGeoCache.size };
   }
 
   async function importAdiText(value, options = {}) {
     const parser = new ADIIncrementalParser();
     const parsed = parser.feed(value, true);
-    const result = await putBatch(parsed, options.source || "adi-text");
+    const result = await putBatch(parsed, options.source || "adi-text", { authoritative: Boolean(options.authoritative) });
     const indices = options.deferRebuild ? null : await rebuildIndices();
     return { ...result, parsed: parser.records, errors: parser.errors, ignored: parser.ignored, errorMessages: parser.errorMessages, indices };
+  }
+
+  async function replaceAllRecords(parsedRecords, options = {}) {
+    const source = options.source || "authoritative";
+    const normalizedById = new Map();
+    let duplicates = 0;
+    for (const parsed of parsedRecords || []) {
+      const record = normalizeRecord(parsed, source);
+      if (!record.call || !record.id) continue;
+      if (normalizedById.has(record.id)) duplicates += 1;
+      normalizedById.set(record.id, record);
+    }
+    const db = await openDb();
+    const tx = db.transaction("qso_records", "readwrite");
+    const store = tx.objectStore("qso_records");
+    store.clear();
+    for (const record of normalizedById.values()) store.put(record);
+    await txDone(tx);
+    const indices = await rebuildIndices();
+    return { stored: normalizedById.size, duplicates, indices };
   }
 
   async function importAdiFile(file, options = {}) {
@@ -501,6 +551,42 @@
     return saved || normalized;
   }
 
+  async function reconcileCtyMetadata() {
+    const ctyApi = typeof globalThis !== "undefined" ? globalThis.FreeRig710FT8CTY : null;
+    if (!ctyApi?.lookup || !ctyApi?.stats?.().loaded) return { updated: 0, skipped: true };
+    const db = await openDb();
+    let updated = 0;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("qso_records", "readwrite");
+      const store = tx.objectStore("qso_records");
+      const req = store.openCursor();
+      req.onsuccess = () => {
+        const cur = req.result;
+        if (!cur) return;
+        const rec = cur.value; const cty = rec.call ? ctyApi.lookup(rec.call) : null;
+        if (cty) {
+          const fields = { ...(rec.fields || {}) };
+          const source = upper(fields.APP_FREERIG_COUNTRY_SOURCE);
+          let changed = false;
+          if (source !== "QRZ" && upper(fields.COUNTRY) !== upper(cty.name)) { fields.COUNTRY = upper(cty.name); fields.APP_FREERIG_COUNTRY_SOURCE = "CTY"; changed = true; }
+          if (upper(fields.CONT) !== upper(cty.continent) && upper(fields.APP_FREERIG_CONT_SOURCE) !== "QRZ") { fields.CONT = upper(cty.continent); fields.APP_FREERIG_CONT_SOURCE = "CTY"; changed = true; }
+          if (rec.ctyEntity !== cty.entityKey || rec.ctyName !== cty.name) changed = true;
+          if (changed) {
+            const next = { ...rec, fields, country:text(fields.COUNTRY), continent:upper(fields.CONT), ctyEntity:text(cty.entityKey), ctyName:text(cty.name), updatedAt:isoNow() };
+            next.richness = recordRichness(next); cur.update(next); updated += 1;
+          }
+        }
+        cur.continue();
+      };
+      req.onerror = () => reject(req.error || new Error("Unable to reconcile CTY metadata"));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error("CTY reconciliation failed"));
+      tx.onabort = () => reject(tx.error || new Error("CTY reconciliation aborted"));
+    });
+    if (updated) await rebuildIndices();
+    return { updated, skipped:false };
+  }
+
   async function getPreference(key, fallback = null) {
     const db = await openDb();
     const tx = db.transaction("preferences", "readonly");
@@ -534,6 +620,7 @@
 
   function lookupCall(call) { return workedCallCache.get(upper(call)) || null; }
   function lookupDxcc(dxcc) { return workedDxccCache.get(text(dxcc)) || null; }
+  function lookupCtyEntity(entity) { return workedCtyCache.get(upper(entity)) || null; }
   function lookupGrid(grid) {
     const g = upper(grid);
     return workedGridCache.get(g) || workedGridCache.get(g.slice(0, 4)) || workedGridCache.get(g.slice(0, 2)) || null;
@@ -548,8 +635,8 @@
 
   return Object.freeze({
     ADIF_VERSION, COUNTRY_KEY_SCHEMA, countryKey, ADIIncrementalParser, parseAdi, duplicateKey, normalizeRecord, mergeRecords,
-    openDb, importAdiText, importAdiFile, rebuildIndices, loadIndexCaches,
-    saveLocalQso, updateQso, replaceLocalQso, getPreference, setPreference, getSyncState, setSyncState,
-    lookupCall, lookupDxcc, lookupGrid, lookupGeo,
+    openDb, importAdiText, importAdiFile, replaceAllRecords, rebuildIndices, loadIndexCaches,
+    saveLocalQso, updateQso, replaceLocalQso, reconcileCtyMetadata, getPreference, setPreference, getSyncState, setSyncState,
+    lookupCall, lookupDxcc, lookupCtyEntity, lookupGrid, lookupGeo,
   });
 });

@@ -74,17 +74,25 @@
     const p=row?.parsed||{}; const meta=row?.meta||{};
     const grid=upper(p.grid || meta.grid || worked?.grid || "");
     const geoApi=context.geo || (typeof globalThis!=="undefined" ? globalThis.FreeRig710FT8Geo : null);
+    const ctyApi=context.cty || (typeof globalThis!=="undefined" ? globalThis.FreeRig710FT8CTY : null);
     const geo=(!row?.isTx && geoApi?.resolve) ? geoApi.resolve(call,grid) : null;
+    const cty=(!row?.isTx && call && ctyApi?.lookup) ? ctyApi.lookup(call) : null;
     const firstText=(...values)=>{for(const value of values){const text=String(value??"").trim();if(text)return text;}return "";};
     const dxcc=firstText(meta.dxcc,p.dxcc,worked?.dxcc);
-    const country=firstText(meta.country,p.country,worked?.country,geo?.country);
-    const continent=upper(firstText(meta.continent,p.continent,worked?.continent,geo?.continent));
-    const state=firstText(meta.state,p.state,worked?.state,geo?.region);
-    const city=firstText(meta.city,p.city,worked?.city,geo?.city);
-    const countryCode=upper(firstText(meta.countryCode,p.countryCode,worked?.countryCode,geo?.countryCode));
+    // Callsign/CTY is authoritative for entity/country. Maidenhead is only a
+    // QTH refinement and must never decide the country of a live station.
+    const country=firstText(meta.country,p.country,cty?.name,worked?.country);
+    const continent=upper(firstText(meta.continent,p.continent,cty?.continent,worked?.continent));
+    const countryKey=lb?.countryKey || ((v)=>upper(v));
+    const geoCountryCompatible=!geo?.country || Boolean(country && countryKey(country)===countryKey(geo.country));
+    const state=firstText(meta.state,p.state,worked?.state,geoCountryCompatible?geo?.region:"");
+    const city=firstText(meta.city,p.city,worked?.city,geoCountryCompatible?geo?.city:"");
+    const countryCode=upper(firstText(meta.countryCode,p.countryCode,worked?.countryCode,geoCountryCompatible?geo?.countryCode:""));
+    const ctyEntity=firstText(meta.ctyEntity,p.ctyEntity,cty?.entityKey,worked?.ctyEntity);
     const band=upper(context.band || ""); const mode=upper(context.mode || "FT8");
     const bands=(worked?.bands||[]).map(upper), modes=(worked?.modes||[]).map(upper);
-    const dxccWorked=dxcc ? lb?.lookupDxcc?.(dxcc) : null;
+    const ctyWorked=ctyEntity ? lb?.lookupCtyEntity?.(ctyEntity) : null;
+    const dxccWorked=dxcc ? lb?.lookupDxcc?.(dxcc) : ctyWorked;
     const countryWorked=country ? lb?.lookupGeo?.("COUNTRY",country) : null;
     const dxccBands=(dxccWorked?.bands||[]).map(upper), dxccModes=(dxccWorked?.modes||[]).map(upper);
     const now=context.now instanceof Date ? context.now : new Date();
@@ -95,16 +103,16 @@
     const directToMe=Boolean(upper(p.to) && upper(p.to)===upper(context.myCall));
     const km=grid && context.myGrid ? distanceKm(context.myGrid,grid) : null;
     return {
-      call, worked, grid, dxcc, country, continent, state, city, countryCode, band, mode, dxccWorked, countryWorked,
-      geoApproximate:Boolean(geo?.approximate), geoNearby:Boolean(geo?.nearby),
-      geoNearbyDistanceKm:Number(geo?.nearbyDistanceKm||0), geoSource:String(geo?.source||""),
+      call, worked, grid, dxcc, ctyEntity, ctyName:cty?.name||"", country, continent, state, city, countryCode, band, mode, dxccWorked, countryWorked,
+      geoApproximate:Boolean(geo?.approximate), geoNearby:Boolean(geo?.nearby), geoCountryConflict:Boolean(geo?.country&&!geoCountryCompatible),
+      geoNearbyDistanceKm:Number(geo?.nearbyDistanceKm||0), geoSource:String(geo?.source||""), ctySource:String(cty?.source||""),
       workedBefore:Boolean(worked), workedBand:Boolean(worked && band && bands.includes(band)), workedMode:Boolean(worked && mode && modes.includes(mode)),
       workedToday:Boolean(worked && last===today), workedYesterday:Boolean(worked && last===yesterday),
       newCall:Boolean(call && !worked),
       newCountry:Boolean(country && !countryWorked),
-      newDxcc:Boolean(dxcc && !dxccWorked),
-      newDxccBand:Boolean(dxcc && band && (!dxccWorked || !dxccBands.includes(band))),
-      newDxccMode:Boolean(dxcc && mode && (!dxccWorked || !dxccModes.includes(mode))),
+      newDxcc:Boolean((dxcc||ctyEntity) && !dxccWorked),
+      newDxccBand:Boolean((dxcc||ctyEntity) && band && (!dxccWorked || !dxccBands.includes(band))),
+      newDxccMode:Boolean((dxcc||ctyEntity) && mode && (!dxccWorked || !dxccModes.includes(mode))),
       newGrid:Boolean(grid && !lb?.lookupGrid?.(grid)),
       newBand:Boolean(call && band && (!worked || !bands.includes(band))),
       newMode:Boolean(call && mode && (!worked || !modes.includes(mode))),

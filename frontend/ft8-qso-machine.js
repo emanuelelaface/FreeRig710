@@ -27,11 +27,12 @@
       this.completedUnixMs=0;this.silentSlots=0;this.retryAttempts=0;
       return this._transition(target,`operator selected ${key} message`,{slotIndex,unixMs});
     }
-    resumeFromRx({parsed,text="",snr=null,slotIndex=null,unixMs=Date.now(),df=null}={}){
+    resumeFromRx({parsed,text="",snr=null,slotIndex=null,unixMs=Date.now(),df=null,force=false}={}){
       const p=parsed||{},kind=upper(p.kind),from=upper(p.from||p.call),to=upper(p.to);
       const dx=kind==="CQ"?upper(p.call||p.from):(from&&from!==this.myCall?from:(to&&to!==this.myCall?to:""));
       if(!dx||!this.myCall||dx===this.myCall)return this.snapshot();
-      if(this.isActive()&&this.dxCall&&this.dxCall!==dx)return this.snapshot();
+      if(this.isActive()&&this.dxCall&&this.dxCall!==dx&&!force)return this.snapshot();
+      if(force&&this.isActive()&&this.dxCall&&this.dxCall!==dx)this._transition("ABORTED",`operator replaced ${this.dxCall} with ${dx}`,{slotIndex,unixMs,rx:this.lastHeard});
       const sameDx=this.dxCall===dx,wasTerminal=TERMINAL.has(this.state),newSession=!sameDx||wasTerminal;
       this.dxCall=dx;
       if(p.grid)this.dxGrid=upper(p.grid);
@@ -72,7 +73,7 @@
       if(kind==="73"){if(this.state==="WAIT_73"||this.state==="SEND_RR73")return this._transition("COMPLETE","DX 73 received",{slotIndex,unixMs,rx:this.lastHeard});return this._transition("SEND_73","DX 73 received",{slotIndex,unixMs,rx:this.lastHeard});}
       if(kind==="GRID"&&from===this.dxCall&&to===this.myCall)return this._transition("SEND_REPORT","DX grid/call received",{slotIndex,unixMs,rx:this.lastHeard});
       if(this.state==="CALLING_CQ"&&this.dxCall)return this._transition("SEND_REPORT","first caller selected",{slotIndex,unixMs,rx:this.lastHeard});return this.snapshot();}
-    onTxComplete({message="",slotIndex=null,unixMs=Date.now()}={}){const tx=upper(message);if(!tx)return this.snapshot();const expected=upper(this.nextMessage);if(expected&&tx!==expected)return this._transition("ERROR",`TX sequence mismatch: expected ${expected}, sent ${tx}`,{slotIndex,unixMs,tx});this.lastTxMessage=tx;this.attempts+=1;this.silentSlots=0;if(WAITING.has(this.state)){this.retryAttempts+=1;if(this.retryAttempts>Number(this.options.maxRetries||6))return this._transition("TIMEOUT","retry limit",{slotIndex,unixMs,tx});this._plan();return this.snapshot();}
+    onTxComplete({message="",slotIndex=null,unixMs=Date.now()}={}){const tx=upper(message);if(!tx)return this.snapshot();const expected=upper(this.nextMessage);if(expected&&tx!==expected)return this._transition("ERROR",`TX sequence mismatch: expected ${expected}, sent ${tx}`,{slotIndex,unixMs,tx});this.lastTxMessage=tx;this.attempts+=1;this.silentSlots=0;if(WAITING.has(this.state)){this.retryAttempts+=1;if(this.retryAttempts>=Number(this.options.maxRetries||6))return this._transition("TIMEOUT","retry limit",{slotIndex,unixMs,tx});this._plan();return this.snapshot();}
       switch(this.state){case "ANSWERING_CQ":case "SELECTED":return this._transition("WAIT_DX_REPORT","initial call sent",{slotIndex,unixMs,tx});case "CALLING_CQ":return this._transition("WAIT_DX_REPORT","CQ sent",{slotIndex,unixMs,tx});case "SEND_REPORT":return this._transition("WAIT_R_REPORT","report sent",{slotIndex,unixMs,tx});case "SEND_R_REPORT":return this._transition("WAIT_RR73","R-report sent",{slotIndex,unixMs,tx});case "SEND_RR73":return this._transition("WAIT_73","RR73 sent",{slotIndex,unixMs,tx});case "SEND_73":return this.options.completeOnSent73?this._transition("COMPLETE","final 73 sent",{slotIndex,unixMs,tx}):this._transition("WAIT_73","final 73 sent",{slotIndex,unixMs,tx});default:return this.snapshot();}}
     onSlot({slotIndex,ownSlot=false,unixMs=Date.now()}={}){if(!ownSlot||!WAITING.has(this.state))return this.snapshot();this.silentSlots+=1;if(this.silentSlots>Number(this.options.timeoutSlots||8))return this._transition("TIMEOUT","silent slot timeout",{slotIndex,unixMs});return this.snapshot();}
     abort(reason="operator halt",meta={}){if(this.state==="IDLE"||TERMINAL.has(this.state))return this.snapshot();return this._transition("ABORTED",reason,meta);}
