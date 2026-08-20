@@ -14,7 +14,7 @@ Connect the FT-710 USB-B port to the Waveshare ESP32-P4-NANO Type-A USB host por
 
 Set the FT-710 **CAT-2 / Standard COM** rate to **115200 baud**. The firmware claims the CP2105 CAT-2/AUX interface and configures its USB-UART side as 115200 8N1 with flow control disabled.
 
-FreeRig710 deliberately uses CAT-2 so the radio control path is distinct from the old Raspberry Pi/WSJT-X architecture. There is no external WSJT-X process in FreeRig710 1.0.
+FreeRig710 deliberately uses CAT-2 so the radio control path is distinct from the old Raspberry Pi/WSJT-X architecture. There is no external WSJT-X process in FreeRig710.
 
 ## FT8 operating configuration
 

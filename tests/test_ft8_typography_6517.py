@@ -2,7 +2,7 @@ from pathlib import Path
 root=Path(__file__).resolve().parents[1]
 css=(root/'frontend/ft8-page.css').read_text()
 html=(root/'frontend/ft8.html').read_text()
-assert '1.0.0' in html
+assert '1.0' in html
 assert '--ft8-control-height:31px' in css
 assert '--ft8-font-control:.70rem' in css
 assert '--ft8-font-emphasis:.72rem' in css

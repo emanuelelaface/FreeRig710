@@ -12,5 +12,5 @@ assert '"THE NETHERLANDS":"NETHERLANDS"' in log
 assert 'const canonicalCountry = countryKey(record.country)' in log
 assert 'k === "COUNTRY" ? countryKey(value)' in log
 assert 'countryKeySchema' in js and 'rebuildIndices()' in js
-assert '1.0.0' in html
+assert '1.0' in html
 print('FT8.6.5.21 country alias/index migration contract: OK')

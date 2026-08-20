@@ -184,7 +184,7 @@
     ensureWorker() {
       if (this.worker) return;
       try {
-        this.worker = new Worker("ft8-worker.js?v=1.0.0", { type: "module" });
+        this.worker = new Worker("ft8-worker.js?v=1.0", { type: "module" });
         this.worker.onmessage = (event) => this.handleWorkerMessage(event.data);
         this.worker.onerror = (event) => {
           this.decoderReady = false;

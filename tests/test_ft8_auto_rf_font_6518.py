@@ -3,7 +3,7 @@ root=Path(__file__).resolve().parents[1]
 css=(root/'frontend/ft8-page.css').read_text()
 js=(root/'frontend/ft8-page.js').read_text()
 html=(root/'frontend/ft8.html').read_text()
-assert '1.0.0' in html
+assert '1.0' in html
 assert '#ft8-rf-gain{' in css
 assert 'flex:0 0 9ch' in css
 assert 'font-variant-numeric:tabular-nums' in css

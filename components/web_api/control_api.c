@@ -402,7 +402,7 @@ static esp_err_t state_handler(httpd_req_t *req){ return send_json(req,state_jso
 
 static esp_err_t capabilities_handler(httpd_req_t *req)
 {
-    cJSON *o=cJSON_CreateObject();cJSON_AddTrueToObject(o,"ok");cJSON_AddStringToObject(o,"platform","ESP32-P4");cJSON_AddStringToObject(o,"hostname","ft710.local");cJSON_AddStringToObject(o,"version","1.0.0");
+    cJSON *o=cJSON_CreateObject();cJSON_AddTrueToObject(o,"ok");cJSON_AddStringToObject(o,"platform","ESP32-P4");cJSON_AddStringToObject(o,"hostname","ft710.local");cJSON_AddStringToObject(o,"version","1.0");
     cJSON_AddBoolToObject(o,"ft8",true);cJSON_AddStringToObject(o,"ft8_stage","FreeRig710_1.0");cJSON_AddBoolToObject(o,"ft8_decode",true);cJSON_AddBoolToObject(o,"ft8_tx",true);cJSON_AddBoolToObject(o,"ft8_tx_audio",true);cJSON_AddBoolToObject(o,"ft8_tune",true);cJSON_AddBoolToObject(o,"ft8_auto_ptt",true);cJSON_AddBoolToObject(o,"video",true);cJSON_AddBoolToObject(o,"cat",true);cJSON_AddBoolToObject(o,"audio_rx",true);cJSON_AddBoolToObject(o,"audio_tx",true);cJSON_AddBoolToObject(o,"ptt_latching",true);cJSON_AddNumberToObject(o,"ptt_watchdog_ms",1500);
     return send_json(req,o);
 }
@@ -1282,7 +1282,7 @@ static void qrz_fetch_task(void *arg)
         .truncated = false,
     };
     char user_agent[96];
-    snprintf(user_agent, sizeof(user_agent), "FreeRig710/1.0.0 (%s)", job->config.station_callsign);
+    snprintf(user_agent, sizeof(user_agent), "FreeRig710/1.0 (%s)", job->config.station_callsign);
     esp_http_client_config_t cfg = {
         .url = "https://logbook.qrz.com/api",
         .event_handler = qrz_http_event,
@@ -1577,7 +1577,7 @@ static void qrz_log_task(void *arg)
         .truncated = false,
     };
     char user_agent[96];
-    snprintf(user_agent, sizeof(user_agent), "FreeRig710/1.0.0 (%s)", job->config.station_callsign);
+    snprintf(user_agent, sizeof(user_agent), "FreeRig710/1.0 (%s)", job->config.station_callsign);
     esp_http_client_config_t cfg = {
         .url = "https://logbook.qrz.com/api",
         .event_handler = qrz_http_event,
@@ -1808,7 +1808,7 @@ static cJSON *ft8_status_json(void)
     const uint64_t mono_us = (uint64_t)esp_timer_get_time();
 
     cJSON *f = cJSON_CreateObject();
-    cJSON_AddStringToObject(f, "version", "1.0.0");
+    cJSON_AddStringToObject(f, "version", "1.0");
     cJSON_AddStringToObject(f, "architecture", "browser FT8 RX/QSO + WSJT-X-port encoder; ESP32 owns UTC/PTT safety and staged 48 kHz FT8 playback over raw UAC1 TX");
     cJSON_AddBoolToObject(f, "decode_enabled", true);
     cJSON_AddBoolToObject(f, "tx_enabled", true);
@@ -3443,5 +3443,5 @@ esp_err_t control_api_register(httpd_handle_t server)
     R("/api/v1/radio/jog",HTTP_OPTIONS,options_handler);
     R("/*",HTTP_OPTIONS,options_handler);
 #undef R
-    ESP_LOGI(TAG,"FreeRig710 1.0 control API registered: CAT BULK IN halted during microphone and FT8 RF TX");return ESP_OK;
+    ESP_LOGI(TAG,"FreeRig710 control API registered: CAT BULK IN halted during microphone and FT8 RF TX");return ESP_OK;
 }

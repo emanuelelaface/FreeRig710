@@ -2,7 +2,7 @@
 
 ![FT8 console](images/ft8-console.png)
 
-FreeRig710 1.0 includes its own browser FT8 console. It is not a noVNC view of WSJT-X.
+FreeRig710 includes its own browser FT8 console. It is not a noVNC view of WSJT-X.
 
 ## Processing split
 

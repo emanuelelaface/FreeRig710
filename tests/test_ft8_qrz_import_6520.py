@@ -5,7 +5,7 @@ js=(root/'frontend/ft8.js').read_text()
 lb=(root/'frontend/ft8-logbook.js').read_text()
 rules=(root/'frontend/ft8-decode-rules.js').read_text()
 html=(root/'frontend/ft8.html').read_text()
-assert '1.0.0' in html
+assert '1.0' in html
 assert 'qrz_response_adif_alloc(response)' in c
 assert 'qrz_html_decode_inplace(out)' in c
 assert 'QRZ reported %lu QSO but ADIF contained no parsable records' in c

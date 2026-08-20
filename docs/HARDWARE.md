@@ -1,6 +1,6 @@
 # Hardware
 
-FreeRig710 1.0 is an ESP32-P4 implementation. It does not require a Raspberry Pi for CAT, audio, video capture or FT8.
+FreeRig710 is an ESP32-P4 implementation. It does not require a Raspberry Pi for CAT, audio, video capture or FT8.
 
 ## Reference hardware
 

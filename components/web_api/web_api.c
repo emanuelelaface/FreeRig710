@@ -73,14 +73,14 @@ static const char STATUS_PAGE[] =
     "<!doctype html>"
     "<html lang=\"en\"><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    "<title>FreeRig710 1.0</title>"
+    "<title>FreeRig710</title>"
     "<style>body{font-family:system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;}"
     "code,pre{background:#eee;padding:.2rem .35rem;border-radius:.25rem;}li{margin:.45rem 0}"
     ".video{width:100%;height:auto;border:1px solid #bbb;background:#111;display:block}</style>"
     "</head><body>"
     "<h1>FreeRig710</h1>"
     "<p>ESP32-P4 bring-up firmware for the Yaesu FT-710.</p>"
-    "<p><strong>FreeRig710 1.0:</strong> ESP32-P4 radio control, live video, browser audio and integrated FT8.</p>"
+    "<p><strong>FreeRig710:</strong> ESP32-P4 radio control, live video, browser audio and integrated FT8.</p>"
     "<p><strong>Unified audio/PTT:</strong> the production GUI uses <code>/api/v1/audio/ws</code> for RX PCM, browser microphone PCM and latching PTT with a 1.5 s safety watchdog.</p>"
     "<p><img class=\"video\" src=\"/video.mjpeg\" alt=\"Live HDMI video\"></p>"
     "<ul>"
@@ -160,7 +160,7 @@ static esp_err_t health_handler(httpd_req_t *req)
         "\"service\":\"FreeRig710\","
         "\"platform\":\"ESP32-P4\","
         "\"radio\":\"Yaesu FT-710\","
-        "\"version\":\"1.0.0\","
+        "\"version\":\"1.0\","
         "\"ft8_enabled\":true,"
         "\"usb_descriptor_enumeration_enabled\":true,"
         "\"csi_capture_enabled\":true,"
@@ -256,7 +256,7 @@ static esp_err_t tc358743_handler(httpd_req_t *req)
         json, json_capacity,
         "{"
         "\"ok\":%s,"
-        "\"version\":\"1.0.0\","
+        "\"version\":\"1.0\","
         "\"writes_enabled\":true,"
         "\"csi_transmitter_configured\":%s,"
         "\"i2c\":{"
@@ -784,7 +784,7 @@ static esp_err_t jpeg_status_handler(httpd_req_t *req)
         json, json_capacity,
         "{"
         "\"ok\":%s,"
-        "\"version\":\"1.0.0\","
+        "\"version\":\"1.0\","
         "\"engine\":{"
             "\"hardware\":true,"
             "\"initialized\":%s,"
@@ -896,7 +896,7 @@ static esp_err_t usb_status_handler(httpd_req_t *req)
         &cursor, &remaining,
         "{"
         "\"ok\":%s,"
-        "\"version\":\"1.0.0\","
+        "\"version\":\"1.0\","
         "\"role\":\"DWC2 FS/LS-only Type-A with CP2105 CAT-2 transport; USB Audio enumerated but not claimed\","
         "\"host\":{" 
             "\"initialized\":%s,"
@@ -1078,7 +1078,7 @@ static esp_err_t cat_status_handler(httpd_req_t *req)
         json, sizeof(json),
         "{"
         "\"ok\":%s,"
-        "\"version\":\"1.0.0\","
+        "\"version\":\"1.0\","
         "\"role\":\"FT-710 CP2105 CAT-2/AUX interface 1; read-only state polling; PTT disabled\","
         "\"initialized\":%s,"
         "\"client_registered\":%s,"
@@ -1289,7 +1289,7 @@ static esp_err_t audio_status_handler(httpd_req_t *req)
     char *cursor = json;
     size_t remaining = json_capacity;
     bool ok = usb_json_append(&cursor, &remaining,
-        "{\"ok\":%s,\"version\":\"1.0.0\",\"probe_only\":false,"
+        "{\"ok\":%s,\"version\":\"1.0\",\"probe_only\":false,"
         "\"streaming_enabled\":%s,\"ptt_enabled\":false,\"tx_audio_enabled\":%s,"
         "\"device_present\":%s,\"vid\":\"0x0D8C\",\"pid\":\"0x0013\","
         "\"device_role\":\"FT-710 USB Audio (C-Media)\","
@@ -1438,7 +1438,7 @@ static esp_err_t radio_state_handler(httpd_req_t *req)
         json, sizeof(json),
         "{"
         "\"ok\":%s,"
-        "\"version\":\"1.0.0\","
+        "\"version\":\"1.0\","
         "\"read_only\":true,"
         "\"ptt_enabled\":false,"
         "\"connected\":%s,"
@@ -1499,7 +1499,7 @@ static esp_err_t csi_handler(httpd_req_t *req)
         json, json_capacity,
         "{"
         "\"ok\":%s,"
-        "\"version\":\"1.0.0\","
+        "\"version\":\"1.0\","
         "\"source_test_mode\":\"FT-710 800x480p60\","
         "\"tc358743_csi_tx\":{"
             "\"configured\":%s,"

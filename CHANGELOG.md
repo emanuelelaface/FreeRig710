@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 — 2026-08-20
+## 1.0 — 2026-08-20
 
 First public ESP32-P4 release, promoted from the validated FT8.6.5.22 engineering baseline.
 

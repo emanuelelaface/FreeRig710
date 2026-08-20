@@ -7,9 +7,9 @@ js=(root/'frontend/ft8.js').read_text()
 geo=(root/'frontend/ft8-geo.js').read_text()
 rules=(root/'frontend/ft8-decode-rules.js').read_text()
 
-assert '1.0.0' in html
+assert '1.0' in html
 assert html.count('<th>LOCATION</th>') == 2
-assert 'ft8-geo.js?v=1.0.0' in html
+assert 'ft8-geo.js?v=1.0' in html
 assert html.index('ft8-geo.js') < html.index('ft8-decode-rules.js')
 assert 'ft8-geo-cell' in css and 'ft8-geo-secondary' in css
 assert 'location approximate from Maidenhead grid' in js

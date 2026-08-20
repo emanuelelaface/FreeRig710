@@ -1,4 +1,4 @@
-# FreeRig710 1.0
+# FreeRig710
 
 **FreeRig710** is a self-hosted remote-control and FT8 station for the **Yaesu FT-710**, rebuilt around a **Waveshare ESP32-P4-NANO**. The ESP32-P4 talks directly to the radio over USB for CAT and audio, captures the FT-710 external display through HDMI/DVI-to-CSI-2, serves the control API over wired Ethernet, and owns the time-critical/safety-critical FT8 transmit path. The web frontend can be served locally for development or from Apache over HTTPS with form authentication.
 
@@ -34,7 +34,7 @@ The ESP32-P4-NANO used during development has **16 MB NOR flash and 32 MB PSRAM*
 
 See [docs/HARDWARE.md](docs/HARDWARE.md) for the complete wiring and signal path, and [hardware/case/](hardware/case/) for the printable enclosure.
 
-## What FreeRig710 1.0 does
+## What FreeRig710 does
 
 - Full browser control of the FT-710: power, VFOs, frequency, modes, RX/TX routing, RF gain, preamp/IPO, attenuator, AGC, filters, DNR, noise blanker, notch/contour, scope settings, TX power and tuner.
 - Live **800×480** FT-710 external display as MJPEG, with click tuning.
@@ -94,7 +94,7 @@ FreeRig710/
 └── THIRD_PARTY_NOTICES.md   runtime/data dependency notices
 ```
 
-The public **1.0.0** release is based on the validated **FT8.6.5.22** engineering baseline. Historical version numbers remain in some source comments and regression-test filenames because they document the fixes those tests protect.
+Release **1.0** is based on the validated **FT8.6.5.22** engineering baseline. Historical version numbers remain in some source comments and regression-test filenames because they document the fixes those tests protect.
 
 ## Build and flash the ESP32-P4
 
@@ -222,4 +222,4 @@ The FT8 browser path also uses external pinned dependencies and geographic data 
 
 ## Replacing the old Raspberry Pi repository
 
-This tree is intended to replace the old Raspberry Pi implementation entirely. See [docs/REPOSITORY_REPLACEMENT.md](docs/REPOSITORY_REPLACEMENT.md) for a safe `git rm`/`rsync` workflow that keeps the existing GitHub repository history while replacing its contents with FreeRig710 1.0.
+This tree is intended to replace the old Raspberry Pi implementation entirely. See [docs/REPOSITORY_REPLACEMENT.md](docs/REPOSITORY_REPLACEMENT.md) for a safe `git rm`/`rsync` workflow that keeps the existing GitHub repository history while replacing its contents with FreeRig710.

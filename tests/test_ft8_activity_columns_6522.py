@@ -12,5 +12,5 @@ assert 'colspan="6"' in html
 assert 'td.colSpan = 6' in js
 assert 'DT ${Number(row.dt).toFixed(2)} s · DF ${Math.round(Number(row.df))} Hz' in js
 assert 'width:20ch;min-width:20ch;max-width:20ch' in css
-assert '1.0.0' in html
+assert '1.0' in html
 print("FT8.6.5.22 compact activity columns checks passed")

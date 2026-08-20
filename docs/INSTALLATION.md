@@ -2,7 +2,7 @@
 
 ## 1. Install ESP-IDF
 
-The validated FreeRig710 1.0 baseline uses ESP-IDF 6.0.2.
+The validated baseline for FreeRig710 release 1.0 uses ESP-IDF 6.0.2.
 
 Set up ESP-IDF using Espressif's normal installation instructions, then verify:
 

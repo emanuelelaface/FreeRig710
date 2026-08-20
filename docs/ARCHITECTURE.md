@@ -1,6 +1,6 @@
 # Architecture
 
-FreeRig710 1.0 moves the old Raspberry Pi responsibilities into the ESP32-P4 firmware and the browser.
+FreeRig710 moves the old Raspberry Pi responsibilities into the ESP32-P4 firmware and the browser.
 
 ## Firmware components
 

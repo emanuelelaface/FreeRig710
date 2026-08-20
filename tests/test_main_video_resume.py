@@ -15,5 +15,5 @@ assert 'retryTimer = setTimeout(load, VIDEO_ERROR_RETRY_MS);' in app
 assert 'retryTimer = setTimeout(load, VIDEO_STALL_RETRY_MS);' in app
 assert '}, VIDEO_FIRST_FRAME_TIMEOUT_MS);' in app
 assert 'window.addEventListener("pageshow"' in app
-assert 'app.js?v=1.0.0' in index
+assert 'app.js?v=1.0' in index
 print("main video resume contract: OK")
