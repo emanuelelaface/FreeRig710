@@ -9,6 +9,11 @@
   const state={loaded:false,loading:false,error:"",source:"",entities:[],exact:new Map(),prefix:new Map(),prefixLengths:[]};
   const up=v=>String(v??"").trim().toUpperCase();
   const cleanCall=v=>up(v).replace(/[^A-Z0-9/]/g,"");
+  // Big CTY contains a few extra WAE/contest entities prefixed with '*'.
+  // They are useful for display/contest geography but must not be treated as
+  // separate ARRL DXCC entities by FreeRig710 worked/new-DXCC logic.
+  // European Turkey (*TA1) is DXCC Turkey (TA).
+  const DXCC_ENTITY_ALIASES=Object.freeze({"TA1":"TA"});
 
   function parseHeader(text){
     const p=String(text||"").split(":");
@@ -98,7 +103,8 @@
 
   function materialize(hit,input){
     if(!hit)return null; const e=state.entities[hit.entityId]; if(!e)return null;
-    return {call:cleanCall(input),name:e.name,entityKey:e.primaryPrefix,primaryPrefix:e.primaryPrefix,continent:hit.continent||e.continent,cqZone:hit.cqZone??e.cqZone,ituZone:hit.ituZone??e.ituZone,latitude:e.latitude,longitude:e.longitude,utcOffset:e.utcOffset,match:hit.match,matchType:hit.matchType,source:"AD1C Big CTY"};
+    const entityKey=DXCC_ENTITY_ALIASES[e.primaryPrefix]||e.primaryPrefix;
+    return {call:cleanCall(input),name:e.name,entityKey,ctyEntityKey:e.primaryPrefix,primaryPrefix:e.primaryPrefix,continent:hit.continent||e.continent,cqZone:hit.cqZone??e.cqZone,ituZone:hit.ituZone??e.ituZone,latitude:e.latitude,longitude:e.longitude,utcOffset:e.utcOffset,match:hit.match,matchType:hit.matchType,source:"AD1C Big CTY"};
   }
 
   function lookup(call){
