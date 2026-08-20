@@ -1,62 +1,45 @@
 # Architecture
 
-FreeRig710 separates radio access, media capture, browser delivery and public
-authentication into independent components.
+FreeRig710 1.0 moves the old Raspberry Pi responsibilities into the ESP32-P4 firmware and the browser.
 
-## Radio and media ownership
+## Firmware components
+
+- `board` — fixed Waveshare ESP32-P4-NANO board wiring.
+- `network_eth` — Ethernet, DHCP, mDNS and SNTP.
+- `tc358743` — HDMI/DVI receiver and EDID/CSI transmitter configuration.
+- `video_capture` — ESP32-P4 CSI capture and recovery.
+- `video_jpeg` — hardware JPEG/MJPEG path.
+- `ft710_usb` — USB host topology enumeration and Full-Speed host workaround.
+- `ft710_cat` — CP2105 CAT-2/AUX transport and radio state polling/control.
+- `ft710_audio` — UAC1 receive stream.
+- `ft710_audio_tx` — UAC1 transmit stream.
+- `freerig_config` — NVS station/QRZ/memory metadata.
+- `freerig_memories` — FT-710 memory synchronization.
+- `web_api` — HTTP API, MJPEG, bidirectional audio WebSocket, QRZ and FT8 TX services.
+
+## Frontend
+
+- `index.html`, `app.js`, `styles.css` — main station UI.
+- `ft8.html`, `ft8-page.js`, `ft8.js`, `ft8-page.css` — FT8 operating console.
+- `ft8-worker.js` — FT8 RX/TX codec worker and waveform preparation.
+- `ft8-qso-machine.js` — QSO state machine.
+- `ft8-logbook.js` — local ADIF/IndexedDB worked/QSO database and QRZ sync support.
+- `ft8-decode-rules.js` — FT8 filter/color rule matching.
+- `ft8-geo.js` — compact offline Maidenhead geography index.
+- `audio-worklet.js` — shared browser audio processing.
+- `cw.js`, `sstv.js` — auxiliary browser modes.
+
+## Important API paths
 
 ```text
-/dev/ttyFT710_CAT
-  └── WSJT-X (direct CAT-1 / Enhanced COM, 115200 8N2)
-
-/dev/ttyFT710_AUX
-  └── FastAPI direct CAT-2 / Standard COM, 115200 8N1
-        ├── polling and state events
-        ├── VFO, mode, DSP, tuner and power controls
-        ├── memories and CW functions
-        └── CAT PTT for browser microphone audio
-
-/dev/video0
-  └── GStreamer
-        └── latest-frame MJPEG relay
-              └── browser radio-display panel
-
-FT-710 USB audio
-  ├── ft710_in_44100 → parec → WebSocket → browser speaker
-  └── browser microphone → WebSocket → paplay → ft710_out_44100
-
-TigerVNC :105 / TCP 6005 on localhost
-  └── WSJT-X + Openbox
-        └── websockify/noVNC on private TCP 10005
+/api/v1/state
+/api/v1/radio/*
+/api/v1/memories/*
+/api/v1/qrz/*
+/api/v1/ft8/*
+/api/v1/audio/ws
+/video.mjpeg
+/video.jpg
 ```
 
-## Web path
-
-```text
-Browser
-  └── HTTPS https://radio.example.com
-        └── Apache form login and encrypted session cookie
-              ├── /                    → static frontend
-              ├── /ft710-api/          → FastAPI TCP 8100
-              └── /ft8/                → noVNC/websockify TCP 10005
-```
-
-Apache terminates TLS and is the only public-facing component. The API and
-noVNC ports should remain on a private network and be firewalled to the Apache
-host.
-
-## FastAPI internals
-
-- `direct_cat.py` serializes all CAT-2 transactions with one process-local
-  lock and forces RTS/DTR low.
-- `state.py` polls the radio and publishes state changes.
-- `video.py` keeps only the newest complete JPEG frame, preventing slow
-  clients from building delayed queues.
-- `audio.py` bridges ordered 16-bit mono PCM over a WebSocket and uses
-  PipeWire/PulseAudio as the timing buffer.
-- `ft8.py` starts and stops TigerVNC plus websockify only after explicit user
-  action from the web interface.
-- `memories.py` stores metadata in a local SQLite runtime database.
-
-The SQLite database, logs and PID files are runtime data and are deliberately
-excluded from Git.
+Apache should proxy only the API/audio/video paths. `index.html` and `ft8.html` are static files served directly from the web root.

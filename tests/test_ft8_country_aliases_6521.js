@@ -1,0 +1,20 @@
+"use strict";
+const assert=require("assert");
+const lb=require("../frontend/ft8-logbook.js");
+const key=lb.countryKey;
+assert.equal(key("United Kingdom"),"UNITED KINGDOM");
+assert.equal(key("England"),"UNITED KINGDOM");
+assert.equal(key("Scotland"),"UNITED KINGDOM");
+assert.equal(key("Wales"),"UNITED KINGDOM");
+assert.equal(key("Northern Ireland"),"UNITED KINGDOM");
+assert.equal(key("The Netherlands"),"NETHERLANDS");
+assert.equal(key("Netherlands"),"NETHERLANDS");
+assert.equal(key("Türkiye"),"TURKEY");
+assert.equal(key("Russian Federation"),"RUSSIA");
+assert.equal(key("Czech Republic"),"CZECHIA");
+// Country collapsing must never rewrite the separate ADIF DXCC value.
+const england=lb.normalizeRecord({fields:{CALL:"G1ABC",DXCC:"223",COUNTRY:"England"}},"test");
+const scotland=lb.normalizeRecord({fields:{CALL:"GM1ABC",DXCC:"279",COUNTRY:"Scotland"}},"test");
+assert.equal(england.dxcc,"223");assert.equal(scotland.dxcc,"279");
+assert.equal(key(england.country),key(scotland.country));
+console.log("FT8.6.5.21 country alias normalization: OK");

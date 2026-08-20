@@ -1,0 +1,119 @@
+<IfModule mod_ssl.c>
+<VirtualHost *:443>
+        ServerAdmin webmaster@localhost
+        ServerName radio.example.com
+
+        DocumentRoot /var/www/ft710
+        DirectoryIndex index.html
+
+        <Directory /var/www/ft710>
+                Options -Indexes +FollowSymLinks
+                AllowOverride None
+                Require all granted
+        </Directory>
+
+        # Public login page.
+        <Location "/login.html">
+                Require all granted
+        </Location>
+
+        # Form-login handler.
+        <Location "/ft710-login">
+                SetHandler form-login-handler
+
+                AuthType form
+                AuthName "FT710"
+                AuthFormProvider file
+                AuthUserFile /etc/apache2/freerig710.htpasswd
+
+                AuthFormLoginRequiredLocation "/login.html"
+                AuthFormLoginSuccessLocation "/"
+
+                Session On
+                SessionCookieName FT710SESSION path=/;httponly;secure;samesite=lax
+                SessionCryptoPassphraseFile /etc/apache2/freerig710-session.key
+                SessionMaxAge 2592000
+                SessionExpiryUpdateInterval 300
+        </Location>
+
+        # Protect static frontend, REST API, WebSocket, MJPEG and FT8 with the same session.
+        <LocationMatch "^/(?!login\.html$|ft710-login$)">
+                AuthType form
+                AuthName "FT710"
+                AuthFormProvider file
+                AuthUserFile /etc/apache2/freerig710.htpasswd
+                AuthFormLoginRequiredLocation "/login.html"
+
+                Session On
+                SessionCookieName FT710SESSION path=/;httponly;secure;samesite=lax
+                SessionCryptoPassphraseFile /etc/apache2/freerig710-session.key
+                SessionMaxAge 2592000
+                SessionExpiryUpdateInterval 300
+                SessionCookieRemove On
+
+                Require valid-user
+        </LocationMatch>
+
+        ProxyRequests Off
+        ProxyPreserveHost On
+        ProxyTimeout 3600
+
+        # ESP32 audio WebSocket. Keep this before the generic /api/ proxy.
+        ProxyPass \
+                /api/v1/audio/ws \
+                ws://192.168.1.88/api/v1/audio/ws \
+                retry=0 timeout=3600
+
+        ProxyPassReverse \
+                /api/v1/audio/ws \
+                ws://192.168.1.88/api/v1/audio/ws
+
+        # ESP32 REST API.
+        ProxyPass \
+                /api/ \
+                http://192.168.1.88/api/ \
+                connectiontimeout=5 timeout=3600 retry=0 keepalive=On
+
+        ProxyPassReverse \
+                /api/ \
+                http://192.168.1.88/api/
+
+        # Live FT-710 display.
+        ProxyPass \
+                /video.mjpeg \
+                http://192.168.1.88/video.mjpeg \
+                connectiontimeout=5 timeout=3600 retry=0
+
+        ProxyPassReverse \
+                /video.mjpeg \
+                http://192.168.1.88/video.mjpeg
+
+        ProxyPass \
+                /video.jpg \
+                http://192.168.1.88/video.jpg \
+                connectiontimeout=5 timeout=60 retry=0
+
+        ProxyPassReverse \
+                /video.jpg \
+                http://192.168.1.88/video.jpg
+
+        RequestHeader set X-Forwarded-Proto "https"
+        RequestHeader set X-Forwarded-Port "443"
+
+        SetEnvIf Request_URI "^/(api/v1/audio/ws|video\.mjpeg)$" no-gzip=1
+
+        <Location "/video.mjpeg">
+                Header always set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+                Header always set Pragma "no-cache"
+                Header always set Expires "0"
+        </Location>
+
+        ErrorLog ${APACHE_LOG_DIR}/freerig710-error.log
+        LogLevel warn
+        CustomLog ${APACHE_LOG_DIR}/freerig710-access.log combined
+
+        SSLCertificateFile /etc/letsencrypt/live/radio.example.com/fullchain.pem
+        SSLCertificateKeyFile /etc/letsencrypt/live/radio.example.com/privkey.pem
+        Include /etc/letsencrypt/options-ssl-apache.conf
+</VirtualHost>
+</IfModule>

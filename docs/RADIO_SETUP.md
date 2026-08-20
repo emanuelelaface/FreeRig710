@@ -1,77 +1,55 @@
-# FT-710 radio configuration
+# Yaesu FT-710 setup
 
-These settings are required before starting FreeRig710. Menu names follow the
-English FT-710 Operation Manual.
+## External display
 
-## 1. Enable the external display
+FreeRig710's video path expects the FT-710 external display to be enabled at **800×480**.
 
-Press the **FUNC** knob, then select:
+On the FT-710, enable the external monitor/output and select the 800×480 pixel mode before testing video capture.
 
-```text
-DISPLAY SETTING
-└── EXT MONITOR
-    ├── EXT DISPLAY: ON
-    └── PIXEL: 800x480
-```
+Expected signal in FreeRig710 is 800×480 progressive at approximately 60 Hz.
 
-The FT-710 `EXT-DISPLAY` connector is DVI-D. Connect it through the DVI-to-HDMI
-adapter and HDMI cable to the GeeekPi board.
+## USB and CAT
 
-## 2. Configure both USB CAT ports
+Connect the FT-710 USB-B port to the Waveshare ESP32-P4-NANO Type-A USB host port.
 
-Press the **FUNC** knob, then select:
+Set the FT-710 **CAT-2 / Standard COM** rate to **115200 baud**. The firmware claims the CP2105 CAT-2/AUX interface and configures its USB-UART side as 115200 8N1 with flow control disabled.
 
-```text
-OPERATION SETTING
-└── GENERAL
-    ├── CAT-1 RATE: 115200 bps
-    ├── CAT-1 CAT-3 STOP BIT: 2bit
-    └── CAT-2 RATE: 115200 bps
-```
+FreeRig710 deliberately uses CAT-2 so the radio control path is distinct from the old Raspberry Pi/WSJT-X architecture. There is no external WSJT-X process in FreeRig710 1.0.
 
-Port ownership is strict:
+## FT8 operating configuration
 
-```text
-CAT-1 / Enhanced COM / /dev/ttyFT710_CAT → WSJT-X
-CAT-2 / Standard COM / /dev/ttyFT710_AUX → FreeRig710 FastAPI
-```
+Selecting a band on the FT8 page applies the radio state required by the integrated FT8 implementation:
 
-There is no `rigctld` layer in this installation. WSJT-X opens CAT-1 directly;
-the API opens CAT-2 directly. Do not point both applications at the same
-serial device.
+- VFO A set to the selected FT8 dial frequency;
+- VFO A mode `DATA-U`;
+- VFO B mode `DATA-U`;
+- RX on VFO A;
+- split enabled A → B for TX;
+- VFO B positioned to produce the selected audio TX DF;
+- digital filters used by the normal UI disabled for the FT8 receive path;
+- receive width set to 3.2 kHz.
 
-CAT-2 uses 8 data bits, no parity and one stop bit. The API disables RTS, DTR
-and flow control. CAT-1 is configured in WSJT-X with 8 data bits, two stop
-bits and no handshake.
+The default dial-frequency table in `frontend/ft8.html` is:
 
-## 3. Check the FT8 preset
+| Band | Dial frequency |
+|---|---:|
+| 160 m | 1.840 MHz |
+| 80 m | 3.573 MHz |
+| 60 m | 5.357 MHz (regional) |
+| 40 m | 7.074 MHz |
+| 30 m | 10.136 MHz |
+| 20 m | 14.074 MHz |
+| 17 m | 18.100 MHz |
+| 15 m | 21.074 MHz |
+| 12 m | 24.915 MHz |
+| 10 m | 28.074 MHz |
+| 6 m | 50.313 MHz |
+| 4 m | 70.154 MHz (regional) |
 
-The FT-710 FT8 `PRESET` can store `CAT-1 RATE` and `CAT-1 CAT-3 STOP BIT`.
-Ensure the preset used for WSJT-X also contains:
+Always check your licence, band plan and local regulations before transmitting, especially on the entries marked regional.
 
-```text
-CAT-1 RATE: 115200 bps
-CAT-1 CAT-3 STOP BIT: 2bit
-```
+## TX safety model
 
-Otherwise enabling the preset may silently change the serial settings and
-break WSJT-X CAT control.
+Before automatic FT8 TX the ESP32 checks radio power/state, VFO/mode/split configuration, expected frequencies and power, UAC1 TX, audio WebSocket, UTC clock synchronization and current RX/TX ownership.
 
-## 4. USB audio and transmit source
-
-For browser microphone transmission or WSJT-X data transmission, select the
-appropriate USB modulation source on the radio for the active mode. During
-initial testing, disable VOX and use CAT PTT. Test with a dummy load or low RF
-power.
-
-## Manual references
-
-Relevant sections in the FT-710 Operation Manual include:
-
-- display connection and rear-panel `EXT-DISPLAY` description;
-- `OPERATION SETTING → GENERAL` CAT settings;
-- `DISPLAY SETTING → EXT MONITOR`;
-- FT8 preset configuration;
-- USB A-to-B computer connection.
-
-The Yaesu manual is not redistributed in this repository.
+During browser microphone or FT8 RF TX, FreeRig710 temporarily suspends UAC RX and halts CAT BULK IN on the validated ESP32-P4 USB-host path to avoid RF-audible UAC1 TX discontinuities. CAT TX remains available so `TX0` can release PTT, and watchdog/deadline logic remains authoritative.

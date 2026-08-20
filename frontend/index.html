@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Yaesu FT-710 Remote</title>
-  <link rel="stylesheet" href="styles.css?v=1.16.0">
+  <title>FreeRig710 · Yaesu FT-710</title>
+  <link rel="stylesheet" href="styles.css?v=1.0.0">
 </head>
 <body>
   <main class="shell">
@@ -14,10 +14,9 @@
         <h1>Yaesu FT-710</h1>
       </div>
       <div class="topbar-controls">
-        <div class="station-actions" aria-label="Station power and FT8 controls">
+        <div class="station-actions" aria-label="Station power controls">
+          <a id="ft8-open-button" class="station-button ft8-launch-button" href="ft8.html" target="freerig710-ft8">FT8</a>
           <button id="radio-power-button" class="station-button power-button" type="button" disabled>POWER…</button>
-          <button id="ft8-power-button" class="station-button" type="button" disabled>FT8 ON</button>
-          <a id="ft8-open-button" class="station-button station-link disabled" href="https://ft710.scumm.it/ft8" target="_blank" rel="noopener noreferrer" aria-disabled="true" tabindex="-1">FT8</a>
         </div>
         <div class="connection">
           <span id="connection-dot" class="dot"></span>
@@ -128,13 +127,13 @@
           <h2>Memories</h2>
           <span id="memory-status" class="memory-status">CACHE</span>
         </div>
-        <p class="help">Save the current frequency and mode in a real FT-710 memory channel. Category and note are stored only on the Raspberry.</p>
+        <p class="help">Save the current frequency and mode in a real FT-710 memory channel. Category and note are stored in ESP32 NVS.</p>
 
         <form id="memory-save-form" class="memory-save-form">
           <div class="memory-form-grid">
             <label>
               <span class="control-label">Name · max 12 ASCII</span>
-              <input id="memory-name" type="text" maxlength="12" autocomplete="off" spellcheck="false" placeholder="FT8 20M">
+              <input id="memory-name" type="text" maxlength="12" autocomplete="off" spellcheck="false" placeholder="20M USB">
             </label>
             <label>
               <span class="control-label">Slot</span>
@@ -156,7 +155,7 @@
             </label>
             <label class="memory-note-field">
               <span class="control-label">Note</span>
-              <input id="memory-note" type="text" maxlength="240" autocomplete="off" placeholder="Optional web-only note">
+              <input id="memory-note" type="text" maxlength="240" autocomplete="off" placeholder="Optional note stored on ESP32">
             </label>
           </div>
           <label class="memory-overwrite">
@@ -384,7 +383,7 @@
         <input id="tx-mic-gain" type="range" min="0" max="200" step="1" value="100" disabled>
 
         <button id="ptt-button" class="ptt-button" type="button" aria-pressed="false" disabled>PTT OFF · CLICK TO TRANSMIT</button>
-        <p id="audio-detail" class="help">Source: ft710_in_44100 · Sink: ft710_out_44100</p>
+        <p id="audio-detail" class="help">RX: FT-710 USB Audio 48 kHz mono · TX: browser microphone 48 kHz → FT-710 stereo</p>
       </article>
 
       <article class="card panel-card cw-card" data-panel-id="cw-decoder-and-keyer">
@@ -508,7 +507,20 @@
           <h2>QRZ Log</h2>
           <span id="qrz-log-status" class="qrz-status">CHECKING</span>
         </div>
-        <p class="help">Logs the current TX frequency, RX frequency when split, band, mode, power and UTC time. The QRZ API key remains on the Raspberry.</p>
+        <p class="help">The browser captures the current QSO context and asks the ESP32 to submit it to QRZ. Station callsign and Logbook API key are stored on the ESP32; the key is never returned to the browser.</p>
+
+        <form id="qrz-config-form" class="qrz-log-form qrz-config-form">
+          <label>
+            <span class="control-label">My callsign</span>
+            <input id="qrz-config-callsign" type="text" minlength="3" maxlength="16" pattern="[A-Za-z0-9/]+" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="IU0ABC" required>
+          </label>
+          <label>
+            <span class="control-label">QRZ Logbook API key</span>
+            <input id="qrz-config-api-key" type="password" maxlength="128" autocomplete="new-password" placeholder="Leave blank to keep saved key">
+          </label>
+          <button id="qrz-config-save" class="wide" type="submit">SAVE QRZ CONFIG</button>
+          <p id="qrz-config-state" class="help">Reading configuration from ESP32…</p>
+        </form>
 
         <dl class="status-list qrz-preview">
           <div><dt>My call</dt><dd id="qrz-station-call">Not configured</dd></div>
@@ -542,27 +554,32 @@
           </label>
           <button id="qrz-log-submit" class="wide" type="submit" disabled>LOG QSO TO QRZ</button>
         </form>
-        <p id="qrz-log-result" class="help qrz-result" aria-live="polite">Configure the QRZ Logbook key in /etc/ft710-api.env.</p>
+        <p id="qrz-log-result" class="help qrz-result" aria-live="polite">Configure your callsign and QRZ Logbook API key above.</p>
       </article>
 
       <article class="card panel-card" data-panel-id="radio-status">
         <h2>Radio status</h2>
         <dl class="status-list">
           <div><dt>Radio power</dt><dd id="status-radio-power">--</dd></div>
-          <div><dt>FT8 / Xpra</dt><dd id="status-ft8">OFF</dd></div>
-          <div><dt>CAT-2 port</dt><dd id="cat2-device">--</dd></div>
+          <div><dt>CAT</dt><dd id="cat2-device">--</dd></div>
           <div><dt>Active VFO</dt><dd id="status-active-vfo">--</dd></div>
           <div><dt>RX / TX</dt><dd id="tx-state">--</dd></div>
           <div><dt>Tuner</dt><dd id="tuner-state">--</dd></div>
           <div><dt>High SWR</dt><dd id="hi-swr">--</dd></div>
           <div><dt>Radio ID</dt><dd id="radio-id">--</dd></div>
+          <div><dt>ESP32 backend</dt><dd id="status-backend">ft710.local</dd></div>
         </dl>
+        <form id="backend-config-form" class="inline-control backend-config">
+          <input id="backend-host" type="text" autocomplete="off" spellcheck="false" placeholder="http://ft710.local" aria-label="ESP32 backend URL">
+          <button id="backend-save" type="submit">Apply</button>
+        </form>
+        <p id="backend-help" class="help">Local mode uses ft710.local. HTTPS reverse-proxy mode uses the current origin automatically.</p>
       </article>
     </section>
 
     <details class="card advanced-card">
-      <summary>Advanced CAT-2 command</summary>
-      <p class="muted">Disabled by default. This sends commands directly to /dev/ttyFT710_AUX. Do not send TX or PTT commands.</p>
+      <summary>Advanced CAT command</summary>
+      <p class="muted">Advanced CAT access through the ESP32. Raw TX/PTT commands are intentionally blocked; use the latching PTT button so the watchdog remains active.</p>
       <form id="cat-form" class="cat-form">
         <input id="cat-command" type="text" maxlength="128" placeholder="Example: PA0;">
         <label><input id="cat-expect-reply" type="checkbox"> Wait for reply</label>
@@ -576,9 +593,9 @@
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </main>
 
-  <script src="config.js?v=1.12.3"></script>
-  <script src="cw.js?v=1.12.3"></script>
-  <script src="sstv.js?v=1.16.1"></script>
-  <script src="app.js?v=1.19.0"></script>
+  <script src="config.js?v=1.0.0"></script>
+  <script src="cw.js?v=1.0.0"></script>
+  <script src="sstv.js?v=1.0.0"></script>
+  <script src="app.js?v=1.0.0"></script>
 </body>
 </html>

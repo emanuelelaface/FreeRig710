@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FreeRig710 · FT8</title>
+  <link rel="stylesheet" href="styles.css?v=1.0.0">
+  <link rel="stylesheet" href="ft8-page.css?v=1.0.0">
+</head>
+<body class="ft8-page-body">
+  <main class="ft8-page-shell">
+    <header class="ft8-page-header">
+      <div class="ft8-title-block">
+        <p class="eyebrow">FREERIG710 · YAESU FT-710</p>
+        <h1>FT8 Operating Console</h1>
+      </div>
+      <div class="ft8-header-status" aria-label="FT8 operating status">
+        <span id="ft8-radio-state" class="ft8-page-pill">RADIO --</span>
+        <span id="ft8-audio-state" class="ft8-page-pill">AUDIO OFF</span>
+        <span id="ft8-status" class="ft8-status">OFF</span>
+        <span id="ft8-clock-state" class="ft8-page-pill">CLOCK --</span>
+        <span id="ft8-cat-quiet" class="ft8-page-pill ft8-cat-quiet" hidden>CAT QUIET --</span>
+        <a class="station-button ft8-back-button" href="index.html">Main radio</a>
+      </div>
+    </header>
+
+    <section class="card ft8-waterfall-card ft8-wsjtx-waterfall" aria-label="FT8 waterfall">
+      <div class="ft8-page-section-title ft8-waterfall-title">
+        <strong>Waterfall · 200–3000 Hz</strong>
+        <span id="ft8-tx-df-label">TX DF 1500 Hz</span>
+      </div>
+      <div class="ft8-axis ft8-axis-top" aria-hidden="true">
+        <span data-df="200">200</span><span data-df="600">600</span><span data-df="1000">1000</span><span data-df="1400">1400</span><span data-df="1800">1800</span><span data-df="2200">2200</span><span data-df="2600">2600</span><span data-df="3000">3000 Hz</span>
+      </div>
+      <div class="ft8-waterfall-wrap ft8-waterfall-interactive" id="ft8-waterfall-hitbox">
+        <canvas id="ft8-waterfall" width="1200" height="210" aria-label="FT8 multicolor waterfall from 200 to 3000 Hz; click to set TX frequency"></canvas>
+        <div id="ft8-tx-cursor" class="ft8-tx-cursor" aria-hidden="true"><span id="ft8-tx-cursor-label">1500</span></div>
+      </div>
+      <div class="ft8-slot-strip ft8-page-slot-strip ft8-wsjtx-slot-strip">
+        <div><span>UTC</span><strong id="ft8-utc">--:--:--.---</strong></div>
+        <div><span>Slot</span><strong id="ft8-slot">--</strong></div>
+        <div><span>Next</span><strong id="ft8-next">--.-- s</strong></div>
+        <div><span>Decoder</span><strong id="ft8-decode-state">--</strong></div>
+      </div>
+      <div class="ft8-timing-bar" aria-label="FT8 15 second slot phase"><div id="ft8-timing-progress" class="ft8-timing-progress"></div><div class="ft8-timing-mid"></div></div>
+    </section>
+
+    <section class="ft8-activity-layout ft8-wsjtx-activity">
+      <article class="card ft8-activity-card">
+        <div class="ft8-page-section-title"><strong>Band Activity</strong><button id="ft8-clear-decodes" class="secondary small" type="button">Clear</button></div>
+        <div class="ft8-decodes-wrap ft8-page-table-wrap">
+          <table class="ft8-decodes-table ft8-page-table">
+            <thead><tr><th>UTC</th><th>SNR</th><th>MESSAGE</th><th>CALL</th><th>LOCATION</th><th>WORKED</th></tr></thead>
+            <tbody id="ft8-decodes-body"><tr class="ft8-empty-row"><td colspan="6">Select a band to start FT8 RX</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card ft8-activity-card ft8-rx-frequency-card">
+        <div class="ft8-page-section-title"><strong>Rx Frequency</strong><span id="ft8-rx-frequency-label">No QSO selected</span></div>
+        <div class="ft8-decodes-wrap ft8-page-table-wrap ft8-rx-table-wrap">
+          <table class="ft8-decodes-table ft8-page-table">
+            <thead><tr><th>UTC</th><th>SNR</th><th>MESSAGE</th><th>CALL</th><th>LOCATION</th><th>WORKED</th></tr></thead>
+            <tbody id="ft8-rx-decodes-body"><tr class="ft8-empty-row"><td colspan="6">Click a station in Band Activity</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section class="card ft8-wsjtx-control-strip" aria-label="FT8 band and receiver controls">
+      <div class="ft8-band-button-row" id="ft8-band-buttons" aria-label="FT8 band selection">
+        <button type="button" data-ft8-band="160m">160</button><button type="button" data-ft8-band="80m">80</button><button type="button" data-ft8-band="60m">60</button><button type="button" data-ft8-band="40m">40</button><button type="button" data-ft8-band="30m">30</button><button type="button" data-ft8-band="20m">20</button><button type="button" data-ft8-band="17m">17</button><button type="button" data-ft8-band="15m">15</button><button type="button" data-ft8-band="12m">12</button><button type="button" data-ft8-band="10m">10</button><button type="button" data-ft8-band="6m">6</button><button type="button" data-ft8-band="4m">4</button>
+      </div>
+      <label class="ft8-native-band-select"><span>Band</span>
+        <select id="ft8-band-select">
+          <option value="">Select band…</option>
+          <option value="160m" data-hz="1840000">160 m · 1.840 MHz</option><option value="80m" data-hz="3573000">80 m · 3.573 MHz</option><option value="60m" data-hz="5357000">60 m · 5.357 MHz · regional</option><option value="40m" data-hz="7074000">40 m · 7.074 MHz</option><option value="30m" data-hz="10136000">30 m · 10.136 MHz</option><option value="20m" data-hz="14074000">20 m · 14.074 MHz</option><option value="17m" data-hz="18100000">17 m · 18.100 MHz</option><option value="15m" data-hz="21074000">15 m · 21.074 MHz</option><option value="12m" data-hz="24915000">12 m · 24.915 MHz</option><option value="10m" data-hz="28074000">10 m · 28.074 MHz</option><option value="6m" data-hz="50313000">6 m · 50.313 MHz</option><option value="4m" data-hz="70154000">4 m · 70.154 MHz · regional</option>
+        </select>
+      </label>
+      <div class="ft8-wsjtx-readouts">
+        <div class="ft8-readout-box"><span>RX Freq</span><strong id="ft8-rx-dial">--.---.---</strong></div>
+        <div class="ft8-readout-box"><span>TX Freq</span><strong id="ft8-tx-rf">--.---.---</strong></div>
+        <div class="ft8-readout-box"><span>RX Level</span><strong id="ft8-audio-level">-- dBFS</strong></div>
+        <label class="ft8-switch-control"><span>Monitor</span><span class="ft8-switch-line"><input id="ft8-enabled" type="checkbox"><strong>RX</strong></span></label>
+        <label class="ft8-switch-control"><span>Auto RF Gain</span><span class="ft8-switch-line"><input id="ft8-auto-rf" type="checkbox" checked><strong id="ft8-rf-gain">-- / 255</strong></span></label>
+        <label class="ft8-rf-target-control"><span>RX Target</span><div class="ft8-inline-input"><input id="ft8-rf-target" type="number" min="-70" max="-30" step="1" value="-50"><span>dBFS</span></div></label>
+        <label class="ft8-rf-manual-control"><span>RX RF Gain</span><div class="ft8-inline-input"><input id="ft8-rf-gain-slider" type="range" min="0" max="255" step="1" value="180" disabled><strong id="ft8-rf-gain-slider-label">--</strong></div></label>
+      </div>
+      <p id="ft8-radio-config-state" class="help ft8-operating-note">Select a band to configure DATA-U, split A→B and FT8 RX audio.</p>
+    </section>
+
+    <div class="ft8-settings-stack ft8-wsjtx-settings">
+      <details class="ft8-filter-panel ft8-settings-panel">
+        <summary><strong>RX Filters</strong><span class="ft8-summary-actions"><button id="ft8-filter-bypass" type="button" class="secondary small">Filters ON</button><span class="ft8-collapse-button" aria-hidden="true">▾</span></span></summary>
+        <div class="ft8-filter-grid">
+          <label><span>CQ only</span><input id="ft8-filter-cq" type="checkbox"></label><label><span>My Call always</span><input id="ft8-filter-mycall" type="checkbox" checked></label><label><span>Standard</span><input id="ft8-filter-standard" type="checkbox" checked></label><label><span>Free text</span><input id="ft8-filter-free" type="checkbox" checked></label><label><span>Beacon</span><input id="ft8-filter-beacon" type="checkbox" checked></label><label><span>Min SNR</span><input id="ft8-filter-snr" type="number" min="-40" max="30" value="-30"></label>
+          <label><span>DF min</span><input id="ft8-filter-df-min" type="number" min="0" max="5000" value="200"></label><label><span>DF max</span><input id="ft8-filter-df-max" type="number" min="0" max="5000" value="3000"></label><label><span>Include call/prefix</span><input id="ft8-filter-include" type="text" placeholder="JA, VK3"></label><label><span>Exclude call/prefix</span><input id="ft8-filter-exclude" type="text" placeholder="TEST"></label><label><span>Ignore list</span><input id="ft8-filter-ignore" type="text" placeholder="CALL1 CALL2"></label><label><span>Continent</span><input id="ft8-filter-continent" type="text" maxlength="2" placeholder="EU"></label>
+          <label><span>Country</span><input id="ft8-filter-country" type="text" placeholder="Sweden"></label><label><span>DXCC</span><input id="ft8-filter-dxcc" type="text" inputmode="numeric" placeholder="284"></label><label><span>State / region</span><input id="ft8-filter-region" type="text" placeholder="CA / Lazio"></label><label><span>Grid prefix</span><input id="ft8-filter-grid" type="text" maxlength="6" placeholder="JO"></label><label><span>Worked</span><select id="ft8-filter-worked"><option value="any">Any</option><option value="hide">Hide worked</option><option value="only">Worked only</option></select></label><label><span>Worked band</span><input id="ft8-filter-worked-band" type="checkbox"></label>
+          <label><span>Worked mode</span><input id="ft8-filter-worked-mode" type="checkbox"></label><label><span>Worked today</span><input id="ft8-filter-worked-today" type="checkbox"></label><label><span>Worked yesterday</span><input id="ft8-filter-worked-yesterday" type="checkbox"></label><label><span>New DXCC</span><input id="ft8-filter-new-dxcc" type="checkbox"></label><label><span>New DXCC band</span><input id="ft8-filter-new-dxcc-band" type="checkbox"></label><label><span>New band</span><input id="ft8-filter-new-band" type="checkbox"></label>
+          <label><span>New mode</span><input id="ft8-filter-new-mode" type="checkbox"></label><label><span>New grid</span><input id="ft8-filter-new-grid" type="checkbox"></label><label><span>Distance min km</span><input id="ft8-filter-distance-min" type="number" min="0" step="100" placeholder="0"></label><label><span>Distance max km</span><input id="ft8-filter-distance-max" type="number" min="0" step="100" placeholder="any"></label>
+        </div>
+      </details>
+      <details class="ft8-filter-panel ft8-settings-panel ft8-colors-panel">
+        <summary><strong>Colors</strong><span class="ft8-summary-actions"><span class="ft8-summary-hint">priority rules</span><span class="ft8-collapse-button" aria-hidden="true">▾</span></span></summary>
+        <div class="ft8-color-rules-head"><strong>Color priority rules</strong><span><button id="ft8-rules-add" class="secondary small" type="button">Add rule</button> <button id="ft8-rules-preset" class="secondary small" type="button">Preset</button> <button id="ft8-rules-reset" class="secondary small" type="button">Reset</button></span></div>
+        <p class="help ft8-rule-help">Optional match syntax: <code>call=JA*;band=20M;continent=AS;worked=no</code>. Supported: call, DXCC, country, continent, state/region, grid, band, mode, worked/new status.</p>
+        <div id="ft8-color-rules" class="ft8-color-rules"></div>
+      </details>
+    </div>
+
+    <section class="card ft8-qso-box ft8-page-qso ft8-wsjtx-qso" aria-label="FT8 QSO">
+      <div class="ft8-page-section-title"><strong>QSO</strong></div>
+      <div class="ft8-qso-workbench">
+        <div class="ft8-qso-station-column">
+          <div class="ft8-qso-grid">
+            <label><span>My Call</span><strong id="ft8-my-call">loading…</strong></label><label><span>My Grid</span><input id="ft8-my-grid" type="text" maxlength="6" placeholder="JO89" autocomplete="off" spellcheck="false"></label>
+            <label><span>DX Call</span><input id="ft8-dx-call" type="text" readonly placeholder="click a decode"></label><label><span>DX Grid</span><input id="ft8-dx-grid" type="text" readonly placeholder="--"></label>
+            <label><span>Report</span><input id="ft8-tx-report" type="number" min="-30" max="30" step="1" value="0"></label><label><span>RX / TX slot</span><strong id="ft8-qso-slot">--</strong></label>
+          </div>
+          <div class="ft8-cq-box"><button id="ft8-call-cq" class="secondary small" type="button">Enable CQ</button><strong id="ft8-cq-preview">CQ MYCALL GRID</strong><button id="ft8-reset-qso" class="secondary small ft8-qso-reset" type="button" disabled>Reset</button></div>
+        </div>
+
+        <div class="ft8-message-sequence" aria-label="QSO message sequence">
+          <span class="ft8-message-sequence-title">Message Sequence</span>
+          <div class="ft8-tx-message-box"><span>Next transmit message</span><strong id="ft8-tx-message">Select a QSO first</strong></div>
+          <button type="button" data-qso-stage="INITIAL" aria-pressed="false">DXCALL MYCALL GRID</button>
+          <button type="button" data-qso-stage="REPORT" aria-pressed="false">DXCALL MYCALL +00</button>
+          <button type="button" data-qso-stage="R_REPORT" aria-pressed="false">DXCALL MYCALL R+00</button>
+          <button type="button" data-qso-stage="RR73" aria-pressed="false">DXCALL MYCALL RR73</button>
+          <button type="button" data-qso-stage="73" aria-pressed="false">DXCALL MYCALL 73</button>
+        </div>
+
+        <div class="ft8-qso-tx-column ft8-tx-lab ft8-operating-tx">
+          <span class="ft8-tx-safe-badge">ESP32 slot / lease / hard stop</span>
+          <div class="ft8-tx-actions ft8-operating-actions"><button id="ft8-enable-tx" type="button" class="ft8-enable-tx">Enable TX</button><button id="ft8-halt-tx" type="button" class="danger" disabled>Halt TX</button><button id="ft8-tune-tx" type="button">Tune ALC</button><button id="ft8-stop-tune" type="button" class="danger" disabled>Stop Tune</button></div>
+          <label class="ft8-tx-slot-compact"><span>Tx even / 1st</span><select id="ft8-tx-slot-select" aria-label="FT8 transmit slot parity"><option value="0">EVEN</option><option value="1">ODD</option></select></label>
+          <label class="ft8-power-control"><span>RF power</span><div class="ft8-inline-input"><input id="ft8-tx-power" type="range" min="5" max="100" step="1" value="5"><strong id="ft8-tx-power-label">-- W</strong></div></label>
+          <div class="ft8-tx-progress-line"><span>TX status</span><strong id="ft8-tx-progress">idle</strong></div>
+        </div>
+      </div>
+
+      <div class="ft8-qso-controls ft8-qso-options">
+        <label><span>Auto Seq</span><input id="ft8-auto-seq" type="checkbox" checked></label><label><span>Call 1st</span><input id="ft8-call-first" type="checkbox" checked></label><label><span>Hold TX frequency</span><input id="ft8-hold-tx" type="checkbox" checked></label><label><span>Retry max</span><input id="ft8-qso-retries" type="number" min="1" max="12" value="6"></label><label><span>Timeout slots</span><input id="ft8-qso-timeout" type="number" min="2" max="30" value="8"></label>
+      </div>
+      <div id="ft8-qso-stepper" class="ft8-qso-stepper" aria-label="QSO progress" hidden><span data-step="selected">Selected</span><span data-step="calling">Calling</span><span data-step="reports">Reports</span><span data-step="roger">Roger</span><span data-step="73">73</span><span data-step="log">Log</span></div>
+      <dl class="status-list ft8-qso-status ft8-qso-status-compact"><div><dt>QSO state</dt><dd id="ft8-qso-state">IDLE</dd></div><div><dt>RX frequency</dt><dd id="ft8-qso-df">--</dd></div><div><dt>Last heard</dt><dd id="ft8-qso-last">--</dd></div><div class="ft8-next-message-row"><dt>Next message</dt><dd id="ft8-qso-next">Select a CQ or decoded station</dd></div></dl>
+      <div class="ft8-tx-operating-grid ft8-qso-telemetry"><div class="ft8-readout-box"><span>TX audio calibration</span><strong id="ft8-tx-level-label">not tuned</strong></div><div class="ft8-readout-box"><span>ALC tune</span><strong id="ft8-tune-state">idle</strong></div><div class="ft8-readout-box"><span>ALC / PO</span><strong id="ft8-tune-meter">-- / --</strong></div><div class="ft8-readout-box"><span>Auto TX</span><strong id="ft8-auto-tx-state">disabled</strong></div><div class="ft8-readout-box"><span>Target slot</span><strong id="ft8-auto-tx-slot">--</strong></div><div class="ft8-readout-box"><span>PTT timing</span><strong id="ft8-auto-tx-timing">--</strong></div></div>
+      <div class="ft8-compat-controls" hidden aria-hidden="true"><button id="ft8-generate-wave" type="button">Generate waveform</button><button id="ft8-send-wave" type="button" disabled>Live send disabled</button><button id="ft8-stop-wave" type="button" disabled>Halt audio</button></div>
+    </section>
+
+    <section class="card ft8-logbook-box ft8-wsjtx-log" aria-label="FT8 local logbook">
+      <div class="ft8-page-section-title"><strong>Log QSO</strong><span id="ft8-logbook-count">0 worked calls</span></div>
+      <div class="ft8-logbook-actions">
+        <div id="ft8-adi-drop" class="ft8-adi-drop" tabindex="0" role="button" aria-label="Drop ADIF file here or choose a file"><strong>Import ADI File</strong><span>Drop .adi here</span><input id="ft8-adi-file" type="file" accept=".adi,text/plain"></div>
+        <div class="ft8-qrz-sync-controls" aria-label="QRZ Logbook synchronization"><button id="ft8-qrz-import" class="secondary small" type="button">QRZ Import</button><button id="ft8-qrz-sync" class="secondary small" type="button">QRZ Sync</button><button id="ft8-qrz-cancel" class="secondary small" type="button" disabled>Cancel</button><span id="ft8-qrz-sync-status">QRZ sync idle</span></div>
+        <button id="ft8-log-qso" class="small" type="button" disabled>Log QSO</button>
+      </div>
+      <div class="ft8-logbook-progress" aria-live="polite"><progress id="ft8-adi-progress" max="100" value="0"></progress><strong id="ft8-adi-status">IndexedDB readying…</strong></div>
+      <p class="help" id="ft8-selected-worked">Select a station to show worked-before history.</p>
+    </section>
+
+    <dialog id="ft8-log-dialog" class="ft8-log-dialog">
+      <form id="ft8-log-form" method="dialog">
+        <div class="ft8-page-section-title"><strong>Log completed FT8 QSO</strong><span id="ft8-log-local-state">Local copy saved</span></div>
+        <div class="ft8-log-form-grid">
+          <label><span>Call</span><input id="ft8-log-call" maxlength="16" required></label>
+          <label><span>Grid</span><input id="ft8-log-grid" maxlength="8"></label>
+          <label><span>RST sent</span><input id="ft8-log-rst-sent" maxlength="7"></label>
+          <label><span>RST received</span><input id="ft8-log-rst-rcvd" maxlength="7"></label>
+          <label><span>Date UTC</span><input id="ft8-log-date" type="date" required></label>
+          <label><span>Time on UTC</span><input id="ft8-log-time-on" type="time" step="1" required></label>
+          <label><span>Time off UTC</span><input id="ft8-log-time-off" type="time" step="1"></label>
+          <label><span>Frequency MHz</span><input id="ft8-log-freq" type="number" min="0" step="0.000001" required></label>
+          <label><span>Band</span><input id="ft8-log-band" maxlength="8" required></label>
+          <label><span>Power W</span><input id="ft8-log-power" type="number" min="1" max="1000"></label>
+          <label class="ft8-log-comment"><span>Comment</span><input id="ft8-log-comment" maxlength="150"></label>
+        </div>
+        <label class="ft8-auto-log-option"><span>Auto log completed QSO to QRZ</span><input id="ft8-auto-log-qrz" type="checkbox"></label>
+        <p id="ft8-log-status" class="help">The QSO is already stored locally. QRZ can be retried without losing it.</p>
+        <div class="ft8-dialog-actions">
+          <button id="ft8-log-submit" type="submit">Log QSO</button>
+          <button id="ft8-log-close" class="secondary" type="button">Close</button>
+        </div>
+      </form>
+    </dialog>
+
+    <details class="card ft8-diagnostics-card">
+      <summary>Developer diagnostics</summary>
+      <p class="help">Low-level encoder, waveform, USB and timing telemetry. This panel is intentionally outside the normal operating flow.</p>
+      <dl class="status-list ft8-diagnostics">
+        <div><dt>TX VFO B dial</dt><dd id="ft8-vfo-b">--.---.---</dd></div>
+        <div><dt>Encoder</dt><dd id="ft8-encoder-state">not loaded</dd></div>
+        <div><dt>Waveform</dt><dd id="ft8-waveform-state">not generated</dd></div>
+        <div><dt>ESP32 TX source</dt><dd id="ft8-tx-source-state">NONE</dd></div>
+        <div><dt>Audio spectrum</dt><dd id="ft8-tx-spectrum">1500.00–1543.75 Hz</dd></div>
+        <div><dt>ESP32 TX buffer</dt><dd id="ft8-tx-buffer">--</dd></div>
+        <div><dt>TX PCM counters</dt><dd id="ft8-tx-counters">--</dd></div>
+        <div><dt>Tune power restore</dt><dd id="ft8-tune-power-restore">--</dd></div>
+        <div><dt>RX tap</dt><dd id="ft8-rx-tap">waiting for audio</dd></div>
+        <div><dt>Browser sample clock</dt><dd id="ft8-sample-clock">-- ppm</dd></div>
+        <div><dt>Chunk jitter</dt><dd id="ft8-jitter">-- ms</dd></div>
+        <div><dt>ESP32 UTC</dt><dd id="ft8-server-clock">not checked</dd></div>
+        <div><dt>Browser ↔ ESP32</dt><dd id="ft8-clock-delta">-- ms</dd></div>
+        <div><dt>USB RX packets</dt><dd id="ft8-usb-packets">--</dd></div>
+        <div><dt>PCM drops</dt><dd id="ft8-pcm-drops">--</dd></div>
+        <div><dt>Decoder backend</dt><dd id="ft8-decoder-state">not loaded</dd></div>
+        <div><dt>Encoder backend</dt><dd id="ft8-encoder-diag">not loaded</dd></div>
+        <div><dt>Slot capture</dt><dd id="ft8-capture-state">idle</dd></div>
+      </dl>
+      <p id="ft8-detail" class="help">FT8 engine status.</p>
+    </details>
+
+    <p class="help ft8-page-footer-status">FreeRig710 1.0 · integrated FT8 operating console · offline geography · worked-call/DXCC highlighting · QRZ logbook sync.</p>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <script src="config.js?v=1.0.0"></script>
+  <script src="ft8-logbook.js?v=1.0.0"></script>
+  <script src="ft8-geo.js?v=1.0.0"></script>
+  <script src="ft8-decode-rules.js?v=1.0.0"></script>
+  <script src="ft8-qso-machine.js?v=1.0.0"></script>
+  <script src="ft8.js?v=1.0.0"></script>
+  <script src="ft8-page.js?v=1.0.0"></script>
+</body>
+</html>

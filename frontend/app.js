@@ -1,7 +1,43 @@
 "use strict";
 
-const API_BASE = (window.FT710_CONFIG?.apiBase || "/ft710-api").replace(/\/$/, "");
 const byId = (id) => document.getElementById(id);
+const LOCAL_GUI_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const IS_LOCAL_GUI = LOCAL_GUI_HOSTS.has(window.location.hostname);
+
+function normalizeBackend(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
+  try {
+    const url = new URL(withScheme);
+    if (!/^https?:$/.test(url.protocol)) return "";
+    return `${url.protocol}//${url.host}`;
+  } catch (_) {
+    return "";
+  }
+}
+
+let savedBackend = "";
+try { savedBackend = localStorage.getItem("freerig710-backend") || ""; } catch (_) { /* optional */ }
+const DEFAULT_LOCAL_BACKEND = normalizeBackend(window.FT710_CONFIG?.localDefaultBackend || "http://ft710.local");
+let API_BASE = IS_LOCAL_GUI ? (normalizeBackend(savedBackend) || DEFAULT_LOCAL_BACKEND) : "";
+
+function apiUrl(path) {
+  const normalizedPath = String(path || "").startsWith("/") ? String(path) : `/${path}`;
+  return `${API_BASE}${normalizedPath}`;
+}
+
+function websocketUrl(path) {
+  const normalizedPath = String(path || "").startsWith("/") ? String(path) : `/${path}`;
+  const base = API_BASE || window.location.origin;
+  const url = new URL(normalizedPath, `${base.replace(/\/$/, "")}/`);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}
+
+function backendDisplayName() {
+  return API_BASE || window.location.origin;
+}
 const MODES = [
   "LSB", "USB", "CW-U", "FM", "AM", "RTTY-L", "CW-L", "DATA-L",
   "RTTY-U", "DATA-FM", "FM-N", "DATA-U", "AM-N", "PSK", "DATA-FM-N"
@@ -28,9 +64,7 @@ const automaticInFlight = new Map();
 let jogDragging = false;
 let latestJogPosition = 0;
 let jogSending = false;
-let ft8State = { running: false, url: "/ft8/", last_error: null };
-const stationBusy = { radio: false, ft8: false };
-let ft8StatusTimer = null;
+const stationBusy = { radio: false };
 let clickTuneSending = false;
 let clickTuneHover = null;
 let rfSqlModeSwitching = false;
@@ -191,9 +225,20 @@ function showToast(message, isError = false) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const method = String(options.method || "GET").toUpperCase();
+  const headers = new Headers(options.headers || {});
+  // Localhost -> ft710.local is cross-origin. GET/HEAD requests deliberately
+  // carry no non-safelisted headers, so the 600 ms state poll does not create
+  // an OPTIONS preflight every time. JSON POST bodies use text/plain, which is
+  // CORS-safelisted; the ESP32 still parses the body as JSON.
+  if (options.body != null && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "text/plain;charset=UTF-8");
+  }
+  const response = await fetch(apiUrl(path), {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    method,
+    headers,
+    cache: method === "GET" ? "no-store" : options.cache,
   });
   let payload = null;
   try { payload = await response.json(); } catch (_) { /* empty body */ }
@@ -204,6 +249,8 @@ async function api(path, options = {}) {
 async function post(path, payload, options = {}) {
   return api(path, { method: "POST", body: JSON.stringify(payload), ...options });
 }
+
+window.FreeRig710API = Object.freeze({ api, post, apiUrl, websocketUrl });
 
 function valuesMatch(actual, expected) {
   if (typeof expected === "number") return Number(actual) === Number(expected);
@@ -308,6 +355,8 @@ function updateQrzLogButton() {
   const radioReady = lastState?.radio_power === "ON"
     && Number.isFinite(context.txFrequency)
     && Boolean(context.radioMode);
+  button.classList.toggle("busy", qrzLogging);
+  button.textContent = qrzLogging ? "LOGGING…" : "LOG QSO TO QRZ";
   button.disabled = qrzLogging || !qrzState.configured || !radioReady || !call;
 }
 
@@ -330,33 +379,74 @@ function renderQrzPreview(state = lastState) {
 
 async function initQrzLog() {
   const form = byId("qrz-log-form");
-  if (!form) return;
+  const configForm = byId("qrz-config-form");
+  if (!form || !configForm) return;
   const callInput = byId("qrz-call");
+  const configCallsign = byId("qrz-config-callsign");
+  const configApiKey = byId("qrz-config-api-key");
+  const configState = byId("qrz-config-state");
+  const configSave = byId("qrz-config-save");
   const resultElement = byId("qrz-log-result");
 
+  const sanitizeCall = (input) => {
+    const start = input.selectionStart;
+    input.value = input.value.toUpperCase().replace(/[^A-Z0-9/]/g, "");
+    if (start != null) input.setSelectionRange(start, start);
+  };
+
   callInput.addEventListener("input", () => {
-    const start = callInput.selectionStart;
-    callInput.value = callInput.value.toUpperCase().replace(/[^A-Z0-9/]/g, "");
-    if (start != null) callInput.setSelectionRange(start, start);
+    sanitizeCall(callInput);
     updateQrzLogButton();
   });
+  configCallsign.addEventListener("input", () => sanitizeCall(configCallsign));
   byId("qrz-log-mode").addEventListener("change", () => renderQrzPreview());
 
-  try {
-    const response = await api("/api/v1/qrz/status");
-    qrzState = response.qrz || qrzState;
+  const applyQrzStatus = (status) => {
+    qrzState = status || qrzState;
+    configCallsign.value = qrzState.station_callsign || "";
+    configState.textContent = qrzState.configured
+      ? `Saved on ESP32 · API key ${qrzState.api_key_set ? "present" : "missing"}`
+      : `Not configured · API key ${qrzState.api_key_set ? "present" : "missing"}`;
     if (qrzState.configured) {
       setQrzLogStatus("READY", "ready");
       resultElement.textContent = "Ready. QSO time is captured when you press LOG QSO TO QRZ.";
     } else {
       setQrzLogStatus("NOT CONFIGURED", "error");
-      resultElement.textContent = "Set FT710_QRZ_LOGBOOK_KEY and FT710_QRZ_STATION_CALLSIGN, then restart the API.";
+      resultElement.textContent = "Enter your callsign and QRZ Logbook API key above, then save them on the ESP32.";
     }
+    renderQrzPreview();
+  };
+
+  try {
+    const response = await api("/api/v1/qrz/status");
+    applyQrzStatus(response.qrz || response);
   } catch (error) {
     setQrzLogStatus("ERROR", "error");
+    configState.textContent = error.message;
     resultElement.textContent = error.message;
   }
-  renderQrzPreview();
+
+  configForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const stationCallsign = configCallsign.value.trim().toUpperCase();
+    if (!stationCallsign) return;
+    configSave.disabled = true;
+    configState.textContent = "Saving on ESP32…";
+    try {
+      const payload = { station_callsign: stationCallsign };
+      const key = configApiKey.value.trim();
+      if (key) payload.api_key = key;
+      const response = await post("/api/v1/qrz/config", payload);
+      configApiKey.value = "";
+      applyQrzStatus(response.qrz || response);
+      showToast("QRZ configuration saved on ESP32");
+    } catch (error) {
+      configState.textContent = error.message;
+      showToast(error.message, true);
+    } finally {
+      configSave.disabled = false;
+    }
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -372,12 +462,36 @@ async function initQrzLog() {
       const response = await post("/api/v1/qrz/log", {
         call,
         mode: byId("qrz-log-mode").value,
+        timestamp_utc: new Date().toISOString(),
       });
-      const qso = response.qso || {};
+      const jobId = Number(response?.job?.job_id || 0);
+      if (!jobId) throw new Error("QRZ worker did not return a job id");
+
+      let job = response.job;
+      const deadline = Date.now() + 15_000;
+      while (job && (job.state === "queued" || job.state === "running")) {
+        if (Date.now() >= deadline) throw new Error("QRZ log request timed out");
+        resultElement.textContent = job.state === "queued"
+          ? `Queued ${call} for QRZ…`
+          : `Sending ${call} to QRZ…`;
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+        const status = await api("/api/v1/qrz/log/status");
+        if (Number(status?.job?.job_id) !== jobId) continue;
+        job = status.job;
+      }
+      if (!job || job.state !== "ok") {
+        throw new Error(job?.detail || "QRZ rejected QSO");
+      }
+      const qso = job.qso || {};
       const modeText = qso.submode || qso.mode || "--";
       const logIdText = qso.logid ? ` · Log ID ${qso.logid}` : "";
+      const rxText = Number(qso.rx_frequency_hz) !== Number(qso.frequency_hz)
+        ? ` · RX ${formatFrequency(qso.rx_frequency_hz)} Hz`
+        : "";
+      const powerText = Number(qso.tx_power_w) > 0 ? ` · ${qso.tx_power_w} W` : "";
+      if (qso.adif) console.info("QRZ ADIF sent:", qso.adif);
       setQrzLogStatus("LOGGED", "ready");
-      resultElement.textContent = `${qso.call} logged on ${qso.band} · ${modeText} · ${formatFrequency(qso.frequency_hz)} Hz${logIdText}`;
+      resultElement.textContent = `${qso.call} logged on ${qso.band} · ${modeText} · TX ${formatFrequency(qso.frequency_hz)} Hz${rxText}${powerText}${logIdText}`;
       callInput.value = "";
       showToast(`${qso.call} logged to QRZ`);
     } catch (error) {
@@ -392,7 +506,6 @@ async function initQrzLog() {
 
   window.setInterval(() => renderQrzPreview(), 1000);
 }
-
 function formatFrequency(hz) {
   if (!Number.isFinite(Number(hz))) return "--.---.---";
   return String(Math.round(Number(hz))).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
@@ -451,69 +564,32 @@ function setConnected(connected, error = null, radioPower = null) {
   } else if (connected && radioPower === "STARTING") {
     byId("connection-text").textContent = "Radio starting…";
   } else {
-    byId("connection-text").textContent = connected ? "CAT-2 connected" : (error || "Radio unavailable");
+    byId("connection-text").textContent = connected ? "CAT connected" : (error || "ESP32 unavailable");
   }
 }
 
 function renderStationControls() {
   const power = lastState?.radio_power || null;
   const radioButton = byId("radio-power-button");
-  const ft8Button = byId("ft8-power-button");
-  const ft8Link = byId("ft8-open-button");
   const radioOn = power === "ON";
   const radioOff = power === "OFF";
 
-  radioButton.classList.toggle("power-on-action", radioOff);
-  radioButton.classList.toggle("power-off-action", radioOn);
-  radioButton.textContent = stationBusy.radio
-    ? (radioOn ? "STOPPING…" : "STARTING…")
-    : (radioOn ? "OFF" : (radioOff ? "ON" : (power === "STARTING" ? "STARTING…" : "POWER…")));
-  radioButton.disabled = stationBusy.radio || stationBusy.ft8 || (!radioOn && !radioOff);
-
-  ft8Button.textContent = stationBusy.ft8
-    ? (ft8State.running ? "FT8 STOPPING…" : "FT8 STARTING…")
-    : (ft8State.running ? "FT8 OFF" : "FT8 ON");
-  ft8Button.classList.toggle("ft8-running", Boolean(ft8State.running));
-  ft8Button.disabled = stationBusy.radio || stationBusy.ft8 || !radioOn;
-
-  const linkEnabled = radioOn && ft8State.running && !stationBusy.ft8;
-  ft8Link.href = ft8State.url || "/ft8/";
-  ft8Link.classList.toggle("disabled", !linkEnabled);
-  ft8Link.classList.toggle("ready", linkEnabled);
-  ft8Link.setAttribute("aria-disabled", String(!linkEnabled));
-  ft8Link.tabIndex = linkEnabled ? 0 : -1;
+  if (radioButton) {
+    radioButton.classList.toggle("power-on-action", radioOff);
+    radioButton.classList.toggle("power-off-action", radioOn);
+    radioButton.textContent = stationBusy.radio
+      ? (radioOn ? "STOPPING…" : "STARTING…")
+      : (radioOn ? "OFF" : (radioOff ? "ON" : (power === "STARTING" ? "STARTING…" : "POWER…")));
+    radioButton.disabled = stationBusy.radio || (!radioOn && !radioOff);
+  }
 
   const powerStatus = byId("status-radio-power");
   if (powerStatus) powerStatus.textContent = power || "--";
-  const ft8Status = byId("status-ft8");
-  if (ft8Status) ft8Status.textContent = ft8State.running ? "RUNNING" : "OFF";
-}
-
-function applyFt8State(value) {
-  if (!value) return;
-  ft8State = { ...ft8State, ...value, running: Boolean(value.running) };
-  window.FT710_CW?.setFt8Running(ft8State.running);
-  renderStationControls();
-}
-
-async function refreshFt8Status() {
-  try {
-    const result = await api("/api/v1/ft8/status");
-    applyFt8State(result.ft8);
-  } catch (error) {
-    ft8State.last_error = error.message;
-    renderStationControls();
-  }
 }
 
 function initStationControls() {
   const radioButton = byId("radio-power-button");
-  const ft8Button = byId("ft8-power-button");
-  const ft8Link = byId("ft8-open-button");
-
-  ft8Link.addEventListener("click", (event) => {
-    if (ft8Link.getAttribute("aria-disabled") === "true") event.preventDefault();
-  });
+  if (!radioButton) return;
 
   radioButton.addEventListener("click", async () => {
     const power = lastState?.radio_power;
@@ -523,47 +599,17 @@ function initStationControls() {
     try {
       const result = await post("/api/v1/radio/power", { enabled: power === "OFF" });
       if (result?.state) updateState(result.state);
-      if (result?.ft8) applyFt8State(result.ft8);
-      if (power === "OFF" && !result?.confirmed) {
-        showToast("Power-on command sent; waiting for the radio to finish starting");
-      } else {
-        showToast(power === "OFF" ? "Radio powered on" : "Radio powered off");
-      }
+      showToast(power === "OFF" ? "Radio power-on command sent" : "Radio powered off");
     } catch (error) {
       showToast(error.message, true);
     } finally {
       stationBusy.radio = false;
       renderStationControls();
-      void refreshFt8Status();
-    }
-  });
-
-  ft8Button.addEventListener("click", async () => {
-    if (lastState?.radio_power !== "ON") return;
-    stationBusy.ft8 = true;
-    renderStationControls();
-    const enable = !ft8State.running;
-    try {
-      const result = await post("/api/v1/ft8", { enabled: enable });
-      applyFt8State(result.ft8);
-      showToast(enable ? "FT8 / WSJT-X started" : "FT8 / WSJT-X stopped");
-    } catch (error) {
-      showToast(error.message, true);
-      await refreshFt8Status();
-    } finally {
-      stationBusy.ft8 = false;
-      renderStationControls();
     }
   });
 
   renderStationControls();
-  void refreshFt8Status();
-  ft8StatusTimer = window.setInterval(refreshFt8Status, 2000);
-  window.addEventListener("pagehide", () => {
-    if (ft8StatusTimer) window.clearInterval(ft8StatusTimer);
-  });
 }
-
 function renderRfSqlControl(state) {
   const mode = effectiveValue("rf_sql_vr", state.rf_sql_vr);
   setSelectValue("rf-sql-vr", mode);
@@ -777,7 +823,7 @@ function renderState(state) {
   byId("tx-state").textContent = state.tx_state || "--";
   byId("tuner-state").textContent = state.tuner_busy ? "TUNING" : (state.tuner || "--");
   byId("hi-swr").textContent = state.hi_swr == null ? "--" : (state.hi_swr ? "YES" : "NO");
-  byId("cat2-device").textContent = state.cat2_device || "--";
+  byId("cat2-device").textContent = state.cat_device || state.cat2_device || "--";
   byId("radio-id").textContent = state.radio_id || "--";
 
   if (!jogDragging) {
@@ -793,17 +839,32 @@ function updateState(state) {
   lastState = state;
   renderState(state);
   window.FT710_CW?.updateRadioState(state);
+  window.dispatchEvent(new CustomEvent("ft710-radio-state", { detail: state }));
 }
 
 function connectEvents() {
-  const source = new EventSource(`${API_BASE}/api/v1/events`);
-  source.addEventListener("state", (event) => {
-    try { updateState(JSON.parse(event.data)); }
-    catch (error) { console.error("Invalid state event", error); }
+  let pollBusy = false;
+  let stopped = false;
+  const poll = async () => {
+    if (pollBusy || stopped) return;
+    pollBusy = true;
+    try {
+      const state = await api("/api/v1/state");
+      updateState(state);
+    } catch (error) {
+      setConnected(false, error.message || "Reconnecting to ESP32…", lastState?.radio_power);
+      renderStationControls();
+    } finally {
+      pollBusy = false;
+    }
+  };
+  void poll();
+  const timer = window.setInterval(poll, 600);
+  window.addEventListener("pagehide", () => {
+    stopped = true;
+    window.clearInterval(timer);
   });
-  source.onerror = () => setConnected(false, "Reconnecting to API…", lastState?.radio_power);
 }
-
 function initClickTuning() {
   const frame = byId("video-frame");
   const image = byId("radio-video");
@@ -872,16 +933,30 @@ function initVideo() {
   const qualityInput = byId("video-quality");
   let manuallyPaused = false;
   let retryTimer = null;
+  let firstFrameTimer = null;
+  let hiddenStopTimer = null;
   let settingsTimer = null;
+  let radioPower = lastState?.radio_power || null;
   let connectionGeneration = 0;
   let streamLive = false;
   let settingsSaving = false;
+  let hiddenSinceMs = 0;
   let queuedSettings = null;
   let inFlightSettings = null;
   let currentSettings = {
     fps: Number(fpsInput.value),
     jpeg_quality: Number(qualityInput.value),
   };
+
+  // Keep a live MJPEG connection across ordinary tab/window switches. Browsers
+  // usually resume the multipart image immediately, which avoids a full HTTP
+  // teardown/reconnect every time the operator visits the FT8 window. If the
+  // main page remains hidden for a while, release the stream to avoid wasting
+  // JPEG/HTTP work in the background.
+  const VIDEO_HIDDEN_GRACE_MS = 20000;
+  const VIDEO_FIRST_FRAME_TIMEOUT_MS = 1800;
+  const VIDEO_ERROR_RETRY_MS = 400;
+  const VIDEO_STALL_RETRY_MS = 250;
 
   const settingsSummary = () => `${currentSettings.fps} FPS · Q${currentSettings.jpeg_quality}`;
   const sameVideoSettings = (left, right) => Boolean(
@@ -893,10 +968,14 @@ function initVideo() {
   const refreshStatus = (override = null) => {
     if (override) {
       status.textContent = override;
+    } else if (radioPower === "OFF") {
+      status.textContent = `RADIO OFF · ${settingsSummary()}`;
+    } else if (radioPower === "STARTING") {
+      status.textContent = `WAITING RADIO · ${settingsSummary()}`;
     } else if (manuallyPaused) {
       status.textContent = `PAUSED · ${settingsSummary()}`;
     } else if (document.hidden) {
-      status.textContent = `PAUSED · HIDDEN · ${settingsSummary()}`;
+      status.textContent = `${streamLive ? "HIDDEN · STREAM HELD" : "PAUSED · HIDDEN"} · ${settingsSummary()}`;
     } else if (streamLive) {
       status.textContent = `LIVE · ${settingsSummary()}`;
     } else {
@@ -993,31 +1072,61 @@ function initVideo() {
   const stop = () => {
     connectionGeneration += 1;
     clearTimeout(retryTimer);
+    clearTimeout(firstFrameTimer);
+    clearTimeout(hiddenStopTimer);
     retryTimer = null;
+    firstFrameTimer = null;
+    hiddenStopTimer = null;
     streamLive = false;
+    image.onload = null;
+    image.onerror = null;
     image.removeAttribute("src");
     refreshStatus();
   };
 
   const load = () => {
-    if (manuallyPaused || document.hidden) return;
+    if (manuallyPaused || document.hidden || radioPower === "OFF" || radioPower === "STARTING") {
+      refreshStatus();
+      return;
+    }
     const generation = ++connectionGeneration;
     clearTimeout(retryTimer);
+    clearTimeout(firstFrameTimer);
     streamLive = false;
     refreshStatus();
-    image.src = `${API_BASE}/video.mjpeg?ts=${Date.now()}`;
 
     image.onload = () => {
       if (generation !== connectionGeneration) return;
+      clearTimeout(firstFrameTimer);
+      firstFrameTimer = null;
       streamLive = true;
       refreshStatus();
     };
     image.onerror = () => {
-      if (generation !== connectionGeneration || manuallyPaused || document.hidden) return;
+      if (generation !== connectionGeneration || manuallyPaused || document.hidden ||
+          radioPower === "OFF" || radioPower === "STARTING") return;
+      clearTimeout(firstFrameTimer);
+      firstFrameTimer = null;
       streamLive = false;
       refreshStatus("VIDEO UNAVAILABLE");
-      retryTimer = setTimeout(load, 2000);
+      retryTimer = setTimeout(load, VIDEO_ERROR_RETRY_MS);
     };
+
+    image.src = apiUrl(`/video.mjpeg?ts=${Date.now()}`);
+
+    // A stalled multipart MJPEG HTTP request may never raise <img>.onerror.
+    // If no first decoded frame arrives, actively tear down this generation so
+    // the backend can take over/close the stale socket and create a fresh one.
+    firstFrameTimer = setTimeout(() => {
+      if (generation !== connectionGeneration || streamLive || manuallyPaused || document.hidden ||
+          radioPower === "OFF" || radioPower === "STARTING") return;
+      connectionGeneration += 1;
+      image.onload = null;
+      image.onerror = null;
+      image.removeAttribute("src");
+      refreshStatus("VIDEO RETRY");
+      retryTimer = setTimeout(load, VIDEO_STALL_RETRY_MS);
+    }, VIDEO_FIRST_FRAME_TIMEOUT_MS);
   };
 
   toggle.addEventListener("click", () => {
@@ -1028,11 +1137,81 @@ function initVideo() {
   });
 
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) stop();
-    else if (!manuallyPaused) load();
+    clearTimeout(hiddenStopTimer);
+    hiddenStopTimer = null;
+
+    if (document.hidden) {
+      hiddenSinceMs = Date.now();
+      // Do not tear down MJPEG for a normal tab/window switch. Keeping the
+      // socket alive lets the existing <img> resume immediately when the user
+      // comes back. Release it only after a longer background interval.
+      if (!manuallyPaused && image.getAttribute("src")) {
+        hiddenStopTimer = setTimeout(() => {
+          hiddenStopTimer = null;
+          if (document.hidden) stop();
+        }, VIDEO_HIDDEN_GRACE_MS);
+      }
+      refreshStatus();
+      return;
+    }
+
+    const hiddenForMs = hiddenSinceMs ? Math.max(0, Date.now() - hiddenSinceMs) : 0;
+    hiddenSinceMs = 0;
+    if (manuallyPaused || radioPower === "OFF" || radioPower === "STARTING") {
+      refreshStatus();
+      return;
+    }
+
+    if (!image.getAttribute("src") || !streamLive) {
+      // The grace timer/browser released the stream, or the page was hidden
+      // before the first frame arrived. Reconnect immediately; load() now has
+      // a short first-frame watchdog instead of the old six-second wait.
+      stop();
+      retryTimer = setTimeout(load, 50);
+      return;
+    }
+
+    // The stream was already live before/during the background interval. Leave
+    // src untouched: this is the fast path and normally makes video visible
+    // again immediately without a new HTTP session.
+    refreshStatus();
+    if (hiddenForMs > VIDEO_HIDDEN_GRACE_MS) {
+      // Defensive only: normally the grace timer has already stopped it.
+      // If timer throttling prevented that, force one clean reconnect.
+      stop();
+      retryTimer = setTimeout(load, 50);
+    }
+  });
+
+  window.addEventListener("ft710-radio-state", (event) => {
+    const nextPower = event.detail?.radio_power || null;
+    const previousPower = radioPower;
+    radioPower = nextPower;
+
+    if (nextPower === "OFF" || nextPower === "STARTING") {
+      stop();
+      return;
+    }
+
+    if (nextPower === "ON" && previousPower !== "ON" && !manuallyPaused && !document.hidden) {
+      // Force a brand-new MJPEG HTTP request after the radio/DVI source returns.
+      stop();
+      retryTimer = setTimeout(load, 500);
+    } else {
+      refreshStatus();
+    }
   });
 
   window.addEventListener("pagehide", stop);
+  window.addEventListener("pageshow", (event) => {
+    if (manuallyPaused || document.hidden || radioPower === "OFF" || radioPower === "STARTING") return;
+    // A page restored from the back/forward cache can retain DOM state while
+    // its previous network stream is gone. Force a fresh stream in that case.
+    if (event.persisted || !image.getAttribute("src")) {
+      stop();
+      retryTimer = setTimeout(load, 50);
+    }
+  });
 
   api("/api/v1/video/settings")
     .then((result) => applyVideoSettings(result.settings))
@@ -1230,9 +1409,9 @@ function stopJog(useKeepalive = false) {
   latestJogPosition = 0;
   byId("jog-speed").textContent = "Stopped";
   if (useKeepalive) {
-    fetch(`${API_BASE}/api/v1/radio/jog`, {
+    fetch(apiUrl("/api/v1/radio/jog"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
       body: JSON.stringify({ position: 0 }),
       keepalive: true,
     }).catch(() => {});
@@ -1465,7 +1644,7 @@ function bindControls() {
         expect_reply: byId("cat-expect-reply").checked,
       });
       byId("cat-response").textContent = result.response ?? "OK";
-      showToast("CAT-2 command sent");
+      showToast("CAT command sent");
     } catch (error) {
       byId("cat-response").textContent = error.message;
       showToast(error.message, true);
@@ -1957,6 +2136,66 @@ function initCollapsiblePanels() {
   });
 }
 
+
+function initLocalUiPreferences() {
+  const controls = [
+    { id: "qrz-log-mode", key: "ft710-qrz-log-mode-v1", kind: "value" },
+    { id: "cat-expect-reply", key: "ft710-cat-expect-reply-v1", kind: "checked" },
+    { id: "memory-category", key: "ft710-memory-category-v1", kind: "value" },
+  ];
+  for (const item of controls) {
+    const element = byId(item.id);
+    if (!element) continue;
+    try {
+      const saved = localStorage.getItem(item.key);
+      if (saved != null) {
+        if (item.kind === "checked") element.checked = saved === "1";
+        else if ([...element.options || []].some((option) => option.value === saved)) element.value = saved;
+        else if (!(element instanceof HTMLSelectElement)) element.value = saved;
+      }
+    } catch (_) { /* Local storage is optional. */ }
+    element.addEventListener("change", () => {
+      try {
+        localStorage.setItem(item.key, item.kind === "checked" ? (element.checked ? "1" : "0") : element.value);
+      } catch (_) { /* Local storage is optional. */ }
+    });
+  }
+}
+
+function initBackendConfig() {
+  const form = byId("backend-config-form");
+  const input = byId("backend-host");
+  const save = byId("backend-save");
+  const help = byId("backend-help");
+  const status = byId("status-backend");
+  if (!form || !input || !save || !help || !status) return;
+
+  status.textContent = backendDisplayName();
+  if (!IS_LOCAL_GUI) {
+    input.value = window.location.origin;
+    input.disabled = true;
+    save.disabled = true;
+    help.textContent = "Reverse-proxy mode: API, video and audio use this HTTPS origin.";
+    return;
+  }
+
+  input.value = API_BASE || DEFAULT_LOCAL_BACKEND;
+  help.textContent = "Local mode: default ft710.local via mDNS/Bonjour. Enter an IP/hostname here only as fallback.";
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = normalizeBackend(input.value);
+    if (!value) {
+      showToast("Invalid ESP32 backend URL", true);
+      return;
+    }
+    try { localStorage.setItem("freerig710-backend", value); } catch (_) { /* optional */ }
+    API_BASE = value;
+    status.textContent = backendDisplayName();
+    showToast(`ESP32 backend: ${value}`);
+    window.setTimeout(() => window.location.reload(), 250);
+  });
+}
+
 function initAudio() {
   const toggle = byId("audio-toggle");
   const status = byId("audio-status");
@@ -1979,13 +2218,19 @@ function initAudio() {
   let speakerGainNode = null;
   let speakerLimiter = null;
   let audioReady = false;
+  let receivePcmSampleRate = 48000;
   let starting = false;
   let stopping = false;
   let pttActive = false;
+  let pttPending = false;
+  let pttConfirmedAt = 0;
   let pttKeepalive = null;
   let failureInProgress = false;
+  let connectTimeout = null;
   const txPacketMs = 20;
   const maxWebSocketBacklogBytes = 128 * 1024;
+  const audioOwnerId = `main-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const audioOwnerChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("freerig710-audio-owner-v1") : null;
 
   const readSavedGain = (key, fallback, maximum) => {
     try {
@@ -2012,6 +2257,7 @@ function initAudio() {
     txMicGain.disabled = !enabled;
     window.FT710_CW?.setAudioReady(enabled);
     window.FT710_SSTV?.setAudioReady(enabled);
+    window.FT710_FT8?.setAudioReady(enabled);
   };
 
   const sendControl = (payload) => {
@@ -2020,9 +2266,16 @@ function initAudio() {
     return true;
   };
 
+  window.FT710_FT8?.setControlSender(sendControl);
+
   const stopPttKeepalive = () => {
     clearInterval(pttKeepalive);
     pttKeepalive = null;
+  };
+
+  const stopConnectTimeout = () => {
+    clearTimeout(connectTimeout);
+    connectTimeout = null;
   };
 
   const renderPtt = () => {
@@ -2033,21 +2286,49 @@ function initAudio() {
       : "PTT OFF · CLICK TO TRANSMIT";
   };
 
-  const setPtt = (enabled, send = true) => {
-    const next = Boolean(enabled && audioReady);
-    if (pttActive === next) return;
-    pttActive = next;
+  const applyPttState = (enabled) => {
+    pttActive = Boolean(enabled && audioReady);
+    pttPending = false;
+    if (pttActive) pttConfirmedAt = performance.now();
     captureNode?.port.postMessage({ type: "capture", enabled: pttActive });
     stopPttKeepalive();
-    if (send) sendControl({ type: "ptt", enabled: pttActive });
     if (pttActive) {
-      pttKeepalive = setInterval(() => sendControl({ type: "ptt_keepalive" }), 500);
+      pttKeepalive = setInterval(() => {
+        if (!sendControl({ type: "ptt_keepalive" })) applyPttState(false);
+      }, 500);
     }
     window.FT710_CW?.setVoicePtt(pttActive);
+    pttButton.disabled = !audioReady;
     renderPtt();
   };
 
-  const releasePtt = () => setPtt(false, true);
+  const requestPtt = (enabled) => {
+    if (!audioReady || pttPending) return false;
+    const requested = Boolean(enabled);
+    if (requested === pttActive) return true;
+    pttPending = true;
+    pttButton.disabled = true;
+    pttButton.textContent = requested ? "PTT…" : "RX…";
+    if (!sendControl({ type: "ptt", enabled: requested })) {
+      pttPending = false;
+      pttButton.disabled = !audioReady;
+      renderPtt();
+      return false;
+    }
+    return true;
+  };
+
+  const releasePtt = () => {
+    const mustNotifyRadio = pttActive || pttPending;
+    stopPttKeepalive();
+    pttActive = false;
+    pttPending = false;
+    captureNode?.port.postMessage({ type: "capture", enabled: false });
+    window.FT710_CW?.setVoicePtt(false);
+    if (mustNotifyRadio) sendControl({ type: "ptt", enabled: false });
+    pttButton.disabled = !audioReady;
+    renderPtt();
+  };
 
   const disconnectNodes = () => {
     for (const node of [
@@ -2090,13 +2371,14 @@ function initAudio() {
     stopping = true;
     try {
       releasePtt();
+      stopConnectTimeout();
       const oldSocket = socket;
       socket = null;
       if (oldSocket && oldSocket.readyState < WebSocket.CLOSING) oldSocket.close(1000, "Audio disabled by user");
       await cleanupGraph();
       toggle.textContent = "Enable audio";
       setAudioStatus("OFF");
-      detail.textContent = "Source: ft710_in_44100 · Sink: ft710_out_44100";
+      detail.textContent = "FT-710 USB Audio · 48 kHz RX/TX";
       if (!quiet) showToast("Audio disabled");
     } finally {
       starting = false;
@@ -2105,10 +2387,19 @@ function initAudio() {
     }
   };
 
+  if (audioOwnerChannel) {
+    audioOwnerChannel.onmessage = (event) => {
+      const message = event.data;
+      if (!message || message.type !== "claim" || message.owner === audioOwnerId) return;
+      if (audioReady || starting) void disableAudio(true);
+    };
+  }
+
   const failAudio = async (message) => {
     if (failureInProgress) return;
     failureInProgress = true;
     try {
+      stopConnectTimeout();
       const oldSocket = socket;
       socket = null;
       if (oldSocket && oldSocket.readyState < WebSocket.CLOSING) oldSocket.close();
@@ -2153,7 +2444,7 @@ function initAudio() {
 
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     try {
-      context = new AudioContextClass({ latencyHint: "interactive", sampleRate: 44100 });
+      context = new AudioContextClass({ latencyHint: "interactive", sampleRate: 48000 });
     } catch (_) {
       context = new AudioContextClass({ latencyHint: "interactive" });
     }
@@ -2173,7 +2464,7 @@ function initAudio() {
       video: false,
       audio: {
         channelCount: 1,
-        sampleRate: { ideal: 44100 },
+        sampleRate: { ideal: 48000 },
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
@@ -2234,6 +2525,7 @@ function initAudio() {
 
   const enableAudio = async () => {
     if (starting || audioReady) return;
+    audioOwnerChannel?.postMessage({ type: "claim", owner: audioOwnerId, source: "main radio" });
     starting = true;
     toggle.disabled = true;
     setAudioStatus("CONNECTING", "connecting");
@@ -2241,13 +2533,16 @@ function initAudio() {
 
     try {
       await createAudioGraph();
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const url = `${protocol}//${window.location.host}${API_BASE}/api/v1/audio/ws?sample_rate=${context.sampleRate}`;
+      const url = websocketUrl(`/api/v1/audio/ws`);
       socket = new WebSocket(url);
       socket.binaryType = "arraybuffer";
+      stopConnectTimeout();
+      connectTimeout = window.setTimeout(() => {
+        if (!audioReady && starting) void failAudio("Audio WebSocket initialization timed out");
+      }, 6000);
 
       socket.onopen = () => {
-        detail.textContent = "Opening FT-710 audio source and sink…";
+        detail.textContent = "WebSocket connected · starting FT-710 RX/TX audio…";
       };
 
       socket.onmessage = (event) => {
@@ -2256,37 +2551,52 @@ function initAudio() {
           try { message = JSON.parse(event.data); }
           catch (_) { return; }
           if (message.type === "ready") {
+            stopConnectTimeout();
             audioReady = true;
             starting = false;
             toggle.disabled = false;
             toggle.textContent = "Disable audio";
             setControlsEnabled(true);
             setAudioStatus("LIVE", "live");
-            renderPtt();
-            detail.textContent = `Secure WSS audio · ${message.sample_rate} Hz · TX ${message.tx_packet_ms ?? txPacketMs} ms · Pulse buffer ${message.latency_ms ?? 100} ms`;
+            applyPttState(false);
+            const serverRate = Number(message.sample_rate);
+            receivePcmSampleRate = Number.isFinite(serverRate) && serverRate > 0 ? serverRate : 48000;
+            detail.textContent = `FreeRig710 WebSocket audio · ${receivePcmSampleRate} Hz · latching PTT · watchdog ${message.ptt_watchdog_ms || 1500} ms`;
             showToast("Audio enabled");
+          } else if (message.type === "ptt") {
+            applyPttState(Boolean(message.enabled));
+            if (message.error) showToast(message.error, true);
           } else if (message.type === "error") {
             void failAudio(message.message || "Audio connection failed");
           } else if (message.type === "warning") {
             showToast(message.message || "Audio warning", true);
+          } else if (message.type === "timing_probe") {
+            window.FT710_FT8?.handleControl(message);
           }
           return;
         }
         if (event.data instanceof ArrayBuffer && playbackNode) {
-          const receiveSampleRate = context?.sampleRate || 44100;
+          // The WebSocket payload is radio PCM at the ESP32-declared rate, not
+          // necessarily the browser AudioContext rate. DSP must use this clock.
+          const receiveSampleRate = receivePcmSampleRate;
           window.FT710_CW?.feedAudio(event.data, receiveSampleRate);
           window.FT710_SSTV?.feedAudio(event.data, receiveSampleRate);
+          window.FT710_FT8?.feedAudio(event.data, receiveSampleRate);
           playbackNode.port.postMessage(event.data, [event.data]);
         }
       };
 
       socket.onerror = () => {
-        if (!stopping) void failAudio("Secure audio WebSocket failed");
+        if (!stopping) void failAudio("Audio WebSocket failed");
       };
 
       socket.onclose = (event) => {
         if (stopping) return;
         socket = null;
+        if (lastState?.radio_power === "OFF" || lastState?.radio_power === "STARTING") {
+          void disableAudio(true);
+          return;
+        }
         if (audioReady || starting) {
           const suffix = event.reason ? `: ${event.reason}` : "";
           void failAudio(`Audio connection closed${suffix}`);
@@ -2321,12 +2631,26 @@ function initAudio() {
   pttButton.addEventListener("click", (event) => {
     event.preventDefault();
     if (!audioReady) return;
-    setPtt(!pttActive, true);
+    requestPtt(!pttActive);
+  });
+
+  window.addEventListener("ft710-radio-state", (event) => {
+    const state = event.detail;
+    if (!audioReady || pttPending || !pttActive) return;
+    // The CAT state is authoritative. Ignore a possibly stale poll that was
+    // already in flight at the instant the PTT ACK arrived.
+    if (performance.now() - pttConfirmedAt < 1000) return;
+    if (state?.ptt_active === false) {
+      applyPttState(false);
+      showToast("PTT released by radio/watchdog", true);
+    }
   });
 
   window.addEventListener("pagehide", () => {
+    stopConnectTimeout();
     releasePtt();
     if (socket && socket.readyState === WebSocket.OPEN) socket.close(1000, "Page closed");
+    audioOwnerChannel?.close();
   });
 
   setControlsEnabled(false);
@@ -2336,6 +2660,8 @@ function initAudio() {
 
 initPanelOrdering();
 initCollapsiblePanels();
+initLocalUiPreferences();
+initBackendConfig();
 initStationControls();
 bindControls();
 connectEvents();
@@ -2345,5 +2671,5 @@ initMemories();
 void initQrzLog();
 window.FT710_CW?.init();
 window.FT710_SSTV?.init();
+window.FT710_FT8?.init();
 initAudio();
-api("/api/v1/state").then(updateState).catch((error) => setConnected(false, error.message));

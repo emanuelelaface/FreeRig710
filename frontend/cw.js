@@ -1,7 +1,25 @@
 "use strict";
 
 (() => {
-  const API_BASE = (window.FT710_CONFIG?.apiBase || "/ft710-api").replace(/\/$/, "");
+  const LOCAL_GUI_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+  const normalizeBackend = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
+    try {
+      const url = new URL(withScheme);
+      if (!/^https?:$/.test(url.protocol)) return "";
+      return `${url.protocol}//${url.host}`;
+    } catch (_) {
+      return "";
+    }
+  };
+  let savedBackend = "";
+  try { savedBackend = localStorage.getItem("freerig710-backend") || ""; } catch (_) { /* optional */ }
+  const isLocalGui = LOCAL_GUI_HOSTS.has(window.location.hostname);
+  const defaultLocalBackend = normalizeBackend(window.FT710_CONFIG?.localDefaultBackend || "http://ft710.local");
+  const API_BASE = isLocalGui ? (normalizeBackend(savedBackend) || defaultLocalBackend) : "";
+  const apiUrl = (path) => `${API_BASE}${String(path || "").startsWith("/") ? String(path) : `/${path}`}`;
   const byId = (id) => document.getElementById(id);
 
   const MORSE_TO_TEXT = {
@@ -26,9 +44,20 @@
   };
 
   async function request(path, options = {}) {
-    const response = await fetch(`${API_BASE}${path}`, {
+    const method = String(options.method || "GET").toUpperCase();
+    const headers = new Headers(options.headers || {});
+    // Do not force a non-safelisted Content-Type on GET. localhost -> ft710.local
+    // is cross-origin and that header caused a CORS/PNA OPTIONS preflight every
+    // 750 ms for /api/v1/cw/status. JSON bodies are valid JSON even when sent
+    // with text/plain, which is CORS-safelisted and already accepted by ESP32.
+    if (options.body != null && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "text/plain;charset=UTF-8");
+    }
+    const response = await fetch(apiUrl(path), {
       ...options,
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      method,
+      headers,
+      cache: method === "GET" ? "no-store" : options.cache,
     });
     let payload = null;
     try { payload = await response.json(); } catch (_) { /* no body */ }
@@ -40,7 +69,7 @@
     constructor(callbacks) {
       this.callbacks = callbacks;
       this.enabled = false;
-      this.sampleRate = 44100;
+      this.sampleRate = 48000;
       this.frameMs = 20;
       this.hopMs = 5;
       this.pending = new Int16Array(0);
@@ -274,7 +303,7 @@
       if (!incoming.length) return;
 
       if (Number(sampleRate) !== this.sampleRate) {
-        this.sampleRate = Number(sampleRate) || 44100;
+        this.sampleRate = Number(sampleRate) || 48000;
         this.rebuildWindows();
         this.reset(false);
       }
@@ -581,6 +610,7 @@
     cwState: { sending: false, message: "", wpm: 25, memory_slot: 5, estimated_remaining_s: 0 },
     decoder: null,
     statusTimer: null,
+    decoderWanted: false,
 
     init() {
       if (this.initialized) return;
@@ -591,6 +621,18 @@
       const toneHz = byId("cw-tone-hz");
       const speedAuto = byId("cw-speed-auto");
       const wpm = byId("cw-wpm");
+
+      try {
+        const savedToneAuto = localStorage.getItem("ft710-cw-tone-auto-v1");
+        const savedToneHz = localStorage.getItem("ft710-cw-tone-hz-v1");
+        const savedSpeedAuto = localStorage.getItem("ft710-cw-speed-auto-v1");
+        const savedWpm = localStorage.getItem("ft710-cw-wpm-v1");
+        this.decoderWanted = localStorage.getItem("ft710-cw-decoder-enabled-v1") === "1";
+        if (savedToneAuto != null) toneAuto.checked = savedToneAuto === "1";
+        if (savedToneHz != null && Number.isFinite(Number(savedToneHz))) toneHz.value = String(clamp(Math.round(Number(savedToneHz)), 300, 1050));
+        if (savedSpeedAuto != null) speedAuto.checked = savedSpeedAuto === "1";
+        if (savedWpm != null && Number.isFinite(Number(savedWpm))) wpm.value = String(clamp(Math.round(Number(savedWpm)), 4, 60));
+      } catch (_) { /* Local storage is optional. */ }
 
       this.decoder = new CWDecoder({
         autoTone: () => toneAuto.checked,
@@ -628,18 +670,29 @@
 
       byId("cw-decoder-enabled").addEventListener("change", (event) => {
         const enabled = Boolean(event.target.checked && this.audioReady);
+        this.decoderWanted = enabled;
         event.target.checked = enabled;
+        try { localStorage.setItem("ft710-cw-decoder-enabled-v1", enabled ? "1" : "0"); } catch (_) { /* optional */ }
         this.decoder.setEnabled(enabled);
         this.render();
       });
       toneAuto.addEventListener("change", () => {
+        try { localStorage.setItem("ft710-cw-tone-auto-v1", toneAuto.checked ? "1" : "0"); } catch (_) { /* optional */ }
         toneHz.disabled = toneAuto.checked;
         this.decoder.reset(false);
       });
-      speedAuto.addEventListener("change", () => this.decoder.reset(false));
-      toneHz.addEventListener("change", () => this.decoder.reset(false));
+      speedAuto.addEventListener("change", () => {
+        try { localStorage.setItem("ft710-cw-speed-auto-v1", speedAuto.checked ? "1" : "0"); } catch (_) { /* optional */ }
+        this.decoder.reset(false);
+      });
+      toneHz.addEventListener("change", () => {
+        toneHz.value = String(clamp(Math.round(Number(toneHz.value) || 700), 300, 1050));
+        try { localStorage.setItem("ft710-cw-tone-hz-v1", toneHz.value); } catch (_) { /* optional */ }
+        this.decoder.reset(false);
+      });
       wpm.addEventListener("change", () => {
         wpm.value = String(clamp(Math.round(Number(wpm.value) || 25), 4, 60));
+        try { localStorage.setItem("ft710-cw-wpm-v1", wpm.value); } catch (_) { /* optional */ }
         if (!speedAuto.checked) this.decoder.reset(false);
       });
       byId("cw-clear").addEventListener("click", () => this.decoder.reset(true));
@@ -706,7 +759,10 @@
       const checkbox = byId("cw-decoder-enabled");
       if (!checkbox) return;
       checkbox.disabled = !this.audioReady;
-      if (!this.audioReady && checkbox.checked) {
+      if (this.audioReady) {
+        checkbox.checked = this.decoderWanted;
+        this.decoder?.setEnabled(this.decoderWanted);
+      } else {
         checkbox.checked = false;
         this.decoder?.setEnabled(false);
       }

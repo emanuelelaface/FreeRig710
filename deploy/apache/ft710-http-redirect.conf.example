@@ -1,0 +1,4 @@
+<VirtualHost *:80>
+        ServerName radio.example.com
+        Redirect permanent / https://radio.example.com/
+</VirtualHost>

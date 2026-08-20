@@ -88,7 +88,7 @@
       // VIS is now advisory only. Decoding always runs in the selected mode.
       this.modePreference = "scottie1";
       this.mode = null;
-      this.sampleRate = 44100;
+      this.sampleRate = 48000;
       this.decimation = 2;
       this.frequencyRate = this.sampleRate / this.decimation;
       this.ringSeconds = 8;
@@ -111,7 +111,7 @@
     }
 
     configureForSampleRate(sampleRate) {
-      this.sampleRate = Number(sampleRate) || 44100;
+      this.sampleRate = Number(sampleRate) || 48000;
       this.frequencyRate = this.sampleRate / this.decimation;
       const angular = 2 * Math.PI * 1900 / this.sampleRate;
       this.oscillatorStepCos = Math.cos(angular);
@@ -229,7 +229,7 @@
       if (!this.enabled || !(arrayBuffer instanceof ArrayBuffer)) return;
       const incoming = new Int16Array(arrayBuffer);
       if (!incoming.length) return;
-      const nextRate = Number(sampleRate) || 44100;
+      const nextRate = Number(sampleRate) || 48000;
       if (Math.abs(nextRate - this.sampleRate) > 1) {
         const preference = this.modePreference;
         this.resetDemodulator();
@@ -1065,7 +1065,7 @@
     }
 
     configure(sampleRate) {
-      const nextRate = Math.max(8000, Math.round(Number(sampleRate) || 44100));
+      const nextRate = Math.max(8000, Math.round(Number(sampleRate) || 48000));
       if (nextRate === this.sampleRate && this.capacity > 0) return false;
       this.sampleRate = nextRate;
       this.capacity = Math.max(1, Math.round(this.sampleRate * this.seconds));
@@ -1147,6 +1147,7 @@
     replayGeneration: 0,
     replayScheduled: false,
     suggestedModeKey: null,
+    enabledWanted: false,
 
     init() {
       if (this.initialized) return;
@@ -1163,6 +1164,11 @@
       const modeSelect = byId("sstv-mode");
       const enabled = byId("sstv-enabled");
 
+      try {
+        const savedMode = localStorage.getItem("ft710-sstv-mode-v1");
+        if (savedMode && MODES[savedMode]) modeSelect.value = savedMode;
+        this.enabledWanted = localStorage.getItem("ft710-sstv-enabled-v1") === "1";
+      } catch (_) { /* Local storage is optional. */ }
       if (!MODES[modeSelect.value]) modeSelect.value = "scottie1";
 
       this.canvasWrap.addEventListener("scroll", () => {
@@ -1214,7 +1220,9 @@
 
       enabled.addEventListener("change", () => {
         const active = Boolean(enabled.checked && this.audioReady);
+        this.enabledWanted = active;
         enabled.checked = active;
+        try { localStorage.setItem("ft710-sstv-enabled-v1", active ? "1" : "0"); } catch (_) { /* optional */ }
         this.cancelReplay();
         this.history.clear();
         this.frozen = false;
@@ -1235,6 +1243,7 @@
 
       modeSelect.addEventListener("change", () => {
         if (!MODES[modeSelect.value]) return;
+        try { localStorage.setItem("ft710-sstv-mode-v1", modeSelect.value); } catch (_) { /* optional */ }
         this.frozen = false;
         this.followLive = true;
         this.updateFreezeButton();
@@ -1258,7 +1267,10 @@
       const enabled = byId("sstv-enabled");
       if (!enabled) return;
       enabled.disabled = !this.audioReady;
-      if (!this.audioReady && enabled.checked) {
+      if (this.audioReady) {
+        enabled.checked = this.enabledWanted;
+        this.decoder?.setEnabled(this.enabledWanted);
+      } else {
         enabled.checked = false;
         this.cancelReplay();
         this.history.clear();

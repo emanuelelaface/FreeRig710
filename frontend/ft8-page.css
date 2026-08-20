@@ -1,0 +1,370 @@
+.ft8-page-body { background:#080c11; }
+.ft8-page-shell { width:min(1760px,calc(100% - 24px)); margin:0 auto; padding:14px 0 36px; }
+.ft8-page-header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:10px; }
+.ft8-title-block h1 { font-size:clamp(1.55rem,2.6vw,2.45rem); margin-top:2px; }
+.ft8-header-status { display:flex; align-items:center; justify-content:flex-end; gap:7px; flex-wrap:wrap; }
+.ft8-page-pill { display:inline-flex; min-height:30px; align-items:center; padding:4px 10px; border:1px solid var(--line); border-radius:999px; color:var(--muted); background:rgba(255,255,255,.025); font-size:.7rem; font-weight:850; letter-spacing:.05em; }
+.ft8-page-pill.live { border-color:#397759; color:#aaf2c1; background:rgba(95,224,139,.09); }
+.ft8-page-pill.error { border-color:#8f3b48; color:#ffc1c8; background:rgba(255,100,116,.12); }
+.ft8-page-pill.warning { border-color:#8f763b; color:#ffe09a; background:rgba(255,200,87,.08); }
+.ft8-cat-quiet { border-color:#397759; color:#aaf2c1; background:rgba(95,224,139,.10); }
+.ft8-cat-quiet.error { border-color:#a13e4b; color:#ffc1c8; background:rgba(255,72,91,.13); }
+.ft8-back-button { padding:.4rem .75rem; min-height:32px; }
+
+.ft8-control-card,.ft8-waterfall-card,.ft8-activity-card,.ft8-diagnostics-card { padding:12px; }
+.ft8-control-card,.ft8-waterfall-card { margin-bottom:10px; }
+.ft8-control-grid { display:grid; grid-template-columns:minmax(190px,1.25fr) repeat(3,minmax(135px,.85fr)) minmax(120px,.7fr) minmax(155px,.9fr) minmax(185px,1fr) minmax(125px,.65fr); gap:8px; align-items:end; }
+.ft8-control-grid label { display:flex; flex-direction:column; gap:5px; min-width:0; }
+.ft8-control-grid label > span,.ft8-readout-box > span,.ft8-tx-operating-grid label > span { color:var(--muted); font-size:.64rem; font-weight:850; letter-spacing:.06em; text-transform:uppercase; }
+.ft8-control-grid select,.ft8-control-grid input { min-height:38px; }
+.ft8-readout-box { min-height:58px; padding:7px 9px; border:1px solid var(--line); border-radius:9px; background:var(--panel-2); overflow:hidden; }
+.ft8-readout-box strong { display:block; margin-top:5px; overflow:hidden; text-overflow:ellipsis; font:850 .8rem/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:nowrap; }
+.ft8-inline-input { display:grid; grid-template-columns:1fr auto; align-items:center; gap:6px; }
+.ft8-switch-control { justify-content:flex-end; }
+.ft8-switch-line { min-height:38px; display:flex; align-items:center; gap:8px; padding:6px 9px; border:1px solid var(--line); border-radius:9px; background:var(--panel-2); }
+.ft8-switch-line input { width:20px; height:20px; min-height:20px; accent-color:var(--accent); }
+.ft8-switch-line strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.74rem; }
+.ft8-operating-note { margin:8px 2px 0; }
+
+.ft8-page-section-title { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; min-width:0; }
+.ft8-page-section-title > strong { font-size:.78rem; letter-spacing:.05em; text-transform:uppercase; }
+.ft8-page-section-title > span { color:var(--muted); font:750 .7rem/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ft8-waterfall-interactive { position:relative; cursor:crosshair; user-select:none; }
+.ft8-waterfall-interactive canvas { pointer-events:none; }
+.ft8-tx-cursor { position:absolute; top:0; bottom:0; left:46.43%; width:2px; background:rgba(255,200,87,.95); box-shadow:0 0 8px rgba(255,200,87,.7); pointer-events:none; }
+.ft8-tx-cursor span { position:absolute; top:4px; left:5px; padding:2px 5px; border-radius:5px; background:rgba(8,12,17,.86); color:#ffe09a; font:800 .68rem/1.1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.ft8-page-slot-strip { grid-template-columns:repeat(5,minmax(0,1fr)); margin-top:9px; }
+
+.ft8-activity-layout { display:grid; grid-template-columns:minmax(0,1.12fr) minmax(0,.88fr); gap:10px; align-items:start; }
+.ft8-activity-card { min-width:0; }
+.ft8-page-table-wrap { height:min(42vh,500px); overflow:auto; }
+.ft8-rx-table-wrap { height:min(32vh,390px); }
+.ft8-page-table { min-width:620px; }
+.ft8-page-table th,.ft8-page-table td { padding:6px 7px; font-size:.72rem; }
+.ft8-row-rx-frequency {}
+
+.ft8-page-qso { margin-bottom:0; }
+.ft8-next-message-row dd { font-weight:850; color:var(--text); }
+
+.ft8-tx-lab { margin-top:10px; padding:11px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.018); }
+.ft8-tx-safe-badge { color:#ffe09a!important; border:1px solid #8f763b; border-radius:999px; padding:3px 8px; background:rgba(255,200,87,.08); }
+.ft8-tx-message-box { padding:9px 10px; border:1px solid var(--line); border-radius:9px; background:var(--panel-2); margin-bottom:9px; }
+.ft8-tx-message-box span { display:block; color:var(--muted); font-size:.64rem; font-weight:850; letter-spacing:.06em; text-transform:uppercase; }
+.ft8-tx-message-box strong { display:block; margin-top:5px; font:850 .86rem/1.25 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow-wrap:anywhere; }
+.ft8-tx-operating-grid { display:grid; grid-template-columns:minmax(190px,1.15fr) repeat(3,minmax(145px,1fr)); gap:8px; align-items:end; }
+.ft8-tx-operating-grid label { display:flex; flex-direction:column; gap:5px; min-width:0; }
+.ft8-power-control input[type="range"],.ft8-rf-manual-control input[type="range"] { width:100%; }
+.ft8-rf-manual-control input[type="range"]:disabled { opacity:.45; cursor:not-allowed; }
+.ft8-rf-manual-control .ft8-inline-input { grid-template-columns:minmax(90px,1fr) minmax(34px,auto); }
+.ft8-rf-manual-control strong { font:850 .78rem/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.ft8-tx-actions { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 8px; }
+.ft8-tx-actions button { min-width:130px; }
+.ft8-tx-actions button.danger { border-color:#8f3b48; color:#ffc1c8; }
+.ft8-enable-tx { border-color:#4f9c69!important; color:#c8ffd7!important; }
+.ft8-tx-progress-line { display:grid; grid-template-columns:auto 1fr; align-items:baseline; gap:8px; padding:7px 9px; border:1px solid var(--line); border-radius:8px; background:var(--panel-2); }
+.ft8-tx-progress-line span { color:var(--muted); font-size:.64rem; font-weight:850; text-transform:uppercase; letter-spacing:.06em; }
+.ft8-tx-progress-line strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:750 .72rem/1.25 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.ft8-safety-note { margin:8px 2px 0; }
+.ft8-tx-lab.tuning { border-color:#8f763b; box-shadow:0 0 0 1px rgba(255,200,87,.08) inset; }
+#ft8-tune-state.active,#ft8-tune-meter.active { color:#ffe09a; }
+#ft8-auto-tx-state.active { color:#ff7b88; }
+#ft8-auto-tx-state.armed { color:#ffe09a; }
+.ft8-tx-lab.auto-tx-armed { border-color:#8f763b; box-shadow:0 0 0 1px rgba(255,200,87,.10) inset; }
+.ft8-tx-lab.auto-tx-active { border-color:#a13e4b; box-shadow:0 0 0 1px rgba(255,72,91,.16) inset; }
+
+.ft8-diagnostics-card { margin-top:10px; }
+.ft8-diagnostics-card summary { cursor:pointer; font-weight:800; }
+.ft8-diagnostics-card[open] summary { margin-bottom:8px; }
+.ft8-page-footer-status { text-align:center; margin-top:10px; }
+
+[hidden] { display:none!important; }
+
+@media (max-width:1380px) {
+  .ft8-control-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+  .ft8-tx-operating-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (max-width:980px) {
+  .ft8-activity-layout { grid-template-columns:1fr; }
+  .ft8-page-table-wrap,.ft8-rx-table-wrap { height:auto; max-height:440px; }
+  .ft8-page-slot-strip { grid-template-columns:repeat(3,minmax(0,1fr)); }
+}
+@media (max-width:680px) {
+  .ft8-page-header { align-items:flex-start; flex-direction:column; }
+  .ft8-header-status { justify-content:flex-start; }
+  .ft8-control-grid,.ft8-tx-operating-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .ft8-page-slot-strip { grid-template-columns:1fr 1fr; }
+}
+@media (max-width:480px) {
+  .ft8-control-grid,.ft8-tx-operating-grid { grid-template-columns:1fr; }
+  .ft8-page-slot-strip { grid-template-columns:1fr; }
+  .ft8-tx-actions button { width:100%; }
+}
+
+/* FT8.6.0.1: left stack is Band Activity -> TX, right stack is Rx Frequency -> QSO. */
+.ft8-activity-card > .ft8-operating-tx { margin-top:10px; }
+.ft8-rx-frequency-card > .ft8-page-qso { margin-top:10px; }
+
+
+/* FT8.6.1 local logbook / ADIF import */
+.ft8-logbook-box{margin-top:10px;padding:11px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.018)}
+.ft8-adi-drop{display:grid;gap:6px;padding:11px;border:1px dashed #55718b;border-radius:9px;background:rgba(66,184,255,.035);cursor:pointer;outline:none}
+.ft8-adi-drop:focus,.ft8-adi-drop.dragover{border-color:#42b8ff;box-shadow:0 0 0 2px rgba(66,184,255,.12)}
+.ft8-adi-drop span{color:var(--muted);font-size:.72rem}.ft8-adi-drop input{max-width:100%}
+.ft8-logbook-progress{display:grid;grid-template-columns:minmax(100px,1fr) minmax(180px,2fr);gap:8px;align-items:center;margin-top:8px}
+.ft8-logbook-progress progress{width:100%}.ft8-logbook-progress strong{font-size:.72rem;overflow-wrap:anywhere}
+.ft8-row-worked td:last-child::after{content:" · WORKED";color:#9aa7b5;font-size:.64rem;font-weight:800}
+
+
+/* FT8.6.2 filters and color rules — compact/collapsible in FT8.6.5.2 */
+.ft8-settings-stack{display:grid;gap:6px;margin-top:8px}
+.ft8-filter-panel{margin:0;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.014)}
+.ft8-filter-panel summary{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:28px;cursor:pointer;font-size:.72rem}.ft8-filter-panel summary::marker{color:var(--muted)}.ft8-filter-panel summary strong{font-size:.72rem}.ft8-summary-hint{font-size:.61rem;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.03em}
+.ft8-filter-panel:not([open]){padding-top:4px;padding-bottom:4px}.ft8-filter-panel:not([open]) summary{min-height:26px}
+.ft8-filter-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;margin-top:7px}.ft8-filter-grid label{display:grid;gap:4px;align-content:end;min-width:0}.ft8-filter-grid label>span{font-size:.61rem;color:var(--muted);text-transform:uppercase;font-weight:800}.ft8-filter-grid input,.ft8-filter-grid select{min-height:30px;min-width:0;font-size:.72rem}.ft8-filter-grid input[type=checkbox]{width:20px;height:20px;min-height:20px;justify-self:start;margin:1px 0}
+.ft8-color-rules-head{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:7px;font-size:.68rem}.ft8-color-rules-head .small{min-height:28px;padding:.25rem .5rem}.ft8-color-rules{display:grid;gap:4px;margin-top:6px}.ft8-color-rule{display:grid;grid-template-columns:20px minmax(90px,.8fr) minmax(150px,1.5fr) 58px 36px 36px 30px;gap:5px;align-items:center;padding:3px 5px;border:1px solid var(--line);border-radius:6px}.ft8-color-rule label{font-size:.61rem}.ft8-color-rule input[type=checkbox]{width:20px;height:20px;margin:0}.ft8-color-rule .ft8-rule-label,.ft8-color-rule .ft8-rule-criteria,.ft8-color-rule input[type=number]{min-height:30px;min-width:0;font-size:.68rem;padding:.25rem .4rem}.ft8-rule-help{margin:5px 0 0;font-size:.66rem}.ft8-rule-help code{font-size:.64rem}.ft8-rule-remove{min-width:28px;min-height:28px;padding:2px 4px}.ft8-color-rule input[type=color]{width:34px;height:28px;padding:1px}
+.ft8-page-table{min-width:980px}.ft8-page-table th:nth-child(6),.ft8-page-table td:nth-child(6){min-width:88px}.ft8-page-table th:nth-child(7),.ft8-page-table td:nth-child(7){min-width:120px}.ft8-page-table th:nth-child(8),.ft8-page-table td:nth-child(8){min-width:90px}
+@media(max-width:1320px){.ft8-filter-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:980px){.ft8-filter-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.ft8-color-rule{grid-template-columns:20px minmax(90px,1fr) minmax(130px,1.5fr) 54px 34px 34px 28px}}
+@media(max-width:760px){.ft8-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ft8-color-rule{grid-template-columns:20px 1fr 54px 34px 34px 28px}.ft8-color-rule .ft8-rule-criteria{grid-column:2 / -1}}
+@media(max-width:480px){.ft8-filter-grid{grid-template-columns:1fr}}
+
+/* FT8.6.3 deterministic QSO flow */
+.ft8-qso-controls{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;margin:8px 0}.ft8-qso-controls label{display:grid;gap:4px;align-content:end}.ft8-qso-controls label>span{font-size:.61rem;color:var(--muted);font-weight:800;text-transform:uppercase}.ft8-qso-controls input{min-height:30px}.ft8-qso-controls input[type=checkbox]{width:20px;height:20px}.ft8-qso-stepper{display:grid;grid-template-columns:repeat(6,1fr);gap:3px;margin:8px 0}.ft8-qso-stepper span{position:relative;padding:6px 4px;border:1px solid var(--line);border-radius:6px;text-align:center;color:var(--muted);font-size:.64rem;font-weight:800}.ft8-qso-stepper span.done{border-color:#397759;color:#aaf2c1;background:rgba(95,224,139,.08)}.ft8-qso-stepper span.active{border-color:#42b8ff;color:#dff7ff;background:rgba(66,184,255,.12)}.ft8-qso-stepper span.error{border-color:#8f3b48;color:#ffc1c8;background:rgba(255,100,116,.10)}
+@media(max-width:1050px){.ft8-qso-controls{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:600px){.ft8-qso-controls,.ft8-qso-stepper{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* FT8.6.4 QRZ Logbook page-by-page synchronization */
+.ft8-qrz-sync-controls{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-top:.55rem}.ft8-qrz-sync-controls span{font-size:.78rem;opacity:.82;min-width:12rem}.ft8-qrz-sync-controls .small{white-space:nowrap}
+
+.ft8-log-dialog{width:min(760px,calc(100vw - 2rem));max-height:calc(100vh - 2rem);overflow:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface,#111820);color:inherit;padding:1rem}
+.ft8-log-dialog::backdrop{background:rgba(0,0,0,.62)}
+.ft8-log-form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.65rem;margin:.8rem 0}
+.ft8-log-form-grid label{display:grid;gap:.25rem}.ft8-log-form-grid input{min-width:0;width:100%}.ft8-log-comment{grid-column:1/-1}
+.ft8-auto-log-option{display:flex;align-items:center;justify-content:space-between;gap:1rem;margin:.7rem 0}.ft8-dialog-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:.8rem}
+@media(max-width:720px){.ft8-log-form-grid{grid-template-columns:1fr 1fr}}@media(max-width:480px){.ft8-log-form-grid{grid-template-columns:1fr}}
+
+/* FT8.6.5.4 — WSJT-X-inspired operating layout based on operator reference composition. */
+.ft8-page-shell{width:min(1880px,calc(100% - 14px));padding:7px 0 26px}
+.ft8-page-header{min-height:36px;margin-bottom:6px;padding:0 2px}
+.ft8-title-block{display:flex;align-items:baseline;gap:10px}.ft8-title-block .eyebrow{margin:0;font-size:.62rem}.ft8-title-block h1{margin:0;font-size:1rem;letter-spacing:.02em}
+.ft8-header-status{gap:5px}.ft8-page-pill{min-height:24px;padding:2px 7px;font-size:.61rem}.ft8-back-button{min-height:26px;padding:.25rem .55rem;font-size:.67rem}
+
+.ft8-wsjtx-waterfall{padding:7px;margin-bottom:6px}.ft8-waterfall-title{margin-bottom:3px}.ft8-waterfall-title>strong{font-size:.68rem}
+.ft8-axis-top{position:relative;height:14px;margin:0 0 2px;font:750 .63rem/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted)}
+.ft8-axis-top span{position:absolute;top:0;left:var(--ft8-axis-left,0%);transform:translateX(-50%);white-space:nowrap;text-align:center}.ft8-axis-top span:first-child{transform:none}.ft8-axis-top span:last-child{transform:translateX(-100%)}
+.ft8-waterfall-wrap{height:clamp(118px,16vh,210px);border-radius:5px;overflow:hidden;border:1px solid var(--line);background:#02092c}
+.ft8-waterfall-wrap canvas{display:block;width:100%;height:100%;image-rendering:auto}
+.ft8-tx-cursor{background:#ff4136;box-shadow:0 0 0 1px #62ff74,0 0 8px rgba(255,65,54,.72)}.ft8-tx-cursor span{top:2px;background:rgba(0,0,0,.82);color:#fff}
+.ft8-wsjtx-slot-strip{grid-template-columns:repeat(4,minmax(0,1fr));margin-top:4px;gap:4px}.ft8-wsjtx-slot-strip>div{padding:3px 6px;min-height:27px}.ft8-wsjtx-slot-strip span{font-size:.56rem}.ft8-wsjtx-slot-strip strong{font-size:.66rem}.ft8-timing-bar{margin-top:3px;height:5px}
+
+.ft8-wsjtx-activity{grid-template-columns:1fr 1fr;gap:6px;align-items:stretch}.ft8-wsjtx-activity .ft8-activity-card{padding:6px;display:flex;flex-direction:column}.ft8-wsjtx-activity .ft8-page-section-title{margin-bottom:4px;min-height:24px;justify-content:center;position:relative}.ft8-wsjtx-activity .ft8-page-section-title>strong{font-size:.72rem;text-transform:none;letter-spacing:.02em}.ft8-wsjtx-activity #ft8-clear-decodes{position:absolute;right:0;top:0;min-height:23px;padding:.16rem .45rem;font-size:.6rem}.ft8-wsjtx-activity #ft8-rx-frequency-label{position:absolute;right:3px;font-size:.58rem}
+.ft8-wsjtx-activity .ft8-page-table-wrap,.ft8-wsjtx-activity .ft8-rx-table-wrap{height:clamp(310px,43vh,640px);max-height:none;overflow:auto;border:1px solid var(--line);border-radius:4px;background:#070b10}
+.ft8-page-table{min-width:840px;border-collapse:collapse}.ft8-page-table thead{position:sticky;top:0;z-index:4;background:#171d24}.ft8-page-table th,.ft8-page-table td{padding:3px 5px;font-size:.66rem;line-height:1.12;white-space:nowrap}.ft8-page-table th{font-size:.59rem;letter-spacing:.02em}.ft8-page-table td:nth-child(5){font-weight:760}.ft8-page-table th:nth-child(5),.ft8-page-table td:nth-child(5){min-width:220px}.ft8-page-table th:nth-child(6),.ft8-page-table td:nth-child(6){min-width:76px}.ft8-page-table th:nth-child(7),.ft8-page-table td:nth-child(7){min-width:96px}.ft8-page-table th:nth-child(8),.ft8-page-table td:nth-child(8){min-width:72px}
+.ft8-row-rx-frequency{}.ft8-row-local-tx{background:rgba(255,205,70,.22)!important;color:#ffe7a0!important;font-weight:850}.ft8-row-local-tx td:nth-child(2){color:#ffcf3f;font-weight:900}.ft8-row-local-tx td:nth-child(5){color:#fff2b8}
+
+.ft8-wsjtx-control-strip{margin-top:6px;padding:6px}.ft8-native-band-select{position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important}
+.ft8-band-button-row{display:grid;grid-template-columns:repeat(12,minmax(42px,1fr));gap:5px}.ft8-band-button-row button{min-height:31px;padding:.2rem .35rem;border-radius:9px;font:850 .74rem/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.ft8-band-button-row button.active{border-color:#58d36b;background:rgba(88,211,107,.22);color:#caffd2;box-shadow:0 0 0 1px rgba(88,211,107,.18) inset}
+.ft8-wsjtx-readouts{display:grid;grid-template-columns:minmax(118px,.85fr) minmax(118px,.85fr) minmax(110px,.72fr) minmax(105px,.65fr) minmax(145px,1fr) minmax(130px,.8fr) minmax(210px,1.4fr);gap:6px;align-items:end;margin-top:6px}.ft8-wsjtx-readouts label{display:flex;flex-direction:column;gap:3px;min-width:0}.ft8-wsjtx-readouts label>span,.ft8-wsjtx-readouts .ft8-readout-box>span{font-size:.57rem}.ft8-wsjtx-readouts .ft8-readout-box{min-height:43px;padding:5px 7px;border-radius:7px}.ft8-wsjtx-readouts .ft8-readout-box strong{margin-top:3px;font-size:.72rem}.ft8-wsjtx-readouts input,.ft8-wsjtx-readouts select{min-height:29px}.ft8-wsjtx-readouts .ft8-switch-line{min-height:29px;padding:3px 6px;border-radius:7px}.ft8-wsjtx-readouts .ft8-switch-line input{width:18px;height:18px;min-height:18px}.ft8-operating-note{margin:4px 1px 0;font-size:.61rem}
+
+.ft8-wsjtx-settings{margin:6px 0}.ft8-wsjtx-settings .ft8-filter-panel{padding:4px 7px;border-radius:7px}.ft8-wsjtx-settings .ft8-filter-panel summary{min-height:29px;font-size:.68rem}.ft8-wsjtx-settings .ft8-filter-panel summary strong{font-size:.69rem}.ft8-wsjtx-settings .ft8-filter-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:5px}.ft8-wsjtx-settings .ft8-filter-grid input,.ft8-wsjtx-settings .ft8-filter-grid select{min-height:28px;font-size:.68rem}.ft8-wsjtx-settings .ft8-filter-grid input[type=checkbox]{width:18px;height:18px;min-height:18px}.ft8-wsjtx-settings .ft8-color-rule{min-height:31px}
+/* FT8.6.5.5 — exact waterfall scale geometry + clearer collapsible settings. */
+.ft8-wsjtx-settings{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px;align-items:start}
+.ft8-wsjtx-settings .ft8-filter-panel[open]{grid-column:1 / -1}
+.ft8-filter-panel summary{list-style:none}.ft8-filter-panel summary::-webkit-details-marker{display:none}.ft8-filter-panel summary::marker{content:""}
+.ft8-summary-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0}
+.ft8-collapse-button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;flex:0 0 28px;border:1px solid var(--line);border-radius:6px;background:rgba(255,255,255,.025);color:var(--text);font:900 1rem/1 system-ui,sans-serif;transition:transform .15s ease,border-color .15s ease,background .15s ease}
+.ft8-filter-panel summary:hover .ft8-collapse-button{border-color:#5b91b6;background:rgba(66,184,255,.07)}
+.ft8-filter-panel[open] .ft8-collapse-button{transform:rotate(180deg)}
+@media(max-width:680px){.ft8-wsjtx-settings{grid-template-columns:1fr}.ft8-wsjtx-settings .ft8-filter-panel[open]{grid-column:auto}}
+
+.ft8-wsjtx-qso{margin:6px 0 0;padding:7px}.ft8-wsjtx-qso>.ft8-page-section-title{justify-content:center;margin-bottom:5px}.ft8-wsjtx-qso>.ft8-page-section-title>strong{font-size:.74rem;text-transform:none}
+.ft8-qso-workbench{display:grid;grid-template-columns:minmax(300px,.95fr) minmax(340px,1.18fr) minmax(190px,.58fr);gap:10px;align-items:start}.ft8-qso-station-column,.ft8-message-sequence,.ft8-qso-tx-column{min-width:0}.ft8-qso-grid{grid-template-columns:1fr 1fr;gap:5px 7px}.ft8-qso-grid label{gap:3px}.ft8-qso-grid label>span{font-size:.57rem}.ft8-qso-grid input,.ft8-qso-grid strong{min-height:30px;padding:5px 7px;border-radius:7px;font-size:.71rem}
+.ft8-cq-box{display:grid;grid-template-columns:auto 1fr;gap:6px;align-items:center;margin-top:7px;padding-top:6px;border-top:1px solid var(--line)}.ft8-cq-box button,.ft8-cq-box strong{height:31px;min-height:31px;box-sizing:border-box}.ft8-cq-box strong{display:flex;align-items:center;padding:4px 8px;border:1px solid var(--line);border-radius:7px;background:#070b10;font:800 .7rem/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ft8-message-sequence{display:grid;gap:5px}.ft8-message-sequence-title{text-align:center;color:var(--muted);font-size:.62rem;font-weight:850;text-transform:uppercase;letter-spacing:.04em}.ft8-message-sequence .ft8-tx-message-box{margin:0 0 1px;padding:5px 7px}.ft8-message-sequence .ft8-tx-message-box span{font-size:.54rem}.ft8-message-sequence .ft8-tx-message-box strong{margin-top:2px;font-size:.69rem}.ft8-message-sequence>button{min-height:32px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:#0c1219;color:var(--text);font:800 .72rem/1.1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.ft8-message-sequence>button:hover:not(:disabled){border-color:#5b91b6;background:#101a24}.ft8-message-sequence>button.active{border-color:#ff604f;background:rgba(255,72,58,.18);color:#ffd8d3;box-shadow:0 0 0 1px rgba(255,96,79,.16) inset}.ft8-message-sequence>button:disabled{opacity:.45;cursor:not-allowed}
+.ft8-qso-tx-column{margin:0;padding:7px;border-radius:8px;display:grid;gap:7px}.ft8-qso-tx-column .ft8-tx-safe-badge{justify-self:stretch;text-align:center;font-size:.56rem}.ft8-qso-tx-column .ft8-tx-actions{display:grid;grid-template-columns:1fr;gap:5px;margin:0}.ft8-qso-tx-column .ft8-tx-actions button{min-width:0;min-height:31px}.ft8-tx-slot-compact,.ft8-qso-tx-column .ft8-power-control{display:grid;gap:3px}.ft8-tx-slot-compact>span,.ft8-qso-tx-column .ft8-power-control>span{font-size:.56rem;color:var(--muted);font-weight:850;text-transform:uppercase}.ft8-tx-slot-compact select{min-height:29px}.ft8-qso-tx-column .ft8-power-control input[type=range]{min-width:0}.ft8-qso-tx-column .ft8-tx-progress-line{grid-template-columns:1fr;padding:5px 6px;gap:2px}.ft8-qso-tx-column .ft8-tx-progress-line strong{white-space:normal;font-size:.62rem}
+.ft8-qso-options{grid-template-columns:repeat(5,minmax(100px,1fr));gap:5px;margin:7px 0 5px;padding-top:6px;border-top:1px solid var(--line)}.ft8-qso-options label{grid-template-columns:1fr auto;align-items:center;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:rgba(255,255,255,.015)}.ft8-qso-options label>span{font-size:.56rem}.ft8-qso-options input{min-height:26px}.ft8-qso-options input[type=checkbox]{width:18px;height:18px;min-height:18px}.ft8-qso-status-compact{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin:5px 0}.ft8-qso-status-compact>div{padding:4px 6px}.ft8-qso-status-compact dt{font-size:.55rem}.ft8-qso-status-compact dd{max-width:none;font-size:.64rem}.ft8-qso-telemetry{grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;margin-top:5px}.ft8-qso-telemetry .ft8-readout-box{min-height:38px;padding:4px 6px}.ft8-qso-telemetry .ft8-readout-box>span{font-size:.52rem}.ft8-qso-telemetry .ft8-readout-box strong{font-size:.62rem;margin-top:2px}.ft8-safety-note{display:none}
+
+.ft8-wsjtx-log{margin-top:6px;padding:7px}.ft8-wsjtx-log>.ft8-page-section-title{justify-content:center;margin-bottom:5px}.ft8-wsjtx-log>.ft8-page-section-title>strong{text-transform:none;font-size:.74rem}.ft8-logbook-actions{display:grid;grid-template-columns:minmax(180px,.9fr) minmax(360px,2fr) minmax(120px,.65fr);gap:8px;align-items:center}.ft8-wsjtx-log .ft8-adi-drop{grid-template-columns:auto 1fr auto;align-items:center;gap:5px;padding:5px 7px;min-height:34px;border-style:solid}.ft8-wsjtx-log .ft8-adi-drop strong{font-size:.69rem}.ft8-wsjtx-log .ft8-adi-drop span{font-size:.58rem}.ft8-wsjtx-log .ft8-adi-drop input{max-width:125px;font-size:.56rem}.ft8-wsjtx-log .ft8-qrz-sync-controls{margin:0;gap:5px}.ft8-wsjtx-log .ft8-qrz-sync-controls span{min-width:120px;font-size:.62rem}.ft8-wsjtx-log #ft8-log-qso{min-height:32px}.ft8-wsjtx-log .ft8-logbook-progress{margin-top:5px;grid-template-columns:minmax(100px,.5fr) minmax(160px,1fr)}.ft8-wsjtx-log #ft8-selected-worked{margin:4px 0 0;font-size:.61rem}
+
+@media(max-width:1280px){.ft8-wsjtx-readouts{grid-template-columns:repeat(4,minmax(0,1fr))}.ft8-qso-workbench{grid-template-columns:minmax(260px,.9fr) minmax(320px,1.2fr) minmax(180px,.6fr)}.ft8-qso-telemetry{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:980px){.ft8-wsjtx-activity{grid-template-columns:1fr}.ft8-wsjtx-activity .ft8-page-table-wrap,.ft8-wsjtx-activity .ft8-rx-table-wrap{height:360px}.ft8-band-button-row{grid-template-columns:repeat(6,1fr)}.ft8-qso-workbench{grid-template-columns:1fr 1fr}.ft8-qso-tx-column{grid-column:1/-1}.ft8-qso-tx-column .ft8-tx-actions{grid-template-columns:repeat(4,1fr)}.ft8-qso-status-compact{grid-template-columns:1fr 1fr}.ft8-logbook-actions{grid-template-columns:1fr}.ft8-wsjtx-settings .ft8-filter-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:680px){.ft8-title-block h1{display:none}.ft8-wsjtx-readouts{grid-template-columns:1fr 1fr}.ft8-qso-workbench{grid-template-columns:1fr}.ft8-qso-tx-column{grid-column:auto}.ft8-qso-tx-column .ft8-tx-actions{grid-template-columns:1fr 1fr}.ft8-qso-options{grid-template-columns:1fr 1fr}.ft8-qso-telemetry{grid-template-columns:1fr 1fr}.ft8-qso-status-compact{grid-template-columns:1fr}.ft8-wsjtx-settings .ft8-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* FT8.6.5.6 UI polish: equal collapsed settings rows + QSO reset placement */
+.ft8-wsjtx-settings .ft8-settings-panel:not([open]){height:38px;min-height:38px;max-height:38px;padding:4px 7px;box-sizing:border-box;overflow:hidden}
+.ft8-wsjtx-settings .ft8-settings-panel:not([open])>summary{height:30px;min-height:30px;max-height:30px;margin:0;padding:0;box-sizing:border-box}
+.ft8-wsjtx-settings #ft8-filter-bypass{min-height:26px;height:26px;padding:.18rem .55rem;font-size:.64rem;white-space:nowrap}
+.ft8-wsjtx-settings .ft8-summary-hint{line-height:26px}
+/* FT8.6.5.7: keep Reset clearly separated from Enable CQ and anchored toward the bottom of the left QSO cell. */
+.ft8-qso-station-column{align-self:stretch;display:flex;flex-direction:column}
+.ft8-cq-box{flex:1;grid-template-rows:auto minmax(26px,1fr) auto;align-items:start}
+.ft8-cq-box .ft8-qso-reset{grid-column:1;grid-row:3;justify-self:stretch;align-self:end;height:31px;min-height:31px;margin-top:10px}
+
+/* FT8.6.5.17 — typography/control normalization.
+   Keep the dense WSJT-X-style layout, but make every interactive control use the
+   same compact type scale instead of inheriting the 16 px generic-radio UI. */
+.ft8-page-body{
+  --ft8-font-micro:.58rem;
+  --ft8-font-small:.64rem;
+  --ft8-font-control:.70rem;
+  --ft8-font-emphasis:.72rem;
+  --ft8-control-height:31px;
+  --ft8-small-control-height:27px;
+}
+.ft8-page-body button{
+  min-height:var(--ft8-control-height);
+  padding:0 .62rem;
+  border-radius:7px;
+  font-size:var(--ft8-font-control);
+  font-weight:800;
+  line-height:1.05;
+}
+.ft8-page-body button.small{
+  min-height:var(--ft8-small-control-height);
+  padding:0 .52rem;
+  font-size:var(--ft8-font-small);
+  line-height:1;
+}
+.ft8-page-body input:not([type="range"]):not([type="checkbox"]):not([type="color"]):not([type="file"]),
+.ft8-page-body select{
+  font-size:var(--ft8-font-control);
+  line-height:1.15;
+}
+.ft8-page-body .help{font-size:var(--ft8-font-small);line-height:1.35}
+.ft8-page-body .status-list{font-size:var(--ft8-font-control);line-height:1.3}
+.ft8-page-body .ft8-diagnostics-card summary{font-size:var(--ft8-font-emphasis)}
+.ft8-page-body .ft8-page-footer-status{font-size:.60rem}
+
+/* Primary QSO controls: same 31 px geometry, same baseline, same visual weight. */
+.ft8-cq-box #ft8-call-cq,
+.ft8-cq-box .ft8-qso-reset{
+  height:var(--ft8-control-height);
+  min-height:var(--ft8-control-height);
+  padding:0 .68rem;
+  border-radius:7px;
+  font-size:var(--ft8-font-emphasis);
+  font-weight:800;
+  line-height:1;
+  white-space:nowrap;
+}
+.ft8-cq-box strong{
+  font-size:var(--ft8-font-control);
+  line-height:1;
+}
+.ft8-message-sequence>button,
+.ft8-qso-tx-column .ft8-tx-actions button{
+  min-height:var(--ft8-control-height);
+  font-size:var(--ft8-font-emphasis);
+  line-height:1.05;
+}
+.ft8-qso-tx-column .ft8-tx-actions button{padding:0 .58rem}
+
+/* Secondary compact controls stay visibly secondary, but no longer jump sizes. */
+.ft8-wsjtx-activity #ft8-clear-decodes,
+.ft8-wsjtx-settings #ft8-filter-bypass,
+.ft8-color-rules-head .small,
+.ft8-rule-remove{
+  font-size:var(--ft8-font-small);
+  line-height:1;
+}
+.ft8-wsjtx-log .ft8-qrz-sync-controls button,
+.ft8-wsjtx-log #ft8-log-qso{
+  min-height:var(--ft8-control-height);
+  font-size:var(--ft8-font-control);
+  padding:0 .62rem;
+}
+.ft8-band-button-row button{
+  font-size:var(--ft8-font-emphasis);
+  line-height:1;
+}
+
+/* Normalize the most frequently read labels/readouts around the same scale. */
+.ft8-page-section-title>strong,
+.ft8-wsjtx-activity .ft8-page-section-title>strong,
+.ft8-wsjtx-qso>.ft8-page-section-title>strong,
+.ft8-wsjtx-log>.ft8-page-section-title>strong{font-size:var(--ft8-font-emphasis)}
+.ft8-page-section-title>span,
+.ft8-wsjtx-activity #ft8-rx-frequency-label{font-size:var(--ft8-font-small)}
+.ft8-page-table th{font-size:.60rem}
+.ft8-page-table td{font-size:.67rem}
+.ft8-wsjtx-readouts label>span,
+.ft8-wsjtx-readouts .ft8-readout-box>span,
+.ft8-qso-grid label>span,
+.ft8-qso-options label>span,
+.ft8-tx-slot-compact>span,
+.ft8-qso-tx-column .ft8-power-control>span{font-size:var(--ft8-font-micro)}
+.ft8-wsjtx-readouts .ft8-readout-box strong,
+.ft8-qso-grid input,
+.ft8-qso-grid strong{font-size:var(--ft8-font-control)}
+.ft8-qso-status-compact dt{font-size:var(--ft8-font-micro)}
+.ft8-qso-status-compact dd{font-size:var(--ft8-font-small)}
+.ft8-qso-telemetry .ft8-readout-box>span{font-size:.55rem}
+.ft8-qso-telemetry .ft8-readout-box strong{font-size:var(--ft8-font-small)}
+
+/* Complete the normalization for inherited generic form/header/dialog styles. */
+.ft8-page-body input:not([type="range"]):not([type="checkbox"]):not([type="color"]):not([type="file"]),
+.ft8-page-body select{
+  padding:.28rem .46rem;
+  border-radius:7px;
+}
+.ft8-page-body .ft8-status{
+  min-height:24px;
+  padding:2px 7px;
+  font-size:.61rem;
+  line-height:1;
+}
+.ft8-log-form-grid label>span,
+.ft8-auto-log-option>span{
+  color:var(--muted);
+  font-size:var(--ft8-font-small);
+  font-weight:800;
+  letter-spacing:.035em;
+}
+.ft8-log-dialog .ft8-page-section-title>strong{font-size:var(--ft8-font-emphasis)}
+.ft8-log-dialog .ft8-page-section-title>span{font-size:var(--ft8-font-small)}
+
+
+/* FT8.6.5.18 — Auto RF Gain readout stability.
+   The visible value is deliberately fixed-width; model learning/slope detail is
+   exposed via title instead of changing the line length every poll. */
+#ft8-rf-gain{
+  display:inline-block;
+  flex:0 0 9ch;
+  width:9ch;
+  min-width:9ch;
+  max-width:9ch;
+  text-align:right;
+  overflow:visible;
+  text-overflow:clip;
+  white-space:nowrap;
+  font:800 var(--ft8-font-control)/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-variant-numeric:tabular-nums;
+  font-feature-settings:"tnum" 1;
+  letter-spacing:0;
+}
+
+/* FT8.6.5.19 — compact offline Maidenhead geography in activity tables. */
+.ft8-page-table{min-width:930px}
+.ft8-page-table th:nth-child(7),.ft8-page-table td:nth-child(7){min-width:158px}
+.ft8-page-table td.ft8-geo-cell{white-space:normal;min-width:158px;max-width:215px;vertical-align:middle;line-height:1.08}
+.ft8-geo-primary{font-size:.64rem;font-weight:820;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ft8-geo-secondary{margin-top:2px;font-size:.59rem;font-weight:650;opacity:.82;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+
+/* FT8.6.5.22 — compact Band Activity / Rx Frequency columns.
+   DT and DF remain in row data/filters/tooltips, but are no longer permanent columns.
+   User traffic sample: 160 messages, longest 18 chars; reserve 20ch for MESSAGE. */
+.ft8-wsjtx-activity .ft8-page-table{min-width:650px}
+.ft8-wsjtx-activity .ft8-page-table th:nth-child(3),
+.ft8-wsjtx-activity .ft8-page-table td:nth-child(3){
+  width:20ch;min-width:20ch;max-width:20ch;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-weight:760;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+}
+.ft8-wsjtx-activity .ft8-page-table th:nth-child(4),
+.ft8-wsjtx-activity .ft8-page-table td:nth-child(4){min-width:78px}
+.ft8-wsjtx-activity .ft8-page-table th:nth-child(5),
+.ft8-wsjtx-activity .ft8-page-table td:nth-child(5){min-width:174px;max-width:235px;font-weight:400}
+.ft8-wsjtx-activity .ft8-page-table th:nth-child(6),
+.ft8-wsjtx-activity .ft8-page-table td:nth-child(6){min-width:86px}
+.ft8-wsjtx-activity .ft8-page-table td.ft8-geo-cell{min-width:174px;max-width:235px}
+.ft8-row-local-tx td:nth-child(3){color:#fff2b8}

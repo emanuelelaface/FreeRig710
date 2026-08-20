@@ -1,0 +1,5 @@
+## FreeRig710 Milestone 8.1 USB Host dependency.
+## Pinned to the release used by the ESP-IDF v6.0.2 usb_host_lib example.
+dependencies:
+  espressif/usb:
+    version: "1.0.0"

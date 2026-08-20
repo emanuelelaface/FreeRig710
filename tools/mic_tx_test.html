@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FreeRig710 M11.0 Microphone TX Test</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem}button,input{font:inherit}button{padding:.55rem .9rem;margin-right:.4rem}label{display:block;margin:.9rem 0}.ok{color:green}.bad{color:#b00}code{background:#eee;padding:.15rem .3rem;border-radius:.2rem}
+</style>
+</head>
+<body>
+<h1>FreeRig710 M11.0 microphone TX test</h1>
+<p>This page sends microphone audio only. <strong>The ESP32 does not assert PTT.</strong></p>
+<label>ESP32 address <input id="target" value="192.168.212.90" size="18"></label>
+<label>Mic gain <input id="gain" type="range" min="0" max="1.5" step="0.05" value="0.50"> <span id="gainValue">0.50</span></label>
+<p><button id="start">Start microphone</button><button id="stop" disabled>Stop</button></p>
+<p id="status">idle</p>
+<pre id="stats"></pre>
+<script>
+const q=new URLSearchParams(location.search); if(q.get('target')) document.querySelector('#target').value=q.get('target');
+const gainEl=document.querySelector('#gain'), gainValue=document.querySelector('#gainValue');
+gainEl.oninput=()=>gainValue.textContent=Number(gainEl.value).toFixed(2);
+const statusEl=document.querySelector('#status'), statsEl=document.querySelector('#stats');
+let ws=null,ctx=null,source=null,proc=null,mute=null,stream=null,frames=0,bytes=0,dropped=0;
+function status(t,ok=true){statusEl.textContent=t;statusEl.className=ok?'ok':'bad'}
+async function start(){
+  try{
+    const target=document.querySelector('#target').value.trim();
+    ws=new WebSocket(`ws://${target}/ws/mic`); ws.binaryType='arraybuffer';
+    await new Promise((resolve,reject)=>{ws.onopen=resolve;ws.onerror=()=>reject(new Error('WebSocket connection failed'));});
+    stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:48000,echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    ctx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000,latencyHint:'interactive'});
+    await ctx.resume();
+    if(ctx.sampleRate!==48000) throw new Error(`AudioContext is ${ctx.sampleRate} Hz, expected 48000 Hz`);
+    source=ctx.createMediaStreamSource(stream);
+    proc=ctx.createScriptProcessor(1024,1,1);
+    mute=ctx.createGain();mute.gain.value=0;
+    proc.onaudioprocess=e=>{
+      const input=e.inputBuffer.getChannelData(0); const out=new Int16Array(input.length); const g=Number(gainEl.value);
+      for(let i=0;i<input.length;i++){let v=input[i]*g; if(v>1)v=1;if(v<-1)v=-1;out[i]=v<0?v*32768:v*32767;}
+      e.outputBuffer.getChannelData(0).fill(0);
+      if(ws&&ws.readyState===WebSocket.OPEN&&ws.bufferedAmount<65536){ws.send(out.buffer);frames++;bytes+=out.byteLength;}else dropped+=out.byteLength;
+      statsEl.textContent=`AudioContext: ${ctx.sampleRate} Hz\nframes sent: ${frames}\nPCM bytes sent: ${bytes}\nlocal dropped bytes: ${dropped}\nWebSocket buffered: ${ws?ws.bufferedAmount:0}`;
+    };
+    source.connect(proc);proc.connect(mute);mute.connect(ctx.destination);
+    document.querySelector('#start').disabled=true;document.querySelector('#stop').disabled=false;
+    status('microphone streaming to ESP32; PTT is still disabled');
+    ws.onclose=()=>status('WebSocket closed',false);
+  }catch(e){status(e.message||String(e),false); stop();}
+}
+function stop(){
+  if(proc){proc.disconnect();proc.onaudioprocess=null;proc=null} if(source){source.disconnect();source=null} if(mute){mute.disconnect();mute=null}
+  if(stream){for(const t of stream.getTracks())t.stop();stream=null} if(ctx){ctx.close();ctx=null} if(ws){ws.close();ws=null}
+  document.querySelector('#start').disabled=false;document.querySelector('#stop').disabled=true;
+}
+document.querySelector('#start').onclick=start;document.querySelector('#stop').onclick=()=>{stop();status('stopped')};
+</script>
+</body>
+</html>
