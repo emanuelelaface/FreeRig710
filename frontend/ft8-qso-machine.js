@@ -27,6 +27,35 @@
       this.completedUnixMs=0;this.silentSlots=0;this.retryAttempts=0;
       return this._transition(target,`operator selected ${key} message`,{slotIndex,unixMs});
     }
+    resumeFromRx({parsed,text="",snr=null,slotIndex=null,unixMs=Date.now(),df=null}={}){
+      const p=parsed||{},kind=upper(p.kind),from=upper(p.from||p.call),to=upper(p.to);
+      const dx=kind==="CQ"?upper(p.call||p.from):(from&&from!==this.myCall?from:(to&&to!==this.myCall?to:""));
+      if(!dx||!this.myCall||dx===this.myCall)return this.snapshot();
+      if(this.isActive()&&this.dxCall&&this.dxCall!==dx)return this.snapshot();
+      const sameDx=this.dxCall===dx,wasTerminal=TERMINAL.has(this.state),newSession=!sameDx||wasTerminal;
+      this.dxCall=dx;
+      if(p.grid)this.dxGrid=upper(p.grid);
+      else if(!sameDx)this.dxGrid="";
+      if(Number.isFinite(Number(df)))this.df=Math.round(Number(df));
+      if(Number.isFinite(Number(slotIndex))){this.rxSlotParity=Number(slotIndex)&1;this.txSlotParity=this.rxSlotParity^1;}
+      if(newSession||!this.startedUnixMs)this.startedUnixMs=unixMs;
+      if(newSession){this.rstRcvd="";this.lastTxMessage="";}
+      this.completedUnixMs=0;this.attempts=0;this.retryAttempts=0;this.silentSlots=0;
+      this.lastHeard=String(text||p.raw||"");this.lastHeardUnixMs=unixMs;this.lastRxSlotIndex=slotIndex;
+      if(Number.isFinite(Number(snr)))this.txReport=report(snr);
+      const rr=payloadReport(p.payload);if((kind==="REPORT"||kind==="R_REPORT")&&rr)this.rstRcvd=rr;
+      const directedToMe=from===dx&&to===this.myCall;
+      let target="SELECTED",cause="operator restarted from decoded activity";
+      if(kind==="CQ"){target="ANSWERING_CQ";cause="operator restarted from CQ";}
+      else if(directedToMe){
+        if(kind==="GRID"){target="SEND_REPORT";cause="operator resumed after DX grid/call";}
+        else if(kind==="REPORT"){target="SEND_R_REPORT";cause="operator resumed after DX report";}
+        else if(kind==="R_REPORT"){target="SEND_RR73";cause="operator resumed after DX R-report";}
+        else if(kind==="RRR"||kind==="RR73"){target="SEND_73";cause=`operator resumed after DX ${kind}`;}
+        else if(kind==="73"){target="SEND_73";cause="operator resumed after DX 73";}
+      }
+      return this._transition(target,cause,{slotIndex,unixMs,rx:this.lastHeard});
+    }
     onRx({parsed,text="",snr=null,slotIndex=null,unixMs=Date.now(),df=null}={}){const p=parsed||{},from=upper(p.from||p.call),to=upper(p.to),kind=upper(p.kind);if(this.state==="IDLE"||TERMINAL.has(this.state))return this.snapshot();
       if(!this.dxCall&&this.options.callFirst&&["CALLING_CQ","WAIT_DX_REPORT"].includes(this.state)&&from&&to===this.myCall){this.dxCall=from;this.dxGrid=upper(p.grid);if(Number.isFinite(Number(df)))this.df=Math.round(Number(df));this.rxSlotParity=Number(slotIndex)&1;this.txSlotParity=this.rxSlotParity^1;}
       if(this.dxCall&&from!==this.dxCall&&upper(p.call)!==this.dxCall)return this.snapshot();

@@ -576,12 +576,15 @@
 
     selectQsoStage(stage) {
       if(!this.qsoMachine)return;
+      const page=window.FT710_FT8_PAGE;
+      if(page?.canReplanQso && !page.canReplanQso())return;
       this.qsoMachine.identity({myCall:this.myCall,myGrid:this.myGrid,txReport:this.txReport});
       const before=this.qsoMachine.snapshot();
       if(!before.dxCall)return;
       if(["COMPLETE","LOG_PENDING","LOGGED_LOCAL","QRZ_PENDING","QRZ_LOGGED"].includes(before.state)){this.currentLocalQsoId="";this.currentLocalQsoRecord=null;this.qsoCompletionKey="";}
       const snap=this.qsoMachine.selectTxStage(stage,{unixMs:this.getServerUnixMs()});
       this.syncQsoFromMachine(snap);
+      page?.rearmAutoTxFromSelection?.();
     },
 
     syncQsoFromMachine(snapshot=this.qsoMachine?.snapshot?.()) {
@@ -938,7 +941,7 @@
           if(!isTx){
             const select = () => {
               const accepted=this.selectDecode(row);
-              if(accepted&&!rxFrequency) window.FT710_FT8_PAGE?.enableAutoTxFromSelection?.();
+              if(accepted) window.FT710_FT8_PAGE?.rearmAutoTxFromSelection?.();
               return accepted;
             };
             tr.addEventListener("click", select);
@@ -994,6 +997,8 @@
     },
 
     selectDecode(row) {
+      const page=window.FT710_FT8_PAGE;
+      if(page?.canReplanQso && !page.canReplanQso())return false;
       if(["COMPLETE","LOG_PENDING","LOGGED_LOCAL","QRZ_PENDING","QRZ_LOGGED","ABORTED","TIMEOUT","ERROR"].includes(this.qso?.state)){this.currentLocalQsoId="";this.currentLocalQsoRecord=null;this.qsoCompletionKey="";}
       const p = row?.parsed || this.parseMessage(row?.text);
       const dx = normalizeCall(p.kind === "CQ" ? p.call : (p.from !== this.myCall ? p.from : p.to));
@@ -1004,7 +1009,7 @@
         const before=this.qsoMachine.snapshot();
         const terminal=["IDLE","COMPLETE","LOG_PENDING","LOGGED_LOCAL","QRZ_PENDING","QRZ_LOGGED","ABORTED","TIMEOUT","ERROR"].includes(before.state);
         if(!terminal&&before.dxCall&&before.dxCall!==dx)return false;
-        this.syncQsoFromMachine(this.qsoMachine.select({dxCall:dx,dxGrid:p.grid||"",df:Math.round(Number(row.df||0)),rxSlotParity:rxParity,kind:p.kind,unixMs:this.getServerUnixMs(),slotIndex:row.slotIndex}));
+        this.syncQsoFromMachine(this.qsoMachine.resumeFromRx({parsed:p,text:row.text||"",snr:row.snr,df:Math.round(Number(row.df||0)),slotIndex:row.slotIndex,unixMs:this.getServerUnixMs()}));
       } else this.qso = { state: p.kind === "CQ" ? "ANSWERING_CQ" : "SELECTED", dxCall: dx, dxGrid: p.grid || "", df: Math.round(Number(row.df || 0)), rxSlotParity: rxParity, txSlotParity: rxParity ^ 1, lastHeard: row.text, lastHeardUnixMs: Date.now(), startedUnixMs: Date.now(), nextMessage: "" };
       this.updateTxReportFromRow(row);
       window.FT710_FT8_PAGE?.qsoSelected?.({ df: this.qso.df, rxSlotParity: this.qso.rxSlotParity, txSlotParity: this.qso.txSlotParity, dxCall: this.qso.dxCall });
@@ -1039,6 +1044,8 @@
     },
 
     resetQso() {
+      const page=window.FT710_FT8_PAGE;
+      if(page?.canReplanQso && !page.canReplanQso())return;
       this.currentLocalQsoId="";this.currentLocalQsoRecord=null;this.qsoCompletionKey="";
       if(this.qsoMachine)this.syncQsoFromMachine(this.qsoMachine.reset());
       else {this.qso = { state: "IDLE", dxCall: "", dxGrid: "", df: null, rxSlotParity: null, txSlotParity: 0, lastHeard: "", lastHeardUnixMs: 0, startedUnixMs: 0, nextMessage: "" };this.renderDecodeRows();this.renderQso();}

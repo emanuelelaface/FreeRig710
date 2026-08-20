@@ -143,6 +143,7 @@
     stagedWaveformMessage: "",
     stagedWaveformRevision: 0,
     autoTxEnabled: false,
+    autoTxPreparing: false,
     autoTxSchedulerTimer: null,
     autoTxArming: false,
     autoTxSessionActive: false,
@@ -674,7 +675,7 @@
 
     qsoSelected(info) {
       if (this.tuneRunning) { toast("Stop TX Tune before selecting another QSO frequency", true); return; }
-      if (this.autoTxArming || this.autoTxSessionActive) { toast("Halt FT8 TX before selecting another QSO", true); return; }
+      if (this.autoTxSessionActive) { toast("Wait for the current FT8 transmission to finish before selecting another QSO", true); return; }
       if (Number.isFinite(Number(info?.df))) {
         this.txDfHz = clamp(Math.round(Number(info.df) / 10) * 10, DF_LOW, DF_HIGH);
         try { localStorage.setItem("freerig710-ft8-tx-df-v1", String(this.txDfHz)); } catch (_) {}
@@ -798,6 +799,7 @@
       this.tuneKeepaliveTimer = null;
       this.txSource = "NONE";
       this.autoTxEnabled = false;
+      this.autoTxPreparing = false;
       this.autoTxArming = false;
       this.autoTxSessionActive = false;
       clearInterval(this.autoTxKeepaliveTimer);
@@ -854,8 +856,52 @@
       return Number(this.txSlotParity) & 1;
     },
 
+    canReplanQso() {
+      return !this.autoTxSessionActive && !this.tuneRunning;
+    },
+
     enableAutoTxFromSelection() {
-      if (!this.autoTxEnabled && !this.autoTxArming && !this.autoTxSessionActive) void this.enableAutoTx();
+      this.rearmAutoTxFromSelection();
+    },
+
+    rearmAutoTxFromSelection() {
+      if (this.autoTxSessionActive) return;
+      const plan = window.FT710_FT8?.getTxPlan?.() || {};
+      const message = String(plan.message || "").trim();
+      if (!message) {
+        const qso = window.FT710_FT8?.getQsoSnapshot?.() || {};
+        if (qso.dxCall && !String(qso.myGrid || "").trim()) toast("Set MY GRID first", true);
+        else toast("Selected decode does not have a valid TX continuation", true);
+        return;
+      }
+      const previousMessage = this.txPlanMessage;
+      this.txPlanMessage = message;
+      const revision = ++this.txPlanRevision;
+      this.autoTxRepeatCount = 0;
+      this.autoTxLastMessage = message;
+      this.autoTxLastSlotIndex = null;
+      this.autoTxTargetSlotIndex = null;
+      // A manual click is an explicit recovery point, even when the outgoing
+      // text is identical to the previous retry.  Give it a fresh revision so
+      // every old encode/stage/arm continuation becomes stale deterministically.
+      const mustCancelArm = this.armedSlotIndex != null || this.autoTxArming;
+      this.invalidateStagedWaveform();
+      this.renderAutoTxState("re-armed from selected decode");
+      void (async () => {
+        try {
+          // Serialize STOP before uploading the replacement waveform.  Without
+          // this ordering, a late /tx/stop from the old arm could clear a new
+          // PSRAM stage that had already finished uploading.
+          if (mustCancelArm) await this.cancelStaleArmedTx(previousMessage, message, true);
+          if (!this.txPlanStillCurrent(message, revision)) return;
+          if (!this.autoTxEnabled && !this.autoTxPreparing) { await this.enableAutoTx(); return; }
+          if (this.autoTxEnabled && await this.prepareAutoTxWaveform(message, revision)) {
+            await this.ensureAutoTxWaveformStaged(message, revision);
+          }
+        } catch (error) {
+          if (error?.code !== "FT8_STALE_PLAN") console.warn("FT8 manual re-arm pre-stage:", error);
+        }
+      })();
     },
 
     txPlanStillCurrent(message, revision = this.txPlanRevision) {
@@ -869,11 +915,27 @@
       return error;
     },
 
-    async cancelStaleArmedTx(previousMessage, nextMessage) {
+    isRecoverableAutoTxError(error) {
+      const reason = String(error?.message || error || "").toLowerCase();
+      return [
+        "waveform is not fully staged",
+        "staged waveform was lost",
+        "staged waveform/message/revision binding changed",
+        "48 khz waveform is not ready",
+        "audio websocket changed before ft8 tx arm",
+        "audio websocket is not connected",
+        "audio websocket closed",
+        "current ft8 tx slot is already too late",
+        "ft8 slot became too late",
+        "ft8 slot must be armed",
+      ].some((part) => reason.includes(part));
+    },
+
+    async cancelStaleArmedTx(previousMessage, nextMessage, force = false) {
       if (this.staleArmCancelPromise) return this.staleArmCancelPromise;
       const stale = String(this.armedTxMessage || previousMessage || "").trim();
       const fresh = String(nextMessage || "").trim();
-      if (!this.autoTxEnabled || this.autoTxSessionActive || this.armedSlotIndex == null || !stale || stale === fresh) return;
+      if (this.autoTxSessionActive || (!this.autoTxEnabled && !this.autoTxPreparing) || (!force && this.armedSlotIndex == null) || !stale || (!force && stale === fresh)) return;
       this.staleArmCancelPromise = (async () => {
         const waiter = this.autoTxActiveWaiter;
         if (waiter) {
@@ -925,7 +987,7 @@
       const el = id("ft8-tx-message");
       if (el) el.textContent = message || "Select a QSO first";
       const generate = id("ft8-generate-wave");
-      if (generate) generate.disabled = !message || !this.txLevelTuned || this.txStreaming || this.tuneRunning || this.autoTxArming || this.autoTxSessionActive;
+      if (generate) generate.disabled = !message || !this.txLevelTuned || this.txStreaming || this.tuneRunning || this.autoTxPreparing || this.autoTxArming || this.autoTxSessionActive;
       if (this.autoTxEnabled && state === "COMPLETE" && !this.autoTxArming && !this.autoTxSessionActive) void this.finishCompletedQso();
       this.renderAutoTxState();
     },
@@ -945,21 +1007,36 @@
       id("ft8-encoder-diag") && (id("ft8-encoder-diag").textContent = detail);
     },
 
+    invalidateStagedWaveform() {
+      this.stagedWaveformId = 0;
+      this.stagedWaveformKey = "";
+      this.stagedWaveformMessage = "";
+      this.stagedWaveformRevision = 0;
+    },
+
+    preparedWaveformMatches(message) {
+      const wanted = String(message || "").trim().toUpperCase();
+      return Boolean(
+        wanted &&
+        this.txStageWaveform instanceof Int16Array &&
+        this.txStageWaveform.length === 606720 &&
+        String(this.txWaveformMeta?.message || "").trim().toUpperCase() === wanted &&
+        Number(this.txWaveformMeta?.levelDbfs) === Number(this.txLevelDbfs)
+      );
+    },
+
     invalidateTxWaveform(detail = "not generated") {
       if (this.txStreaming) return;
       this.txWaveform = null;
       this.txStageWaveform = null;
       this.txWaveformMeta = null;
-      this.stagedWaveformId = 0;
-      this.stagedWaveformKey = "";
-      this.stagedWaveformMessage = "";
-      this.stagedWaveformRevision = 0;
+      this.invalidateStagedWaveform();
       id("ft8-waveform-state") && (id("ft8-waveform-state").textContent = detail);
       const send = id("ft8-send-wave");
       if (send) send.disabled = true;
     },
 
-    async generateTxWaveform(expectedMessage = "") {
+    async generateTxWaveform(expectedMessage = "", expectedRevision = null) {
       if (this.txStreaming || this.tuneRunning) return;
       const plan = window.FT710_FT8?.getTxPlan?.() || {};
       const message = String(expectedMessage || plan.message || "").trim();
@@ -973,6 +1050,7 @@
         if (String(result?.message || "").trim().toUpperCase() !== message.toUpperCase()) throw new Error(`encoder message mismatch: wanted ${message}, got ${result?.message || "<empty>"}`);
         if (!(result?.pcm instanceof Int16Array) || result.pcm.length !== 606720) throw new Error(`encoder returned ${result?.pcm?.length || 0} samples; expected 606720 @ 48 kHz`);
         if (Number(result?.sampleRate) !== 48000 || Number(result?.stagedSampleRate) !== 48000) throw new Error(`FT8 staged render must be 48000 Hz, got ${result?.sampleRate}`);
+        if (expectedRevision != null && !this.txPlanStillCurrent(message, expectedRevision)) throw this.stalePlanError(message, expectedRevision);
         this.txWaveform = result.pcm;
         this.txStageWaveform = result.pcm;
         this.txWaveformMeta = result;
@@ -984,8 +1062,10 @@
         toast(`FT8 waveform ready: ${message}`);
       } catch (error) {
         const detail = error?.message || String(error);
-        this.invalidateTxWaveform(`ERROR · ${detail}`);
-        toast(`FT8 waveform generation failed: ${detail}`, true);
+        if (error?.code !== "FT8_STALE_PLAN") {
+          this.invalidateTxWaveform(`ERROR · ${detail}`);
+          toast(`FT8 waveform generation failed: ${detail}`, true);
+        }
         throw error;
       } finally {
         if (button) button.disabled = !this.txPlanMessage || !this.txLevelTuned || this.txStreaming || this.tuneRunning;
@@ -1053,10 +1133,11 @@
       return false;
     },
 
-    async ensureAutoTxWaveformStaged(message, revision = this.txPlanRevision) {
+    async ensureAutoTxWaveformStaged(message, revision = this.txPlanRevision, options = {}) {
       const wanted = String(message || "").trim();
+      const requireEnabled = options.requireEnabled !== false;
       if (!this.txPlanStillCurrent(wanted, revision)) throw this.stalePlanError(wanted, revision);
-      if (!(this.txStageWaveform instanceof Int16Array) || this.txStageWaveform.length !== 606720 || String(this.txWaveformMeta?.message || "").trim() !== wanted) {
+      if (!this.preparedWaveformMatches(wanted)) {
         throw new Error("FT8 48 kHz waveform is not ready to stage");
       }
       if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error("audio WebSocket is not connected");
@@ -1068,6 +1149,7 @@
       const stageLevelDbfs = Number(this.txWaveformMeta?.levelDbfs);
       const bytesLength = stageWaveform.byteLength;
       const key = `${stageMessage}|${stageLevelDbfs}|48000|${bytesLength}`;
+      const promiseKey = `${revision}|${key}`;
       if (this.stagedWaveformId && this.stagedWaveformKey === key && this.stagedWaveformMessage === stageMessage && this.stagedWaveformRevision === revision) {
         if (await this.verifyAutoTxWaveformStaged(this.stagedWaveformId, bytesLength, 2)) return this.stagedWaveformId;
         this.stagedWaveformId = 0;
@@ -1075,7 +1157,7 @@
         this.stagedWaveformMessage = "";
         this.stagedWaveformRevision = 0;
       }
-      if (this.autoTxStagePromise && this.autoTxStagePromiseKey === key) {
+      if (this.autoTxStagePromise && this.autoTxStagePromiseKey === promiseKey) {
         const id = await this.autoTxStagePromise;
         if (!this.txPlanStillCurrent(stageMessage, revision)) throw this.stalePlanError(stageMessage, revision);
         return id;
@@ -1083,9 +1165,9 @@
       if (this.autoTxStagePromise) {
         await this.autoTxStagePromise.catch(() => {});
         if (!this.txPlanStillCurrent(stageMessage, revision)) throw this.stalePlanError(stageMessage, revision);
-        return this.ensureAutoTxWaveformStaged(stageMessage, revision);
+        return this.ensureAutoTxWaveformStaged(stageMessage, revision, options);
       }
-      this.autoTxStagePromiseKey = key;
+      this.autoTxStagePromiseKey = promiseKey;
       this.autoTxStagePromise = (async () => {
         if (!this.txPlanStillCurrent(stageMessage, revision)) throw this.stalePlanError(stageMessage, revision);
         const waveId = this.waveUploadSeq = (this.waveUploadSeq % 2000000000) + 1;
@@ -1097,7 +1179,7 @@
         const frameBytes = 16000; // backend max is 16384
         const started = performance.now();
         for (let offset = 0; offset < bytes.length; offset += frameBytes) {
-          if (!this.autoTxEnabled || this.txAbortRequested) throw new Error("FT8 TX disabled during waveform staging");
+          if ((requireEnabled && !this.autoTxEnabled) || this.txAbortRequested) throw new Error("FT8 TX disabled during waveform staging");
           while (this.socket?.bufferedAmount > 262144) await new Promise((r) => setTimeout(r, 1));
           if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error("audio WebSocket closed during waveform staging");
           this.socket.send(bytes.subarray(offset, Math.min(bytes.length, offset + frameBytes)));
@@ -1363,6 +1445,7 @@
       let text = "disabled";
       if (this.autoTxSessionActive) text = "TX ACTIVE · ESP32 lease";
       else if (this.autoTxArming) text = "ARMED · waiting slot/PTT ACK";
+      else if (this.autoTxPreparing) text = "PREPARING · encode/stage";
       else if (this.autoTxEnabled) text = "enabled · waiting selected slot";
       if (detail) text += ` · ${detail}`;
       if (stateEl) {
@@ -1376,73 +1459,104 @@
       if (timingEl) timingEl.textContent = Number.isFinite(this.autoTxLastStartDelayMs)
         ? `PTT +${this.autoTxLastStartDelayMs.toFixed(0)} ms from UTC slot`
         : "--";
-      if (enable) enable.disabled = this.autoTxEnabled || this.tuneRunning || !this.activeBand || !this.audioReady || !this.txLevelTuned || !this.txPlanMessage;
-      if (halt) halt.disabled = !(this.autoTxEnabled || this.autoTxArming || this.autoTxSessionActive);
-      id("ft8-tune-tx") && (id("ft8-tune-tx").disabled = this.tuneRunning || this.autoTxEnabled || !this.activeBand || !this.audioReady || this.powerControlBusy);
-      id("ft8-band-select") && (id("ft8-band-select").disabled = this.tuneRunning || this.autoTxArming || this.autoTxSessionActive);
-      id("ft8-tx-slot-select") && (id("ft8-tx-slot-select").disabled = this.tuneRunning || this.autoTxArming || this.autoTxSessionActive);
-      id("ft8-tx-power") && (id("ft8-tx-power").disabled = this.tuneRunning || this.autoTxArming || this.autoTxSessionActive);
+      if (enable) enable.disabled = this.autoTxEnabled || this.autoTxPreparing || this.tuneRunning || !this.activeBand || !this.audioReady || !this.txLevelTuned || !this.txPlanMessage;
+      if (halt) halt.disabled = !(this.autoTxEnabled || this.autoTxPreparing || this.autoTxArming || this.autoTxSessionActive);
+      id("ft8-tune-tx") && (id("ft8-tune-tx").disabled = this.tuneRunning || this.autoTxPreparing || this.autoTxEnabled || !this.activeBand || !this.audioReady || this.powerControlBusy);
+      id("ft8-band-select") && (id("ft8-band-select").disabled = this.tuneRunning || this.autoTxPreparing || this.autoTxArming || this.autoTxSessionActive);
+      id("ft8-tx-slot-select") && (id("ft8-tx-slot-select").disabled = this.tuneRunning || this.autoTxPreparing || this.autoTxArming || this.autoTxSessionActive);
+      id("ft8-tx-power") && (id("ft8-tx-power").disabled = this.tuneRunning || this.autoTxPreparing || this.autoTxArming || this.autoTxSessionActive);
       const rfSlider = id("ft8-rf-gain-slider");
-      if (rfSlider) rfSlider.disabled = this.tuneRunning || this.autoTxArming || this.autoTxSessionActive || Boolean(id("ft8-auto-rf")?.checked);
+      if (rfSlider) rfSlider.disabled = this.tuneRunning || this.autoTxPreparing || this.autoTxArming || this.autoTxSessionActive || Boolean(id("ft8-auto-rf")?.checked);
       document.querySelector(".ft8-tx-lab")?.classList.toggle("auto-tx-active", this.autoTxSessionActive);
       document.querySelector(".ft8-tx-lab")?.classList.toggle("auto-tx-armed", this.autoTxEnabled && !this.autoTxSessionActive);
     },
 
     async enableAutoTx() {
-      if (this.autoTxEnabled || this.autoTxArming || this.autoTxSessionActive) return;
+      if (this.autoTxEnabled || this.autoTxPreparing || this.autoTxArming || this.autoTxSessionActive) return;
       if (this.tuneRunning || this.txStreaming) { toast("Stop TX Tune/audio test before enabling FT8 TX", true); return; }
-      // closeAudio()/abort paths deliberately latch this while tearing an old
-      // session down.  A fresh operator Enable TX is a new session and must
-      // clear that stale abort latch; otherwise staging can be rejected forever
-      // until the operator performs an unnecessary Halt -> Enable cycle.
       this.txAbortRequested = false;
       this.autoTxArmingSinceMs = 0;
       if (!this.activeBand || !Number.isFinite(this.dialHz)) { toast("Select an FT8 band first", true); return; }
-      if (!this.txPlanMessage) { toast("Select a decoded station/QSO first", true); return; }
+      if (!this.txPlanMessage) {
+        const qso = window.FT710_FT8?.getQsoSnapshot?.() || {};
+        if (qso.dxCall && !String(qso.myGrid || "").trim()) toast("Set MY GRID first", true);
+        else toast("Select a decoded station/QSO first", true);
+        return;
+      }
       if (!this.txLevelTuned || !Number.isFinite(this.txLevelDbfs)) { toast("Run Tune TX first to calibrate FT8 audio", true); return; }
-      try { await this.ensureAudio(); } catch (error) { toast(error.message || String(error), true); return; }
-      const timing = window.FT710_FT8?.getTimingEstimate?.() || {};
-      if (!timing.valid) { toast("ESP32 UTC timing is not synchronized yet", true); return; }
-      // qsoSelected()/waterfall selection already queues the VFO-B/split CAT
-      // update. Do not reject Enable TX from /api/v1/state here: that endpoint
-      // reflects the 1 s CAT poll cache and can legitimately show the previous
-      // VFO B for a short time after the setter completed. The authoritative
-      // /ft8/tx/arm pre-key check performs a fresh CAT read before PTT.
+
+      this.autoTxPreparing = true;
+      this.renderAutoTxState("validating current QSO plan");
       try {
+        await this.ensureAudio();
+        const timing = window.FT710_FT8?.getTimingEstimate?.() || {};
+        if (!timing.valid) throw new Error("ESP32 UTC timing is not synchronized yet");
+
         if (this.txVfoApplyPromise) await this.txVfoApplyPromise;
         else await this.applyTxVfoB();
-      } catch (error) {
-        toast(`FT8 TX VFO setup failed: ${error?.message || error}`, true);
-        return;
-      }
-      let state = await api("/api/v1/state");
-      this.state = state;
-      if (state?.radio_power !== "ON" || state?.ptt_active || state?.tx_state === "TX") {
-        toast("FT8 TX not ready: radio must be stably ON and in RX", true);
-        return;
-      }
-      try {
-        const ready = await this.prepareAutoTxWaveform();
-        if (!ready || !(this.txWaveform instanceof Int16Array) || this.txWaveformMeta?.message !== this.txPlanMessage) {
-          throw new Error("waveform generation completed without a READY buffer");
+
+        const state = await api("/api/v1/state");
+        this.state = state;
+        if (state?.radio_power !== "ON" || state?.ptt_active || state?.tx_state === "TX") {
+          throw new Error("radio must be stably ON and in RX");
         }
+
+        // The QSO may legitimately advance while the encoder or the 1.2 MiB
+        // PSRAM upload is running.  Treat that as a stale plan, not as a TX
+        // fault: discard the obsolete continuation and prepare the latest
+        // message.  This removes the old 'generation completed without READY
+        // buffer' race where a correct newer plan invalidated an older encode.
+        let stable = null;
+        for (let attempt = 0; attempt < 4 && !stable; attempt += 1) {
+          if (this.txAbortRequested) throw new Error("FT8 TX enable cancelled");
+          const plan = window.FT710_FT8?.getTxPlan?.() || {};
+          const message = String(plan.message || "").trim();
+          const revision = this.txPlanRevision;
+          if (!message) throw new Error("selected QSO has no transmit message");
+          try {
+            this.renderAutoTxState(`preparing r${revision} · ${message}`);
+            if (!(await this.prepareAutoTxWaveform(message, revision)) || !this.preparedWaveformMatches(message)) {
+              throw new Error(`FT8 encoder did not produce the expected 48 kHz buffer for ${message}`);
+            }
+            const waveformId = await this.ensureAutoTxWaveformStaged(message, revision, { requireEnabled: false });
+            if (!this.txPlanStillCurrent(message, revision)) throw this.stalePlanError(message, revision);
+            const stagedOk = await this.verifyAutoTxWaveformStaged(waveformId, this.txStageWaveform.byteLength, 3);
+            // A decode can advance Auto Seq while /ft8/status is in flight.
+            // Re-check after the final READY verification as well, otherwise
+            // an obsolete waveform can win the enable race by a few ms.
+            if (!this.txPlanStillCurrent(message, revision)) throw this.stalePlanError(message, revision);
+            if (!stagedOk) {
+              this.invalidateStagedWaveform();
+              throw new Error("ESP32 did not confirm the staged FT8 waveform as READY");
+            }
+            stable = { message, revision, waveformId };
+          } catch (error) {
+            if (error?.code === "FT8_STALE_PLAN") continue;
+            throw error;
+          }
+        }
+        if (!stable) throw new Error("QSO changed repeatedly while arming; click the latest decode again");
+        if (!this.txPlanStillCurrent(stable.message, stable.revision)) throw this.stalePlanError(stable.message, stable.revision);
+
+        this.autoTxEnabled = true;
+        this.autoTxRepeatCount = 0;
+        this.autoTxLastMessage = stable.message;
+        this.autoTxTargetSlotIndex = null;
+        id("ft8-tx-progress").textContent = `AUTO TX ready · ${stable.message} · waveform ${stable.waveformId} · waiting ${this.txSlotParity ? "ODD" : "EVEN"} slot`;
+        toast("FT8 automatic TX armed");
       } catch (error) {
-        toast(`FT8 TX not armed: ${error?.message || error}`, true);
-        return;
+        if (error?.code !== "FT8_STALE_PLAN") toast(`FT8 TX not armed: ${error?.message || error}`, true);
+      } finally {
+        this.autoTxPreparing = false;
+        this.renderAutoTxState();
       }
-      this.autoTxEnabled = true;
-      this.autoTxRepeatCount = 0;
-      this.autoTxLastMessage = this.txPlanMessage;
-      this.autoTxTargetSlotIndex = null;
-      this.renderAutoTxState();
-      id("ft8-tx-progress").textContent = `AUTO TX enabled · waiting ${this.txSlotParity ? "ODD" : "EVEN"} slot`;
-      toast("FT8 automatic TX enabled");
     },
 
     async haltAutoTx(reason = "operator halt", fromBackend = false) {
       if (this.autoTxHaltPromise) return this.autoTxHaltPromise;
       this.autoTxHaltPromise = (async () => {
         this.autoTxEnabled = false;
+        this.autoTxPreparing = false;
         this.autoTxArming = false;
         this.autoTxArmingSinceMs = 0;
         this.txAbortRequested = true;
@@ -1478,8 +1592,8 @@
       const message = String(expectedMessage || plan.message || "").trim();
       if (!message || !this.txLevelTuned) return false;
       if (!this.txPlanStillCurrent(message, revision)) throw this.stalePlanError(message, revision);
-      if (this.txStageWaveform instanceof Int16Array && this.txStageWaveform.length === 606720 && String(this.txWaveformMeta?.message || "").trim() === message && Number(this.txWaveformMeta?.levelDbfs) === Number(this.txLevelDbfs)) return true;
-      const key = `${message}|${Number(this.txLevelDbfs)}`;
+      if (this.preparedWaveformMatches(message)) return true;
+      const key = `${revision}|${message}|${Number(this.txLevelDbfs)}`;
       if (this.autoTxPreparePromise) {
         if (this.autoTxPreparePromiseKey === key) {
           const ready = await this.autoTxPreparePromise;
@@ -1492,9 +1606,9 @@
       }
       this.autoTxPreparePromiseKey = key;
       this.autoTxPreparePromise = (async () => {
-        await this.generateTxWaveform(message);
+        await this.generateTxWaveform(message, revision);
         if (!this.txPlanStillCurrent(message, revision)) throw this.stalePlanError(message, revision);
-        return this.txStageWaveform instanceof Int16Array && this.txStageWaveform.length === 606720 && String(this.txWaveformMeta?.message || "").trim() === message;
+        return this.preparedWaveformMatches(message);
       })().finally(() => { this.autoTxPreparePromise = null; this.autoTxPreparePromiseKey = ""; });
       return this.autoTxPreparePromise;
     },
@@ -1536,7 +1650,7 @@
     },
 
     async autoTxSchedulerTick() {
-      if (!this.autoTxEnabled || this.autoTxSessionActive || this.tuneRunning || this.txStreaming) return;
+      if (!this.autoTxEnabled || this.autoTxPreparing || this.autoTxSessionActive || this.tuneRunning || this.txStreaming) return;
       // A stale abort latch can survive an audio teardown while the operator
       // has already re-enabled automatic TX.  Once no TX is active/arming,
       // clear it automatically instead of requiring Halt -> Enable.
@@ -1772,6 +1886,14 @@
         const reason = error?.message || String(error);
         if (error?.code === "FT8_STALE_PLAN") {
           id("ft8-tx-progress") && (id("ft8-tx-progress").textContent = `stale armed TX cancelled · waiting correct message`);
+        } else if (this.autoTxEnabled && this.isRecoverableAutoTxError(error)) {
+          // A missed timing window, lost staged buffer or WS reconnect before
+          // PTT is recoverable.  Skip this slot, keep the QSO armed and let the
+          // scheduler regenerate/re-stage for the next valid TX opportunity.
+          this.autoTxLastSlotIndex = slotIndex;
+          if (/waveform|websocket/i.test(reason)) this.invalidateStagedWaveform();
+          id("ft8-tx-progress") && (id("ft8-tx-progress").textContent = `AUTO TX recovery · ${reason} · retrying next ${this.txSlotParity ? "ODD" : "EVEN"} slot`);
+          this.renderAutoTxState("recovering · next slot");
         } else {
           if (this.autoTxEnabled) toast(`FT8 TX stopped: ${reason}`, true);
           await this.haltAutoTx(reason);
