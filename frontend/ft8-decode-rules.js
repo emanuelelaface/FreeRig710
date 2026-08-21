@@ -133,7 +133,7 @@
     return true;
   }
 
-  function cqOnlyException(e, f) {
+  function interestException(e, f) {
     return Boolean(
       (f.anyMsgNewContinent && e.newContinent) ||
       (f.anyMsgNewCountry && e.newCountry) ||
@@ -152,19 +152,30 @@
     // to this station it must remain visible even when SNR/DF/worked/geography
     // filters would otherwise hide it. This is essential for an active QSO.
     if (f.showMyCall && e.directToMe) return true;
-    // CQ-only can be widened with explicit interest exceptions. These bypass
-    // only the message-type gate; all the other operator filters still apply.
-    if (f.cqOnly && p.kind!=="CQ" && !cqOnlyException(e,f)) return false;
+
+    const inc=tokens(f.includeCalls), exc=tokens(f.excludeCalls), ign=tokens(f.ignoreCalls);
+
+    // DF limits and explicit operator block-lists are hard constraints. Keep
+    // them ahead of the interest-union path so "Any msg · new …" cannot pull
+    // in a deliberately ignored/excluded call or traffic outside the RX slice.
+    if (Number.isFinite(Number(f.dfMin)) && Number(row?.df) < Number(f.dfMin)) return false;
+    if (Number.isFinite(Number(f.dfMax)) && Number(row?.df) > Number(f.dfMax)) return false;
+    if (exc.length && prefixMatch(e.call,exc)) return false;
+    if (ign.length && prefixMatch(e.call,ign)) return false;
+
+    // "Any msg · new …" is a true interest union. If a decode matches one of
+    // the selected new/worked-interest conditions it remains visible regardless
+    // of CQ-only, SNR, message-class, include/geography/worked filters. This is
+    // intentionally stronger than a CQ-only exception: a decoded rare/new DXCC
+    // at -35 dB is still useful and should not disappear behind Min SNR.
+    if (interestException(e,f)) return true;
+
+    if (f.cqOnly && p.kind!=="CQ") return false;
     if (!f.showStandard && e.standard) return false;
     if (!f.showFree && e.freeText) return false;
     if (!f.showBeacon && e.beacon) return false;
     if (Number.isFinite(Number(f.minSnr)) && Number(row?.snr) < Number(f.minSnr)) return false;
-    if (Number.isFinite(Number(f.dfMin)) && Number(row?.df) < Number(f.dfMin)) return false;
-    if (Number.isFinite(Number(f.dfMax)) && Number(row?.df) > Number(f.dfMax)) return false;
-    const inc=tokens(f.includeCalls), exc=tokens(f.excludeCalls), ign=tokens(f.ignoreCalls);
     if (inc.length && !prefixMatch(e.call,inc)) return false;
-    if (exc.length && prefixMatch(e.call,exc)) return false;
-    if (ign.length && prefixMatch(e.call,ign)) return false;
     if (upper(f.continent) && e.continent!==upper(f.continent)) return false;
     if (upper(f.country) && !upper(e.country).includes(upper(f.country))) return false;
     if (upper(f.region) && !upper(e.state).includes(upper(f.region))) return false;

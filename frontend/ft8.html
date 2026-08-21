@@ -100,7 +100,7 @@
           <label><span>Worked mode</span><input id="ft8-filter-worked-mode" type="checkbox"></label><label><span>Worked today</span><input id="ft8-filter-worked-today" type="checkbox"></label><label><span>Worked yesterday</span><input id="ft8-filter-worked-yesterday" type="checkbox"></label><label><span>New DXCC</span><input id="ft8-filter-new-dxcc" type="checkbox"></label><label><span>New DXCC band</span><input id="ft8-filter-new-dxcc-band" type="checkbox"></label><label><span>New band</span><input id="ft8-filter-new-band" type="checkbox"></label>
           <label><span>New mode</span><input id="ft8-filter-new-mode" type="checkbox"></label><label><span>New grid</span><input id="ft8-filter-new-grid" type="checkbox"></label><label><span>Distance min km</span><input id="ft8-filter-distance-min" type="number" min="0" step="100" placeholder="0"></label><label><span>Distance max km</span><input id="ft8-filter-distance-max" type="number" min="0" step="100" placeholder="any"></label>
         </div>
-        <p class="help">With <strong>CQ only</strong>, the “Any msg” options also admit non-CQ traffic from stations matching that new/worked condition. Other filters still apply. <strong>My Call always</strong> is absolute and keeps direct replies visible even below Min SNR or outside the other filters.</p>
+        <p class="help">The <strong>Any msg · new …</strong> options are priority-interest unions: matching stations remain visible even when CQ only, Min SNR, message-class, geography or worked filters would normally hide them. DF min/max plus explicit Exclude/Ignore lists remain hard limits. <strong>My Call always</strong> is absolute and keeps direct replies visible regardless of every RX filter.</p>
       </details>
       <details class="ft8-filter-panel ft8-settings-panel ft8-colors-panel">
         <summary><strong>Colors</strong><span class="ft8-summary-actions"><span class="ft8-summary-hint">priority rules</span><span class="ft8-collapse-button" aria-hidden="true">▾</span></span></summary>
@@ -222,7 +222,7 @@
   <script src="ft8-geo.js?v=1.0"></script>
   <script src="ft8-decode-rules.js?v=1.0-filters2"></script>
   <script src="ft8-qso-machine.js?v=1.0-ft8r2"></script>
-  <script src="ft8.js?v=1.0-cty1-ft8r2-ui2-filters2"></script>
+  <script src="ft8.js?v=1.0-cty1-ft8r2-ui2-filters3"></script>
   <script src="ft8-page.js?v=1.0-ft8r2"></script>
 </body>
 </html>
