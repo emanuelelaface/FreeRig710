@@ -543,7 +543,7 @@
     submitDecodeSlot(slotIndex, count, early = false) {
       const minimum = early ? Math.round(TARGET_RATE * 13.0) : MIN_DECODE_SAMPLES;
       if (count < minimum) {
-        if (!early) { this.slotsRejected += 1; id("ft8-decode-state").textContent = `slot incomplete · ${(count / TARGET_RATE).toFixed(2)} s`; }
+        if (!early) { this.slotsRejected += 1; id("ft8-decode-state").textContent = "incomplete"; }
         return false;
       }
       if (!this.worker) this.ensureWorker();

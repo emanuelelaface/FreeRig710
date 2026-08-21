@@ -56,10 +56,7 @@ h2 { margin: 0 0 16px; font-size: 1.15rem; }
   overflow: hidden;
   box-shadow: 0 18px 58px rgba(0,0,0,.52);
 }
-.video-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-.video-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-.video-setting { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: .7rem; font-weight: 800; letter-spacing: .06em; }
-.video-setting input[type="number"] { width: 3.7rem; min-width: 0; padding: .28rem .35rem; border-radius: 7px; text-align: center; font-size: .78rem; }
+.video-header { display: flex; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font-weight: 750; }
 .compact-button { padding: .3rem .65rem; border-radius: 8px; font-size: .78rem; }
 .video-frame { width: 100%; max-width: 800px; aspect-ratio: 5 / 3; background: #000; display: grid; place-items: center; overflow: hidden; }
 .video-frame img { display: block; width: 100%; max-width: 800px; height: auto; max-height: 480px; aspect-ratio: 5 / 3; object-fit: contain; }
@@ -136,8 +133,6 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
 }
 
 @media (max-width: 620px) {
-  .video-header { align-items: flex-start; flex-direction: column; }
-  .video-actions { width: 100%; justify-content: flex-start; }
   .vfo-row { grid-template-columns: 1fr 1fr; }
   .vfo-row > div, .vfo-row input, .vfo-row .vfo-select { grid-column: 1 / -1; }
   .three-buttons, .tuner-buttons { grid-template-columns: 1fr; }
@@ -412,6 +407,7 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
   }
 
   .primary-column {
+    display: block;
     position: sticky;
     top: 12px;
     align-self: start;
@@ -801,3 +797,122 @@ body.panel-reorder-active {
 a.station-button { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
 .station-button.ft8-launch-button { border-color: #36789e; color: #c9efff; background: rgba(66,184,255,.09); }
 .station-button.ft8-launch-button:hover { border-color: var(--accent); background: rgba(66,184,255,.16); }
+
+
+/* Main display states and compact mobile workstation layout. */
+.video-power-message {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: #000;
+  color: #eef5fb;
+  font-size: clamp(1.15rem, 4vw, 1.55rem);
+  font-weight: 800;
+  letter-spacing: .01em;
+  text-align: center;
+}
+.video-power-message[hidden] { display: none; }
+
+@media (max-width: 959px) {
+  .shell {
+    width: min(100% - 16px, 800px);
+    padding: 10px 0 32px;
+  }
+
+  .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 5px 10px;
+    margin-bottom: 9px;
+  }
+
+  .station-title {
+    min-width: 0;
+    flex: none;
+  }
+
+  .station-title h1 {
+    font-size: clamp(1.45rem, 6.4vw, 2rem);
+    line-height: 1.05;
+  }
+
+  .eyebrow {
+    margin-bottom: 1px;
+    font-size: .58rem;
+    letter-spacing: .14em;
+  }
+
+  .topbar-controls {
+    width: auto;
+    max-width: none;
+    flex: none;
+    align-items: flex-end;
+    gap: 4px;
+  }
+
+  .station-actions {
+    width: auto;
+    display: flex;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  .station-button {
+    width: auto;
+    min-width: 68px;
+    min-height: 36px;
+    padding: .42rem .68rem;
+    font-size: .76rem;
+  }
+
+  .connection {
+    justify-content: flex-end;
+    max-width: 190px;
+    font-size: .72rem;
+    line-height: 1.15;
+    text-align: right;
+  }
+
+  .connection .dot {
+    width: 8px;
+    height: 8px;
+  }
+
+  /* Removing the primary-column box lets the display remain sticky for the
+     whole workspace instead of stopping when the frequency card ends. */
+  .primary-column { display: contents; }
+
+  .video-card {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    width: 100%;
+    margin-inline: 0;
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.58);
+  }
+
+  .video-header {
+    padding: 6px 10px;
+    font-size: .82rem;
+    line-height: 1.2;
+  }
+
+  .frequency-card { margin-top: 10px; }
+  .control-column .grid { margin-top: 10px; }
+}
+
+@media (max-width: 420px) {
+  .shell { width: calc(100% - 10px); padding-top: 6px; }
+  .topbar { gap: 4px 7px; margin-bottom: 6px; }
+  .station-title h1 { font-size: 1.35rem; }
+  .eyebrow { font-size: .52rem; }
+  .station-button { min-width: 60px; min-height: 34px; padding-inline: .55rem; font-size: .72rem; }
+  .connection { max-width: 150px; font-size: .66rem; }
+  .video-header { padding: 5px 8px; font-size: .78rem; }
+}

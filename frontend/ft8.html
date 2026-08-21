@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FreeRig710 · FT8</title>
   <link rel="stylesheet" href="styles.css?v=1.0">
-  <link rel="stylesheet" href="ft8-page.css?v=1.0">
+  <link rel="stylesheet" href="ft8-page.css?v=1.0-ft8ui2">
 </head>
 <body class="ft8-page-body">
   <main class="ft8-page-shell">
@@ -81,10 +81,10 @@
         <div class="ft8-readout-box"><span>RX Freq</span><strong id="ft8-rx-dial">--.---.---</strong></div>
         <div class="ft8-readout-box"><span>TX Freq</span><strong id="ft8-tx-rf">--.---.---</strong></div>
         <div class="ft8-readout-box"><span>RX Level</span><strong id="ft8-audio-level">-- dBFS</strong></div>
-        <label class="ft8-switch-control"><span>Monitor</span><span class="ft8-switch-line"><input id="ft8-enabled" type="checkbox"><strong>RX</strong></span></label>
-        <label class="ft8-switch-control"><span>Auto RF Gain</span><span class="ft8-switch-line"><input id="ft8-auto-rf" type="checkbox" checked><strong id="ft8-rf-gain">-- / 255</strong></span></label>
-        <label class="ft8-rf-target-control"><span>RX Target</span><div class="ft8-inline-input"><input id="ft8-rf-target" type="number" min="-70" max="-30" step="1" value="-50"><span>dBFS</span></div></label>
-        <label class="ft8-rf-manual-control"><span>RX RF Gain</span><div class="ft8-inline-input"><input id="ft8-rf-gain-slider" type="range" min="0" max="255" step="1" value="180" disabled><strong id="ft8-rf-gain-slider-label">--</strong></div></label>
+        <label class="ft8-switch-control ft8-readout-box ft8-control-cell"><span>Monitor</span><span class="ft8-switch-line"><input id="ft8-enabled" type="checkbox"><strong>RX</strong></span></label>
+        <label class="ft8-switch-control ft8-readout-box ft8-control-cell"><span>Auto RF Gain</span><span class="ft8-switch-line"><input id="ft8-auto-rf" type="checkbox" checked><strong id="ft8-rf-gain">-- / 255</strong></span></label>
+        <label class="ft8-rf-target-control ft8-readout-box ft8-control-cell"><span>RX Target</span><div class="ft8-inline-input"><input id="ft8-rf-target" type="number" min="-70" max="-30" step="1" value="-50"><span>dBFS</span></div></label>
+        <label class="ft8-rf-manual-control ft8-readout-box ft8-control-cell"><span>RX RF Gain</span><div class="ft8-inline-input"><input id="ft8-rf-gain-slider" type="range" min="0" max="255" step="1" value="180" disabled><strong id="ft8-rf-gain-slider-label">--</strong></div></label>
       </div>
       <p id="ft8-radio-config-state" class="help ft8-operating-note">Select a band to configure DATA-U, split A→B and FT8 RX audio.</p>
     </section>
@@ -220,7 +220,7 @@
   <script src="ft8-geo.js?v=1.0"></script>
   <script src="ft8-decode-rules.js?v=1.0-cty1"></script>
   <script src="ft8-qso-machine.js?v=1.0-ft8r2"></script>
-  <script src="ft8.js?v=1.0-cty1-ft8r2"></script>
+  <script src="ft8.js?v=1.0-cty1-ft8r2-ui2"></script>
   <script src="ft8-page.js?v=1.0-ft8r2"></script>
 </body>
 </html>

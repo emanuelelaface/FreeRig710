@@ -927,147 +927,50 @@ function initClickTuning() {
 
 function initVideo() {
   const image = byId("radio-video");
-  const status = byId("video-status");
-  const toggle = byId("video-toggle");
-  const fpsInput = byId("video-fps");
-  const qualityInput = byId("video-quality");
-  let manuallyPaused = false;
+  const message = byId("video-power-message");
+  if (!image || !message) return;
+
   let retryTimer = null;
   let firstFrameTimer = null;
   let hiddenStopTimer = null;
-  let settingsTimer = null;
   let radioPower = lastState?.radio_power || null;
   let connectionGeneration = 0;
   let streamLive = false;
-  let settingsSaving = false;
   let hiddenSinceMs = 0;
-  let queuedSettings = null;
-  let inFlightSettings = null;
-  let currentSettings = {
-    fps: Number(fpsInput.value),
-    jpeg_quality: Number(qualityInput.value),
-  };
 
-  // Keep a live MJPEG connection across ordinary tab/window switches. Browsers
-  // usually resume the multipart image immediately, which avoids a full HTTP
-  // teardown/reconnect every time the operator visits the FT8 window. If the
-  // main page remains hidden for a while, release the stream to avoid wasting
-  // JPEG/HTTP work in the background.
+  // Keep the MJPEG connection alive across short tab switches, but release it
+  // after a longer hidden interval so the ESP32 is not encoding JPEG forever
+  // for a page that is not being viewed.
   const VIDEO_HIDDEN_GRACE_MS = 20000;
   const VIDEO_FIRST_FRAME_TIMEOUT_MS = 1800;
   const VIDEO_ERROR_RETRY_MS = 400;
   const VIDEO_STALL_RETRY_MS = 250;
 
-  const settingsSummary = () => `${currentSettings.fps} FPS · Q${currentSettings.jpeg_quality}`;
-  const sameVideoSettings = (left, right) => Boolean(
-    left && right &&
-    Number(left.fps) === Number(right.fps) &&
-    Number(left.jpeg_quality) === Number(right.jpeg_quality)
-  );
+  const setMessage = (text = "") => {
+    if (!text) {
+      message.hidden = true;
+      message.textContent = "";
+      return;
+    }
+    message.textContent = text;
+    message.hidden = false;
+  };
 
-  const refreshStatus = (override = null) => {
+  const refreshVisualState = (override = null) => {
     if (override) {
-      status.textContent = override;
+      setMessage(override);
     } else if (radioPower === "OFF") {
-      status.textContent = `RADIO OFF · ${settingsSummary()}`;
+      setMessage("Radio powered off");
     } else if (radioPower === "STARTING") {
-      status.textContent = `WAITING RADIO · ${settingsSummary()}`;
-    } else if (manuallyPaused) {
-      status.textContent = `PAUSED · ${settingsSummary()}`;
-    } else if (document.hidden) {
-      status.textContent = `${streamLive ? "HIDDEN · STREAM HELD" : "PAUSED · HIDDEN"} · ${settingsSummary()}`;
+      setMessage("Radio starting…");
     } else if (streamLive) {
-      status.textContent = `LIVE · ${settingsSummary()}`;
+      setMessage();
     } else {
-      status.textContent = `CONNECTING · ${settingsSummary()}`;
+      // A black frame while the first MJPEG image is arriving is less noisy
+      // than showing transport/settings status that the operator cannot edit.
+      setMessage();
     }
   };
-
-  const applyVideoSettings = (settings) => {
-    if (!settings) return;
-    const fps = Number(settings.fps);
-    const jpegQuality = Number(settings.jpeg_quality);
-    if (Number.isFinite(fps)) {
-      currentSettings.fps = fps;
-      if (document.activeElement !== fpsInput) fpsInput.value = String(fps);
-    }
-    if (Number.isFinite(jpegQuality)) {
-      currentSettings.jpeg_quality = jpegQuality;
-      if (document.activeElement !== qualityInput) qualityInput.value = String(jpegQuality);
-    }
-    refreshStatus();
-  };
-
-  const readVideoSettings = () => {
-    if (!fpsInput.validity.valid || !qualityInput.validity.valid) return null;
-    const fps = Number(fpsInput.value);
-    const jpegQuality = Number(qualityInput.value);
-    if (!Number.isInteger(fps) || fps < 1 || fps > 30) return null;
-    if (!Number.isInteger(jpegQuality) || jpegQuality < 20 || jpegQuality > 95) return null;
-    return { fps, jpeg_quality: jpegQuality };
-  };
-
-  const flushVideoSettings = async () => {
-    if (settingsSaving || !queuedSettings) return;
-    const requested = queuedSettings;
-    queuedSettings = null;
-    settingsSaving = true;
-    inFlightSettings = requested;
-    fpsInput.disabled = true;
-    qualityInput.disabled = true;
-    refreshStatus(`APPLYING · ${requested.fps} FPS · Q${requested.jpeg_quality}`);
-    try {
-      const result = await post("/api/v1/video/settings", requested);
-      applyVideoSettings(result.settings);
-    } catch (error) {
-      showToast(error.message, true);
-      try {
-        const result = await api("/api/v1/video/settings");
-        applyVideoSettings(result.settings);
-      } catch (_) {
-        refreshStatus("VIDEO SETTINGS UNAVAILABLE");
-      }
-    } finally {
-      settingsSaving = false;
-      inFlightSettings = null;
-      fpsInput.disabled = false;
-      qualityInput.disabled = false;
-      if (queuedSettings) void flushVideoSettings();
-      else refreshStatus();
-    }
-  };
-
-  const queueVideoSettings = (delay = 400) => {
-    const values = readVideoSettings();
-    if (!values) return;
-    if (sameVideoSettings(values, currentSettings) && !settingsSaving) return;
-    if (sameVideoSettings(values, inFlightSettings)) return;
-    queuedSettings = values;
-    clearTimeout(settingsTimer);
-    settingsTimer = setTimeout(() => {
-      settingsTimer = null;
-      void flushVideoSettings();
-    }, delay);
-  };
-
-  const commitVideoSettings = () => {
-    queueVideoSettings(0);
-    clearTimeout(settingsTimer);
-    settingsTimer = null;
-    void flushVideoSettings();
-  };
-
-  for (const input of [fpsInput, qualityInput]) {
-    input.addEventListener("input", () => queueVideoSettings(450));
-    input.addEventListener("change", commitVideoSettings);
-    input.addEventListener("blur", commitVideoSettings);
-    input.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter") return;
-      event.preventDefault();
-      commitVideoSettings();
-      input.blur();
-    });
-  }
 
   const stop = () => {
     connectionGeneration += 1;
@@ -1081,60 +984,55 @@ function initVideo() {
     image.onload = null;
     image.onerror = null;
     image.removeAttribute("src");
-    refreshStatus();
+    refreshVisualState();
   };
 
   const load = () => {
-    if (manuallyPaused || document.hidden || radioPower === "OFF" || radioPower === "STARTING") {
-      refreshStatus();
+    if (document.hidden || radioPower === "OFF" || radioPower === "STARTING") {
+      refreshVisualState();
       return;
     }
+
     const generation = ++connectionGeneration;
     clearTimeout(retryTimer);
     clearTimeout(firstFrameTimer);
     streamLive = false;
-    refreshStatus();
+    refreshVisualState();
 
     image.onload = () => {
       if (generation !== connectionGeneration) return;
       clearTimeout(firstFrameTimer);
       firstFrameTimer = null;
       streamLive = true;
-      refreshStatus();
+      refreshVisualState();
     };
+
     image.onerror = () => {
-      if (generation !== connectionGeneration || manuallyPaused || document.hidden ||
+      if (generation !== connectionGeneration || document.hidden ||
           radioPower === "OFF" || radioPower === "STARTING") return;
       clearTimeout(firstFrameTimer);
       firstFrameTimer = null;
       streamLive = false;
-      refreshStatus("VIDEO UNAVAILABLE");
+      refreshVisualState("Video unavailable");
       retryTimer = setTimeout(load, VIDEO_ERROR_RETRY_MS);
     };
 
     image.src = apiUrl(`/video.mjpeg?ts=${Date.now()}`);
 
-    // A stalled multipart MJPEG HTTP request may never raise <img>.onerror.
-    // If no first decoded frame arrives, actively tear down this generation so
-    // the backend can take over/close the stale socket and create a fresh one.
+    // A stalled multipart request does not always fire <img>.onerror. Tear it
+    // down quickly and make a fresh request if the first decoded frame never
+    // arrives.
     firstFrameTimer = setTimeout(() => {
-      if (generation !== connectionGeneration || streamLive || manuallyPaused || document.hidden ||
+      if (generation !== connectionGeneration || streamLive || document.hidden ||
           radioPower === "OFF" || radioPower === "STARTING") return;
       connectionGeneration += 1;
       image.onload = null;
       image.onerror = null;
       image.removeAttribute("src");
-      refreshStatus("VIDEO RETRY");
+      refreshVisualState("Reconnecting radio display…");
       retryTimer = setTimeout(load, VIDEO_STALL_RETRY_MS);
     }, VIDEO_FIRST_FRAME_TIMEOUT_MS);
   };
-
-  toggle.addEventListener("click", () => {
-    manuallyPaused = !manuallyPaused;
-    toggle.textContent = manuallyPaused ? "Resume" : "Pause";
-    if (manuallyPaused) stop();
-    else load();
-  });
 
   document.addEventListener("visibilitychange", () => {
     clearTimeout(hiddenStopTimer);
@@ -1142,42 +1040,30 @@ function initVideo() {
 
     if (document.hidden) {
       hiddenSinceMs = Date.now();
-      // Do not tear down MJPEG for a normal tab/window switch. Keeping the
-      // socket alive lets the existing <img> resume immediately when the user
-      // comes back. Release it only after a longer background interval.
-      if (!manuallyPaused && image.getAttribute("src")) {
+      if (image.getAttribute("src")) {
         hiddenStopTimer = setTimeout(() => {
           hiddenStopTimer = null;
           if (document.hidden) stop();
         }, VIDEO_HIDDEN_GRACE_MS);
       }
-      refreshStatus();
       return;
     }
 
     const hiddenForMs = hiddenSinceMs ? Math.max(0, Date.now() - hiddenSinceMs) : 0;
     hiddenSinceMs = 0;
-    if (manuallyPaused || radioPower === "OFF" || radioPower === "STARTING") {
-      refreshStatus();
+    if (radioPower === "OFF" || radioPower === "STARTING") {
+      refreshVisualState();
       return;
     }
 
     if (!image.getAttribute("src") || !streamLive) {
-      // The grace timer/browser released the stream, or the page was hidden
-      // before the first frame arrived. Reconnect immediately; load() now has
-      // a short first-frame watchdog instead of the old six-second wait.
       stop();
       retryTimer = setTimeout(load, 50);
       return;
     }
 
-    // The stream was already live before/during the background interval. Leave
-    // src untouched: this is the fast path and normally makes video visible
-    // again immediately without a new HTTP session.
-    refreshStatus();
+    refreshVisualState();
     if (hiddenForMs > VIDEO_HIDDEN_GRACE_MS) {
-      // Defensive only: normally the grace timer has already stopped it.
-      // If timer throttling prevented that, force one clean reconnect.
       stop();
       retryTimer = setTimeout(load, 50);
     }
@@ -1193,29 +1079,24 @@ function initVideo() {
       return;
     }
 
-    if (nextPower === "ON" && previousPower !== "ON" && !manuallyPaused && !document.hidden) {
-      // Force a brand-new MJPEG HTTP request after the radio/DVI source returns.
+    if (nextPower === "ON" && previousPower !== "ON" && !document.hidden) {
       stop();
       retryTimer = setTimeout(load, 500);
     } else {
-      refreshStatus();
+      refreshVisualState();
     }
   });
 
   window.addEventListener("pagehide", stop);
   window.addEventListener("pageshow", (event) => {
-    if (manuallyPaused || document.hidden || radioPower === "OFF" || radioPower === "STARTING") return;
-    // A page restored from the back/forward cache can retain DOM state while
-    // its previous network stream is gone. Force a fresh stream in that case.
+    if (document.hidden || radioPower === "OFF" || radioPower === "STARTING") return;
     if (event.persisted || !image.getAttribute("src")) {
       stop();
       retryTimer = setTimeout(load, 50);
     }
   });
 
-  api("/api/v1/video/settings")
-    .then((result) => applyVideoSettings(result.settings))
-    .catch((error) => showToast(`Video settings: ${error.message}`, true));
+  refreshVisualState();
   load();
 }
 

@@ -368,3 +368,98 @@
 .ft8-wsjtx-activity .ft8-page-table td:nth-child(6){min-width:86px}
 .ft8-wsjtx-activity .ft8-page-table td.ft8-geo-cell{min-width:174px;max-width:235px}
 .ft8-row-local-tx td:nth-child(3){color:#fff2b8}
+
+
+/* Release 1.0 UI polish — unified receiver readout/control cells + stable decoder strip. */
+.ft8-wsjtx-readouts{
+  align-items:stretch;
+}
+.ft8-wsjtx-readouts .ft8-readout-box,
+.ft8-wsjtx-readouts label.ft8-control-cell{
+  box-sizing:border-box;
+  height:48px;
+  min-height:48px;
+  padding:5px 7px;
+  border:1px solid var(--line);
+  border-radius:7px;
+  background:var(--panel-2);
+  overflow:hidden;
+}
+.ft8-wsjtx-readouts label.ft8-control-cell{
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-start;
+  gap:2px;
+}
+.ft8-wsjtx-readouts .ft8-readout-box>span,
+.ft8-wsjtx-readouts label.ft8-control-cell>span{
+  color:var(--muted);
+  font-size:var(--ft8-font-micro);
+  font-weight:850;
+  line-height:1;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+.ft8-wsjtx-readouts .ft8-readout-box>strong,
+.ft8-wsjtx-readouts label.ft8-control-cell strong,
+.ft8-wsjtx-readouts label.ft8-control-cell .ft8-inline-input>span,
+.ft8-wsjtx-readouts label.ft8-control-cell input[type="number"]{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:var(--ft8-font-control);
+  font-weight:850;
+  line-height:1.05;
+  font-variant-numeric:tabular-nums;
+}
+.ft8-wsjtx-readouts .ft8-readout-box>strong{
+  margin-top:5px;
+}
+.ft8-wsjtx-readouts label.ft8-control-cell .ft8-switch-line{
+  flex:1;
+  min-height:0;
+  margin:0;
+  padding:0;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  align-items:center;
+}
+.ft8-wsjtx-readouts label.ft8-control-cell .ft8-switch-line input{
+  flex:0 0 auto;
+}
+.ft8-wsjtx-readouts label.ft8-control-cell .ft8-inline-input{
+  flex:1;
+  min-height:0;
+  margin:0;
+  align-items:center;
+}
+.ft8-wsjtx-readouts label.ft8-control-cell input[type="number"]{
+  min-height:24px;
+  height:24px;
+  padding:2px 5px;
+}
+.ft8-wsjtx-readouts label.ft8-control-cell input[type="range"]{
+  min-height:18px;
+  height:18px;
+}
+.ft8-wsjtx-readouts .ft8-rf-manual-control .ft8-inline-input{
+  grid-template-columns:minmax(70px,1fr) minmax(30px,auto);
+}
+
+/* Keep the slot telemetry cards geometrically stable, especially on phones. */
+.ft8-wsjtx-slot-strip>div{
+  box-sizing:border-box;
+  height:34px;
+  min-height:34px;
+  overflow:hidden;
+}
+.ft8-wsjtx-slot-strip strong{
+  min-width:0;
+  margin-top:2px;
+  line-height:1.05;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.ft8-wsjtx-readouts label.ft8-control-cell strong{
+  margin:0;
+}

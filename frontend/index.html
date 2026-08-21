@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FreeRig710 · Yaesu FT-710</title>
-  <link rel="stylesheet" href="styles.css?v=1.0-audio">
+  <link rel="stylesheet" href="styles.css?v=1.0-mobile1">
 </head>
 <body>
   <main class="shell">
@@ -30,21 +30,10 @@
         <section class="video-card card">
       <div class="video-header">
         <span>Radio display</span>
-        <div class="video-actions">
-          <label class="video-setting" for="video-fps">
-            <span>FPS</span>
-            <input id="video-fps" type="number" min="1" max="30" step="1" value="8" inputmode="numeric">
-          </label>
-          <label class="video-setting" for="video-quality">
-            <span>JPEG</span>
-            <input id="video-quality" type="number" min="20" max="95" step="1" value="55" inputmode="numeric">
-          </label>
-          <span id="video-status" class="muted">MJPEG</span>
-          <button id="video-toggle" class="compact-button" type="button">Pause</button>
-        </div>
       </div>
       <div id="video-frame" class="video-frame">
-        <img id="radio-video" alt="Live FT-710 display" draggable="false">
+        <img id="radio-video" alt="" aria-label="Live FT-710 display" draggable="false">
+        <div id="video-power-message" class="video-power-message" role="status" aria-live="polite" hidden>Radio powered off</div>
         <div id="click-tune-overlay" class="click-tune-overlay" aria-hidden="true">
           <div id="click-tune-crosshair" class="click-tune-crosshair"></div>
           <output id="click-tune-preview" class="click-tune-preview">--.---.---</output>
@@ -602,6 +591,6 @@
   <script src="config.js?v=1.0"></script>
   <script src="cw.js?v=1.0"></script>
   <script src="sstv.js?v=1.0"></script>
-  <script src="app.js?v=1.0-audio"></script>
+  <script src="app.js?v=1.0-mobile1"></script>
 </body>
 </html>
