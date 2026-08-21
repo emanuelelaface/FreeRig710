@@ -622,6 +622,8 @@
       } catch(_) {}
       const map={
         cqOnly:"ft8-filter-cq",showMyCall:"ft8-filter-mycall",showStandard:"ft8-filter-standard",showFree:"ft8-filter-free",showBeacon:"ft8-filter-beacon",
+        anyMsgNewContinent:"ft8-filter-any-new-continent",anyMsgNewCountry:"ft8-filter-any-new-country",anyMsgNewDxcc:"ft8-filter-any-new-dxcc",anyMsgNewDxccBand:"ft8-filter-any-new-dxcc-band",
+        anyMsgNewCall:"ft8-filter-any-new-call",anyMsgNewBand:"ft8-filter-any-new-band",anyMsgNewMode:"ft8-filter-any-new-mode",anyMsgNewGrid:"ft8-filter-any-new-grid",
         minSnr:"ft8-filter-snr",dfMin:"ft8-filter-df-min",dfMax:"ft8-filter-df-max",includeCalls:"ft8-filter-include",excludeCalls:"ft8-filter-exclude",ignoreCalls:"ft8-filter-ignore",
         continent:"ft8-filter-continent",country:"ft8-filter-country",region:"ft8-filter-region",dxcc:"ft8-filter-dxcc",gridPrefix:"ft8-filter-grid",worked:"ft8-filter-worked",workedBand:"ft8-filter-worked-band",workedMode:"ft8-filter-worked-mode",
         workedToday:"ft8-filter-worked-today",workedYesterday:"ft8-filter-worked-yesterday",newDxcc:"ft8-filter-new-dxcc",newDxccBand:"ft8-filter-new-dxcc-band",newBand:"ft8-filter-new-band",newMode:"ft8-filter-new-mode",newGrid:"ft8-filter-new-grid",

@@ -6,6 +6,8 @@
 })(typeof window !== "undefined" ? window : globalThis, function () {
   const DEFAULT_FILTERS = Object.freeze({
     bypass:false, cqOnly:false, showMyCall:true, showStandard:true, showFree:true, showBeacon:true,
+    anyMsgNewContinent:false, anyMsgNewCountry:false, anyMsgNewDxcc:false, anyMsgNewDxccBand:false,
+    anyMsgNewCall:false, anyMsgNewBand:false, anyMsgNewMode:false, anyMsgNewGrid:false,
     minSnr:-30, dfMin:200, dfMax:3000, includeCalls:"", excludeCalls:"", ignoreCalls:"",
     continent:"", country:"", region:"", dxcc:"", gridPrefix:"", worked:"any", workedBand:false, workedMode:false,
     workedToday:false, workedYesterday:false, newDxcc:false, newDxccBand:false, newBand:false, newMode:false, newGrid:false,
@@ -94,6 +96,7 @@
     const ctyWorked=ctyEntity ? lb?.lookupCtyEntity?.(ctyEntity) : null;
     const dxccWorked=dxcc ? lb?.lookupDxcc?.(dxcc) : ctyWorked;
     const countryWorked=country ? lb?.lookupGeo?.("COUNTRY",country) : null;
+    const continentWorked=continent ? lb?.lookupGeo?.("CONT",continent) : null;
     const dxccBands=(dxccWorked?.bands||[]).map(upper), dxccModes=(dxccWorked?.modes||[]).map(upper);
     const now=context.now instanceof Date ? context.now : new Date();
     const today=ymd(now); const yesterday=ymd(new Date(now.getTime()-86400000));
@@ -109,6 +112,7 @@
       workedBefore:Boolean(worked), workedBand:Boolean(worked && band && bands.includes(band)), workedMode:Boolean(worked && mode && modes.includes(mode)),
       workedToday:Boolean(worked && last===today), workedYesterday:Boolean(worked && last===yesterday),
       newCall:Boolean(call && !worked),
+      newContinent:Boolean(continent && !continentWorked),
       newCountry:Boolean(country && !countryWorked),
       newDxcc:Boolean((dxcc||ctyEntity) && !dxccWorked),
       newDxccBand:Boolean((dxcc||ctyEntity) && band && (!dxccWorked || !dxccBands.includes(band))),
@@ -129,11 +133,30 @@
     return true;
   }
 
+  function cqOnlyException(e, f) {
+    return Boolean(
+      (f.anyMsgNewContinent && e.newContinent) ||
+      (f.anyMsgNewCountry && e.newCountry) ||
+      (f.anyMsgNewDxcc && e.newDxcc) ||
+      (f.anyMsgNewDxccBand && e.newDxccBand) ||
+      (f.anyMsgNewCall && e.newCall) ||
+      (f.anyMsgNewBand && e.newBand) ||
+      (f.anyMsgNewMode && e.newMode) ||
+      (f.anyMsgNewGrid && e.newGrid)
+    );
+  }
+
   function passWithoutBypass(row, filters, context={}) {
     const f={...DEFAULT_FILTERS,...(filters||{})}; const e=enrich(row,context); const p=row?.parsed||{};
-    if (f.cqOnly && p.kind!=="CQ" && !(f.showMyCall && e.directToMe)) return false;
-    if (!f.showStandard && e.standard && !e.directToMe) return false;
-    if (!f.showFree && e.freeText && !e.directToMe) return false;
+    // "My Call always" is intentionally absolute: once a decode is addressed
+    // to this station it must remain visible even when SNR/DF/worked/geography
+    // filters would otherwise hide it. This is essential for an active QSO.
+    if (f.showMyCall && e.directToMe) return true;
+    // CQ-only can be widened with explicit interest exceptions. These bypass
+    // only the message-type gate; all the other operator filters still apply.
+    if (f.cqOnly && p.kind!=="CQ" && !cqOnlyException(e,f)) return false;
+    if (!f.showStandard && e.standard) return false;
+    if (!f.showFree && e.freeText) return false;
     if (!f.showBeacon && e.beacon) return false;
     if (Number.isFinite(Number(f.minSnr)) && Number(row?.snr) < Number(f.minSnr)) return false;
     if (Number.isFinite(Number(f.dfMin)) && Number(row?.df) < Number(f.dfMin)) return false;
