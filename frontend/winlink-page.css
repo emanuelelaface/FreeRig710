@@ -1,0 +1,125 @@
+:root {
+  --bg: #0b1118;
+  --surface: #111a24;
+  --surface2: #0d151e;
+  --border: #243445;
+  --accent: #42b8ff;
+  --accent2: #ffb454;
+  --green: #65d97b;
+  --red: #ff6b6b;
+  --yellow: #ffd166;
+  --fg: #dce7ef;
+  --dim: #8da0af;
+}
+
+body {
+  background: radial-gradient(circle at top, #122131 0, var(--bg) 40%);
+  color: var(--fg);
+}
+
+.header {
+  background: rgba(12, 18, 25, .96);
+  border-bottom-color: rgba(96, 135, 167, .34);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .28);
+}
+
+.hdr-logo {
+  border: 1px solid rgba(66, 184, 255, .28);
+  background: #071018;
+}
+
+.logo {
+  color: #d9f3ff;
+  text-shadow: 0 0 18px rgba(66, 184, 255, .28);
+}
+
+.logo .v {
+  color: var(--accent);
+}
+
+.logo .by {
+  color: var(--dim);
+}
+
+.main-radio-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 5px 11px;
+  border: 1px solid rgba(66, 184, 255, .35);
+  border-radius: 7px;
+  background: rgba(66, 184, 255, .08);
+  color: #c9efff;
+  text-decoration: none;
+  font: 800 12px/1.1 var(--sans);
+}
+
+.main-radio-link:hover {
+  border-color: var(--accent);
+  background: rgba(66, 184, 255, .16);
+}
+
+.radiobar,
+.tabbar {
+  background: rgba(13, 21, 30, .94);
+  border-color: rgba(96, 135, 167, .32);
+}
+
+.card,
+.msg-row,
+.gw-row {
+  border-radius: 8px;
+  border-color: rgba(96, 135, 167, .28);
+  background: rgba(17, 26, 36, .92);
+}
+
+button,
+select,
+input,
+textarea {
+  border-radius: 7px;
+  border-color: rgba(96, 135, 167, .42);
+}
+
+button.primary,
+.gw-conn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #061018;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+.tabbtn.active {
+  color: #d9f3ff;
+  border-bottom-color: var(--accent);
+}
+
+.freq-display {
+  color: #d9f3ff;
+  text-shadow: 0 0 24px rgba(66, 184, 255, .35);
+}
+
+#waterfall {
+  border-color: rgba(66, 184, 255, .22);
+  background: #05090f;
+}
+
+#log {
+  background: #070b10;
+}
+
+.log-ok { color: var(--green); }
+.log-warn { color: var(--yellow); }
+.log-err { color: var(--red); }
+.log-ardop { color: var(--accent); }
+
+@media (max-width: 700px) {
+  .main-radio-link {
+    flex: 1 1 36%;
+    min-width: 110px;
+  }
+}

@@ -41,3 +41,9 @@ The generator uses the GeoNames `cities500`, `admin1CodesASCII` and `countryInfo
 License: <https://creativecommons.org/licenses/by/4.0/>
 
 GeoNames export documentation: <https://download.geonames.org/export/dump/readme.txt>
+
+## ARDOP Winlink by DL2MAN
+
+- Source: https://dl2man.de/ARDOP/ and https://dl2man.de/ARDOP/client/
+- License: MIT, as stated by the upstream client credits.
+- Notes: Browser ARDOP/Winlink client used as the base for `frontend/winlink.html`, adapted to FreeRig710 CAT and browser audio transport.
