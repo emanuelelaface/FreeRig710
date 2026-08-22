@@ -516,10 +516,15 @@
         // Safe RX-only preparation. No PTT/TX command is sent here.
         await post("/api/v1/radio/vfo/split", { mode: "OFF" });
         await post("/api/v1/radio/vfo/select", { vfo: "A" });
-        await post("/api/v1/radio/frequency", { frequency_hz: this.dialHz, vfo: "A" });
+        // Put both VFOs in DATA-U before writing their FT8 dial frequencies.
+        // On the FT-710 a mode transition (notably CW -> DATA-U) can preserve
+        // the tuned carrier by shifting the displayed dial by the CW pitch
+        // (commonly 700 Hz). Writing FA/FB only after both mode changes makes
+        // the very first FT8 band selection deterministic from any radio state.
         await post("/api/v1/radio/mode", { mode: "DATA-U", vfo: "A" });
-        await post("/api/v1/radio/frequency", { frequency_hz: this.txVfoBDialHz(), vfo: "B" });
         await post("/api/v1/radio/mode", { mode: "DATA-U", vfo: "B" });
+        await post("/api/v1/radio/frequency", { frequency_hz: this.dialHz, vfo: "A" });
+        await post("/api/v1/radio/frequency", { frequency_hz: this.txVfoBDialHz(), vfo: "B" });
         await post("/api/v1/radio/vfo/select", { vfo: "A" });
         await post("/api/v1/radio/vfo/split", { mode: "A_TO_B" });
         await post("/api/v1/radio/rf-sql-vr", { value: "RF" });
