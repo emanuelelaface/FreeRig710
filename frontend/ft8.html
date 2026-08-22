@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FreeRig710 · FT8</title>
   <link rel="stylesheet" href="styles.css?v=1.0">
-  <link rel="stylesheet" href="ft8-page.css?v=1.0-ft8ui2">
+  <link rel="stylesheet" href="ft8-page.css?v=1.0-ft8ui3">
 </head>
 <body class="ft8-page-body">
   <main class="ft8-page-shell">
@@ -119,7 +119,7 @@
             <label><span>DX Call</span><input id="ft8-dx-call" type="text" readonly placeholder="click a decode"></label><label><span>DX Grid</span><input id="ft8-dx-grid" type="text" readonly placeholder="--"></label>
             <label><span>Report</span><input id="ft8-tx-report" type="number" min="-30" max="30" step="1" value="0"></label><label><span>RX / TX slot</span><strong id="ft8-qso-slot">--</strong></label>
           </div>
-          <div class="ft8-cq-box"><button id="ft8-call-cq" class="secondary small" type="button">Enable CQ</button><strong id="ft8-cq-preview">CQ MYCALL GRID</strong><button id="ft8-reset-qso" class="secondary small ft8-qso-reset" type="button" disabled>Reset</button></div>
+          <div class="ft8-cq-box"><button id="ft8-call-cq" class="secondary small" type="button">Enable CQ</button><strong id="ft8-cq-preview">CQ MYCALL GRID</strong><label class="ft8-cq-auto"><span>CQ Auto:</span><select id="ft8-cq-auto" aria-label="Automatic CQ responder selection"><option value="none">None</option><option value="first" selected>First</option><option value="max-distance">Max Distance</option></select></label><button id="ft8-reset-qso" class="secondary small ft8-qso-reset" type="button" disabled>Reset</button></div>
         </div>
 
         <div class="ft8-message-sequence" aria-label="QSO message sequence">
@@ -142,7 +142,7 @@
       </div>
 
       <div class="ft8-qso-controls ft8-qso-options">
-        <label><span>Auto Seq</span><input id="ft8-auto-seq" type="checkbox" checked></label><label><span>Call 1st</span><input id="ft8-call-first" type="checkbox" checked></label><label><span>Hold TX frequency</span><input id="ft8-hold-tx" type="checkbox" checked></label><label><span>Retry max</span><input id="ft8-qso-retries" type="number" min="1" max="12" value="6"></label><label><span>Timeout slots</span><input id="ft8-qso-timeout" type="number" min="2" max="30" value="8"></label>
+        <label><span>Auto Seq</span><input id="ft8-auto-seq" type="checkbox" checked></label><label><span>Hold TX frequency</span><input id="ft8-hold-tx" type="checkbox" checked></label><label><span>Retry max</span><input id="ft8-qso-retries" type="number" min="1" max="12" value="6"></label><label><span>Timeout slots</span><input id="ft8-qso-timeout" type="number" min="2" max="30" value="8"></label>
       </div>
       <div id="ft8-qso-stepper" class="ft8-qso-stepper" aria-label="QSO progress" hidden><span data-step="selected">Selected</span><span data-step="calling">Calling</span><span data-step="reports">Reports</span><span data-step="roger">Roger</span><span data-step="73">73</span><span data-step="log">Log</span></div>
       <dl class="status-list ft8-qso-status ft8-qso-status-compact"><div><dt>QSO state</dt><dd id="ft8-qso-state">IDLE</dd></div><div><dt>RX frequency</dt><dd id="ft8-qso-df">--</dd></div><div><dt>Last heard</dt><dd id="ft8-qso-last">--</dd></div><div class="ft8-next-message-row"><dt>Next message</dt><dd id="ft8-qso-next">Select a CQ or decoded station</dd></div></dl>
@@ -220,9 +220,9 @@
   <script src="ft8-cty.js?v=1.0-cty2"></script>
   <script src="ft8-logbook.js?v=1.0-country7"></script>
   <script src="ft8-geo.js?v=1.0"></script>
-  <script src="ft8-decode-rules.js?v=1.0-filters3"></script>
+  <script src="ft8-decode-rules.js?v=1.0-filters4"></script>
   <script src="ft8-qso-machine.js?v=1.0-ft8r2"></script>
-  <script src="ft8.js?v=1.0-cty1-ft8r2-ui2-filters3"></script>
+  <script src="ft8.js?v=1.0-cty1-ft8r2-ui3-filters4-cqauto1"></script>
   <script src="ft8-page.js?v=1.0-ft8r3"></script>
 </body>
 </html>

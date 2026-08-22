@@ -114,6 +114,7 @@
     qsoMachine: null,
     autoSeq: true,
     callFirst: true,
+    cqAuto: "first",
     holdTxFrequency: true,
     slotsSubmitted: 0,
     slotsRejected: 0,
@@ -264,7 +265,9 @@
         const slotStart = slotIndex * SLOT_MS;
         const results = Array.isArray(message.results) ? message.results : [];
         id("ft8-decode-state").textContent = `${results.length} msg · ${Number(message.elapsedMs || 0).toFixed(0)} ms`;
-        for (const result of results) this.addDecode(slotStart, result, slotIndex);
+        const decodedRows=[];
+        for (const result of results) { const row=this.addDecode(slotStart, result, slotIndex); if(row)decodedRows.push(row); }
+        this.advanceQsoFromDecodeBatch(decodedRows);
         this.renderDecodeRows();
         return;
       }
@@ -566,8 +569,10 @@
     initQsoMachine() {
       const api=window.FreeRig710FT8QsoMachine; if(!api)return;
       this.qsoMachine=new api.QsoMachine({maxRetries:6,timeoutSlots:8,completeOnSent73:true,callFirst:true,autoSeq:true});
-      const syncOptions=()=>{this.autoSeq=Boolean(id("ft8-auto-seq")?.checked);this.callFirst=Boolean(id("ft8-call-first")?.checked);this.holdTxFrequency=Boolean(id("ft8-hold-tx")?.checked);this.qsoMachine?.configure({autoSeq:this.autoSeq,callFirst:this.callFirst,maxRetries:Number(id("ft8-qso-retries")?.value)||6,timeoutSlots:Number(id("ft8-qso-timeout")?.value)||8});};
-      for(const domId of ["ft8-auto-seq","ft8-call-first","ft8-hold-tx","ft8-qso-retries","ft8-qso-timeout"]) id(domId)?.addEventListener("change",syncOptions);
+      const cqAutoSelect=id("ft8-cq-auto");
+      try{const saved=String(localStorage.getItem("freerig710-ft8-cq-auto-v1")||"").trim().toLowerCase();if(cqAutoSelect&&["none","first","max-distance"].includes(saved))cqAutoSelect.value=saved;}catch(_){}
+      const syncOptions=()=>{this.autoSeq=Boolean(id("ft8-auto-seq")?.checked);const selected=String(cqAutoSelect?.value||"first").trim().toLowerCase();this.cqAuto=["none","first","max-distance"].includes(selected)?selected:"first";this.callFirst=this.cqAuto==="first";this.holdTxFrequency=Boolean(id("ft8-hold-tx")?.checked);this.qsoMachine?.configure({autoSeq:this.autoSeq,callFirst:this.callFirst,maxRetries:Number(id("ft8-qso-retries")?.value)||6,timeoutSlots:Number(id("ft8-qso-timeout")?.value)||8});try{localStorage.setItem("freerig710-ft8-cq-auto-v1",this.cqAuto);}catch(_){}};
+      for(const domId of ["ft8-auto-seq","ft8-cq-auto","ft8-hold-tx","ft8-qso-retries","ft8-qso-timeout"]) id(domId)?.addEventListener("change",syncOptions);
       id("ft8-call-cq")?.addEventListener("click",()=>{syncOptions();this.qsoMachine.identity({myCall:this.myCall,myGrid:this.myGrid,txReport:this.txReport});const page=window.FT710_FT8_PAGE;const cursorDf=Number(page?.getTxDf?.());const txParity=Number(page?.getTxSlotParity?.())&1;const snap=this.qsoMachine.startCallingCq({df:Number.isFinite(cursorDf)?cursorDf:(this.qso?.df??1500),txSlotParity:txParity,unixMs:this.getServerUnixMs()});this.syncQsoFromMachine(snap);if(snap.state==="CALLING_CQ"){page?.qsoSelected?.({df:snap.df,rxSlotParity:snap.rxSlotParity,txSlotParity:snap.txSlotParity,dxCall:""});page?.enableAutoTxFromSelection?.();}});
       document.querySelectorAll("[data-qso-stage]").forEach(button=>button.addEventListener("click",()=>this.selectQsoStage(button.dataset.qsoStage)));
       syncOptions();
@@ -914,15 +919,35 @@
       const dt = Number(result?.dt ?? 0), df = Number(result?.df ?? 0), db = Number(result?.db ?? 0);
       const snrEstimate = Number(result?.snr);
       const text = String(result?.text ?? "").trim();
-      if (!text) return;
+      if (!text) return null;
       const timestamp = new Date(slotStartUnixMs + Math.max(0, dt) * 1000).toISOString().slice(11, 19);
       const key = `${slotStartUnixMs}|${Math.round(df)}|${text}`;
-      if (this.decodeRows.some((row) => row.key === key)) return;
+      if (this.decodeRows.some((row) => row.key === key)) return null;
       const parsed = this.parseMessage(text);
       const row = { key, time: timestamp, db, snr: Number.isFinite(snrEstimate) ? snrEstimate : db, dt, df, text, parsed, slotIndex, unixMs:slotStartUnixMs + Math.max(0,dt)*1000 };
       this.decodeRows.unshift(row);
-      this.advanceQsoFromRow(row);
       if (this.decodeRows.length > MAX_ROWS) this.decodeRows.length = MAX_ROWS;
+      return row;
+    },
+
+    advanceQsoFromDecodeBatch(rows) {
+      const batch=Array.isArray(rows)?rows:[]; if(!batch.length)return;
+      const before=this.qsoMachine?.snapshot?.()||this.qso||{};
+      const waitingForCqResponder=Boolean(!before.dxCall && ["CALLING_CQ","WAIT_DX_REPORT"].includes(before.state));
+      if(waitingForCqResponder){
+        const mode=["none","first","max-distance"].includes(this.cqAuto)?this.cqAuto:"first";
+        const chooser=window.FreeRig710FT8DecodeRules?.selectCqResponder;
+        const chosen=typeof chooser==="function"?chooser(batch,mode,{myCall:this.myCall,myGrid:this.myGrid}):null;
+        if(!chosen)return;
+        const p=chosen.parsed||this.parseMessage(chosen.text);
+        if(this.qsoMachine){
+          this.qsoMachine.identity({myCall:this.myCall,myGrid:this.myGrid,txReport:this.txReport});
+          const snap=this.qsoMachine.resumeFromRx({parsed:p,text:chosen.text||"",snr:chosen.snr,df:Math.round(Number(chosen.df||0)),slotIndex:chosen.slotIndex,unixMs:this.getServerUnixMs()});
+          this.syncQsoFromMachine(snap);
+        }
+        return;
+      }
+      for(const row of batch)this.advanceQsoFromRow(row);
     },
 
     renderDecodeRows() {

@@ -70,6 +70,31 @@
     return 6371*2*Math.atan2(Math.sqrt(h),Math.sqrt(Math.max(0,1-h)));
   }
 
+  // Pick an automatic responder only from messages explicitly addressed to
+  // our callsign.  "First" preserves the decoder result order used by the
+  // original Call 1st behaviour.  "Max Distance" compares Maidenhead grids
+  // from the same decode batch; callers without a usable grid are considered
+  // only as a fallback when no responder has a calculable distance.
+  function selectCqResponder(rows, mode="first", context={}) {
+    const me=upper(context.myCall), wanted=String(mode||"first").trim().toLowerCase();
+    if(!me || wanted==="none") return null;
+    const candidates=(Array.isArray(rows)?rows:[]).filter(row=>{
+      const p=row?.parsed||{}, from=upper(p.from||p.call), to=upper(p.to);
+      return Boolean(from && from!==me && to===me);
+    });
+    if(!candidates.length) return null;
+    if(wanted!=="max-distance") return candidates[0];
+    const myGrid=upper(context.myGrid); let best=null, bestKm=-1;
+    if(myGrid){
+      for(const row of candidates){
+        const grid=upper(row?.parsed?.grid||row?.meta?.grid||"");
+        const km=distanceKm(myGrid,grid);
+        if(Number.isFinite(Number(km)) && Number(km)>bestKm){best=row;bestKm=Number(km);}
+      }
+    }
+    return best||candidates[0];
+  }
+
   function enrich(row, context={}) {
     const call=rowCall(row, context.myCall); const lb=context.logbook;
     const worked=call ? lb?.lookupCall?.(call) : null;
@@ -266,7 +291,7 @@
   }
 
   return Object.freeze({
-    DEFAULT_FILTERS,DEFAULT_RULES,rowCall,gridToLatLon,distanceKm,enrich,passes,passWithoutBypass,
+    DEFAULT_FILTERS,DEFAULT_RULES,rowCall,gridToLatLon,distanceKm,selectCqResponder,enrich,passes,passWithoutBypass,
     parseCriteria,criteriaMatches,winningRule
   });
 });
