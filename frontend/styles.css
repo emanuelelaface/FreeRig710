@@ -450,8 +450,24 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
 }
 
 @media (min-width: 1580px) {
+  /*
+   * Wide control panels use CSS columns rather than grid rows. Each card can
+   * therefore follow the previous card immediately instead of inheriting the
+   * height of the tallest card in the opposite column.
+   */
   .control-column .grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: block;
+    column-count: 2;
+    column-gap: 16px;
+  }
+
+  .control-column .grid > .panel-card {
+    display: inline-block;
+    width: 100%;
+    margin: 0 0 16px;
+    vertical-align: top;
+    break-inside: avoid;
+    -webkit-column-break-inside: avoid;
   }
 }
 
