@@ -3401,7 +3401,7 @@ mit BegrÃ¼ndung kommentieren. Hier nur die Liste zur Ãœbersicht.)
       <div class="card">
         <div class="card-title" data-i18n="radio.title">Radio &amp; Connection</div>
         <div class="row">
-          <div class="fld" style="flex:1;min-width:180px;"><label data-i18n="radio.trx">Transceiver</label><select id="trxSelect"><option value="ic7300">Icom IC-7300</option><option value="ic705">Icom IC-705</option><option value="qmx">QRP Labs QMX</option><option value="trusdx">(tr)uSDX 2.00x</option><option value="trusdxng">(tr)uSDX nG</option><option value="x6100">Xiegu X6100 (ungetestet)</option><option value="x6200">Xiegu X6200</option><option value="ftx1">Yaesu FTX-1 (ungetestet)</option><option value="ts890">Kenwood TS-890S (ungetestet)</option><option value="fx4cr">BG2FX FX-4CR (ungetestet)</option></select></div>
+          <div class="fld" style="flex:1;min-width:180px;"><label data-i18n="radio.trx">Transceiver</label><select id="trxSelect"><option value="ic7300">Icom IC-7300</option><option value="ic705">Icom IC-705</option><option value="qmx">QRP Labs QMX</option><option value="trusdx">(tr)uSDX 2.00x</option><option value="trusdxng">(tr)uSDX nG</option><option value="x6100">Xiegu X6100 (untested)</option><option value="x6200">Xiegu X6200</option><option value="ftx1">Yaesu FTX-1 (untested)</option><option value="ts890">Kenwood TS-890S (untested)</option><option value="fx4cr">BG2FX FX-4CR (untested)</option></select></div>
         </div>
         <div class="row">
           <div class="fld" style="flex:1;min-width:110px;"><label data-i18n="radio.arqbw">ARQ Bandwidth</label>
@@ -3420,7 +3420,7 @@ mit BegrÃ¼ndung kommentieren. Hier nur die Liste zur Ãœbersicht.)
           <div class="fld" style="flex:0 0 auto;min-width:120px;"><label data-i18n="radio.busyDet">Busy sensitivity (0 = off)</label>
             <input type="number" id="busyDet" min="0" max="10" value="5" style="width:64px;"></div>
         </div>
-        <div class="mono" style="font-size:11px;color:var(--dim);" id="freqReadout">TRX-Frequenz: —</div>
+        <div class="mono" style="font-size:11px;color:var(--dim);" id="freqReadout">TRX frequency: —</div>
       </div>
       <div class="card" id="rxMeterCard">
         <div class="card-title" data-i18n="rxm.title">RX level — calibration</div>
@@ -3461,14 +3461,14 @@ mit BegrÃ¼ndung kommentieren. Hier nur die Liste zur Ãœbersicht.)
 
     <div class="panel" id="panel-gateways">
       <div class="sec-hdr" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-        <span><span data-i18n="gw.hdrPre">Winlink gateways</span> · <span id="gwSource" style="color:var(--dim);font-weight:normal;">importiert am 7.8.2026 · 462 Kanäle</span><span id="gwCount" style="display:none;">462</span></span>
+        <span><span data-i18n="gw.hdrPre">Winlink gateways</span> · <span id="gwSource" style="color:var(--dim);font-weight:normal;">imported on 2026-08-07 · 462 channels</span><span id="gwCount" style="display:none;">462</span></span>
         <span style="display:flex;gap:6px;flex-wrap:wrap;">
           <button id="btnGwOpen" style="font-size:12px;padding:3px 9px;" data-i18n="btn.gwOpen" data-i18n-title="title.gwOpen" title="Open winlink.org/RMSChannels – tick ARDOP and download the CSV">🌐 RMS list</button>
           <button id="btnGwImport" style="font-size:12px;padding:3px 9px;" data-i18n="btn.gwImport" data-i18n-title="title.gwImport" title="Import the downloaded Winlink CSV (stays saved)">⬆ Import CSV</button>
           <input type="file" id="fileGwImport" accept=".csv,text/csv" style="display:none;">
         </span>
       </div>
-      <div class="gw-filter" id="bandFilter"><span class="band-cb">160m</span><span class="band-cb">80m</span><span class="band-cb">60m</span><span class="band-cb on">40m</span><span class="band-cb">30m</span><span class="band-cb">20m</span><span class="band-cb">17m</span><span class="band-cb">15m</span><span class="band-cb">12m</span><span class="band-cb">10m</span><span class="band-cb" id="gwTopBtn" title="Nur die 10 nächstgelegenen Gateways (in den gewählten Bändern), nach Entfernung">Top 10</span></div>
+      <div class="gw-filter" id="bandFilter"><span class="band-cb">160m</span><span class="band-cb">80m</span><span class="band-cb">60m</span><span class="band-cb on">40m</span><span class="band-cb">30m</span><span class="band-cb">20m</span><span class="band-cb">17m</span><span class="band-cb">15m</span><span class="band-cb">12m</span><span class="band-cb">10m</span><span class="band-cb" id="gwTopBtn" title="Only the 10 nearest gateways in the selected bands, sorted by distance">Top 10</span></div>
       <div class="gw-head"><span data-i18n="gw.head.call">CALLSIGN · BEARING</span><span data-i18n="gw.head.freq">TRX kHz</span><span class="gw-mode" data-i18n="gw.head.mode">MODE</span><span data-i18n="gw.head.dist">DIST.</span><span></span></div>
       <div id="gateway-list"></div>
     </div>
@@ -3520,10 +3520,9 @@ mit BegrÃ¼ndung kommentieren. Hier nur die Liste zur Ãœbersicht.)
 
     <div class="panel" id="panel-diag">
       <div class="card">
-        <div class="card-title" data-i18n="diag.lang">Language / Sprache</div>
+        <div class="card-title" data-i18n="diag.lang">Language</div>
         <div class="fld" style="max-width:220px;">
           <select id="langSwitch">
-            <option value="de">Deutsch</option>
             <option value="en">English</option>
           </select>
         </div>
@@ -3849,18 +3848,18 @@ function _tuneSet(key, label, val, lo, hi, bool) {
   return n;
 }
 if (typeof window !== 'undefined') {
-  window.txLead         = v => _tuneSet('txLeadMs',     'TX_LEAD_MS ((tr)uSDX Vorlauf/Drain)', v, 0, 1000);
-  window.txDelay        = v => _tuneSet('txDelayMs',    'txDelayMs (RX→TX-Umschaltung)',        v, 0, 1000);
-  window.txFlush        = v => _tuneSet('txFlushMs',    'txFlushMs (Soundkarten-Tail QMX/IC)',  v, 0, 1000);
+  window.txLead         = v => _tuneSet('txLeadMs',     'TX_LEAD_MS ((tr)uSDX lead/drain)',      v, 0, 1000);
+  window.txDelay        = v => _tuneSet('txDelayMs',    'txDelayMs (RX→TX switch)',              v, 0, 1000);
+  window.txFlush        = v => _tuneSet('txFlushMs',    'txFlushMs (soundcard tail QMX/IC)',     v, 0, 1000);
   window.breakJitter    = v => _tuneSet('breakJitterMs','BREAK/IDLE-Repeat-Jitter (ARQ)',       v, 0, 5000);
-  window.audioBeforePtt = v => _tuneSet('audioBeforePTT','audioBeforePTT (QMX PTT-Reihenfolge)', v, 0, 1, true);
+  window.audioBeforePtt = v => _tuneSet('audioBeforePTT','audioBeforePTT (QMX PTT order)',       v, 0, 1, true);
   window.txtune = () => {
     const s = [
       `txLead       = ${SESSION_TUNE.txLeadMs       ?? '(Default ' + TX_LEAD_MS + ')'} ms`,
-      `txDelay      = ${SESSION_TUNE.txDelayMs      ?? '(TRX-Default)'} ms`,
-      `txFlush      = ${SESSION_TUNE.txFlushMs      ?? '(TRX-Default)'} ms`,
-      `breakJitter  = ${SESSION_TUNE.breakJitterMs  ?? '0 (aus)'} ms`,
-      `audioBeforePtt = ${SESSION_TUNE.audioBeforePTT === null ? '(TRX-Default)' : SESSION_TUNE.audioBeforePTT}`,
+      `txDelay      = ${SESSION_TUNE.txDelayMs      ?? '(TRX default)'} ms`,
+      `txFlush      = ${SESSION_TUNE.txFlushMs      ?? '(TRX default)'} ms`,
+      `breakJitter  = ${SESSION_TUNE.breakJitterMs  ?? '0 (off)'} ms`,
+      `audioBeforePtt = ${SESSION_TUNE.audioBeforePTT === null ? '(TRX default)' : SESSION_TUNE.audioBeforePTT}`,
     ].join('\n  ');
     try { log(tf('log.txtuning_session_fluechtig', s), 'log-info'); } catch(_){}
     return { ...SESSION_TUNE };
@@ -4601,7 +4600,7 @@ class SoundcardAudioSource extends AudioSource {
       if (typeof refreshAudioPickers === 'function') refreshAudioPickers();
     } catch (e) { log(tf('log.audiogeraeteauswahl', e.message), 'log-warn'); }
     const track = this.stream.getAudioTracks()[0];
-    const lbl = track.label || '(unbekannt)';
+    const lbl = track.label || '(unknown)';
     log(tf('log.audio', lbl), 'log-ok');
 
     // TX-Ausgang: den AudioContext-Output gezielt auf die USB-Soundkarte des TRX routen.
@@ -4623,7 +4622,7 @@ class SoundcardAudioSource extends AudioSource {
           if (this.audioCtx.state === 'suspended') await this.audioCtx.resume();
           log(tf('log.txausgang_auf_usbsoundkarte_geroutet', pickOut.label || '(USB)'), 'log-ok');
         } else {
-          const seen = outs.map(d => d.label || '(ohne Label)').join(', ') || 'keine sichtbar';
+      const seen = outs.map(d => d.label || '(unlabeled)').join(', ') || 'none visible';
           // Android-Chrome enumeriert grundsätzlich KEINE audiooutput-Geräte (Plattform-
           // verhalten, kein Fehler): das OS routet den Medienausgang bei angestecktem
           // USB-Audio selbst aufs USB-Gerät. Die Warnung "kein TX-Audio am TRX" wäre dort
@@ -8331,7 +8330,7 @@ class Cp210xSerialPort {
       const hasOut = (alt.endpoints || []).some(e => e.type === 'bulk' && e.direction === 'out');
       if (hasIn && hasOut) { target = iface; break; }
     }
-    if (!target) throw new Error('kein serielles Bulk-Interface gefunden (CP210x). Evtl. den anderen Icom-USB-Port wählen.');
+    if (!target) throw new Error('no serial bulk interface found (CP210x). Try the other Icom USB port.');
     this._ifaceNum = target.interfaceNumber;
     try { await this._dev.claimInterface(this._ifaceNum); }
     catch (e) { throw new Error(`claimInterface(${this._ifaceNum}) fehlgeschlagen (${e.message}) — vom System belegt?`); }
@@ -8439,7 +8438,7 @@ class CdcAcmSerialPort {
       const hasOut = (alt.endpoints || []).some(e => e.type === 'bulk' && e.direction === 'out');
       if (hasIn && hasOut) { dataIf = iface; break; }
     }
-    if (!dataIf) throw new Error('kein CDC-Data-Interface (Bulk IN+OUT) gefunden');
+    if (!dataIf) throw new Error('no CDC data interface (bulk IN+OUT) found');
     // Zugehöriges Communications-Interface (Class 0x02), direkt vor dem Data-Interface.
     let commIf = null;
     for (const iface of ifaces) {
@@ -9424,7 +9423,7 @@ const Session = {
       // unser END verpasst hat → nochmals END mit der letzten Session-ID antworten.
       if (ft === this.DISCFRAME && this._lastSessId !== 0xFF && !ardopTx._busy) {
         const r = TX.buildControl12k(this.ENDFRAME, this._lastSessId, 240);
-        ardopTx.transmitFrame12k(r.samples12k, 'END(Regel 1.5)');
+        ardopTx.transmitFrame12k(r.samples12k, 'END(rule 1.5)');
         log(t('log.nachzuegelndes_disc_end_erneut_gesendet'), 'log-ardop');
       }
       return;
@@ -10200,7 +10199,7 @@ const B2F = {
       const last = this._lastLine || '—';
       if (this._phase === 'awaitFS') log(tfn('log.b2f_timeout_awaitfs', [secs, last]), 'log-err');
       else                           log(tfn('log.b2f_timeout_forward', [secs, last]), 'log-err');
-      this._failForward(this._phase === 'awaitFS' ? 'Timeout, keine FS-Antwort' : 'Timeout, kein FF/FQ');
+      this._failForward(this._phase === 'awaitFS' ? 'Timeout, no FS reply' : 'Timeout, no FF/FQ');
       this._phase = 'done';
       try { Session.arqDisconnect(); } catch (e) {}      // v0.3.0.14: DISC↔END statt hartem Abriss
     }, this.FORWARD_TIMEOUT_MS);
@@ -10266,7 +10265,7 @@ const B2F = {
       const msg = line.replace(/^\*+\s*/, '').trim();
       if (/disconnect/i.test(line)) {
         log(tf('log.b2f_gatewayfehler', (msg || line)), 'log-err');
-        this._failForward('Gateway-Fehler: ' + (msg || line));
+        this._failForward('Gateway error: ' + (msg || line));
         this._phase = 'done';
         Session.arqDisconnect();                 // v0.3.0.14: DISC↔END statt hartem 500-ms-Abriss
       } else {
@@ -10726,9 +10725,9 @@ function parseWav(arrayBuffer) {
     }
     off += 8 + clen + (clen & 1);
   }
-  if (!fmt || dataOff < 0) throw new Error('WAV: kein fmt oder data chunk');
-  if (fmt.format !== 1) throw new Error(`WAV: Format ${fmt.format} (nur PCM=1 unterstützt)`);
-  if (fmt.channels !== 1) throw new Error(`WAV: ${fmt.channels} Kanäle (nur Mono unterstützt)`);
+  if (!fmt || dataOff < 0) throw new Error('WAV: no fmt or data chunk');
+  if (fmt.format !== 1) throw new Error(`WAV: format ${fmt.format} (only PCM=1 supported)`);
+  if (fmt.channels !== 1) throw new Error(`WAV: ${fmt.channels} channels (only mono supported)`);
   // Samples extrahieren → Float32 [-1, +1]
   const nSamples = Math.floor(dataLen / (fmt.bitsPerSample / 8));
   const out = new Float32Array(nSamples);
@@ -10740,7 +10739,7 @@ function parseWav(arrayBuffer) {
   } else if (fmt.bitsPerSample === 8) {
     for (let i = 0; i < nSamples; i++) out[i] = (v.getUint8(dataOff + i) - 128) / 128;
   } else {
-    throw new Error(`WAV: ${fmt.bitsPerSample} bit nicht unterstützt`);
+    throw new Error(`WAV: ${fmt.bitsPerSample} bit not supported`);
   }
   return { samples: out, sampleRate: fmt.sampleRate, bitsPerSample: fmt.bitsPerSample };
 }
@@ -10853,7 +10852,7 @@ function initTrxPicker() {
   Object.values(TRX_DEFS).forEach(t => {
     const opt = document.createElement('option');
     opt.value = t.id;
-    opt.textContent = t.name + (t.preliminary ? ' (preliminary)' : '') + (t.untested ? ' (ungetestet)' : '');
+    opt.textContent = t.name + (t.preliminary ? ' (preliminary)' : '') + (t.untested ? ' (untested)' : '');
     sel.appendChild(opt);
   });
   sel.value = loadTrxSelection();
@@ -11233,11 +11232,11 @@ const GwUI = {
   // CSV von winlink.org/RMSChannels (Spalten: Timestamp,Callsign,BaseCallsign,GridSquare,Frequency,Mode,Hours,Sysop,QTH)
   parseCsv(text) {
     const recs = this._csvRecords(text);
-    if (!recs.length) throw new Error('Leere CSV');
+    if (!recs.length) throw new Error('Empty CSV');
     const hdr = recs[0].map(h => h.trim().toLowerCase());
     const ci = {}; ['callsign','gridsquare','frequency','mode','hours','qth'].forEach(k => ci[k] = hdr.indexOf(k));
     if (ci.callsign < 0 || ci.frequency < 0 || ci.mode < 0)
-      throw new Error('Unerwartetes CSV-Format (Kopfzeile braucht Callsign, Frequency, Mode)');
+      throw new Error('Unexpected CSV format (header needs Callsign, Frequency, Mode)');
     const out = [];
     for (let r = 1; r < recs.length; r++) {
       const row = recs[r]; if (!row || row.length <= ci.mode) continue;
@@ -11271,20 +11270,20 @@ const GwUI = {
   },
   importCsv(text) {
     const arr = this.parseCsv(text);
-    if (!arr.length) throw new Error('Keine ARDOP-Einträge in der CSV gefunden');
-    const date = new Date().toLocaleDateString('de-DE');
+    if (!arr.length) throw new Error('No ARDOP entries found in the CSV');
+    const date = new Date().toISOString().slice(0, 10);
     try {
       localStorage.setItem(this.GW_KEY, JSON.stringify(arr));
       localStorage.setItem(this.GW_DATE_KEY, date);
-    } catch (e) { throw new Error('Speichern fehlgeschlagen (Speicher voll?): ' + e.message); }
+    } catch (e) { throw new Error('Saving failed (storage full?): ' + e.message); }
     this.init();                                                 // lädt das Gespeicherte + rendert + Status
     return arr.length;
   },
   updateStatus() {
     const el = document.getElementById('gwSource'); if (!el) return;
     el.textContent = this.source.type === 'import'
-      ? `importiert${this.source.date ? ' am ' + this.source.date : ''} · ${GW_ACTIVE.length} Kanäle`
-      : `eingebettet (Stand ${this.EMBED_DATE}) · ${GW_ACTIVE.length} Kanäle`;
+      ? `imported${this.source.date ? ' on ' + this.source.date : ''} · ${GW_ACTIVE.length} channels`
+      : `embedded (as of ${this.EMBED_DATE}) · ${GW_ACTIVE.length} channels`;
   },
   init() {
     this.loadStored();
@@ -11310,7 +11309,7 @@ const GwUI = {
     tb.className = 'band-cb' + (this.topOnly ? ' on' : '');
     tb.id = 'gwTopBtn';
     tb.textContent = 'Top 10';
-    tb.title = 'Nur die 10 nächstgelegenen Gateways (in den gewählten Bändern), nach Entfernung';
+    tb.title = 'Only the 10 nearest gateways in the selected bands, sorted by distance';
     tb.onclick = () => { this.topOnly = !this.topOnly; tb.classList.toggle('on'); this.render(); };
     bf.appendChild(tb);
     this.render();
@@ -11351,7 +11350,7 @@ const GwUI = {
       frag.appendChild(row);
     }
     list.appendChild(frag);
-    if (rows.length > limit) { const m=document.createElement('div'); m.className='empty'; m.textContent='… '+(rows.length-limit)+' weitere'+(this.topOnly?' (Top 10 aktiv)':' (Band enger filtern)'); list.appendChild(m); }
+    if (rows.length > limit) { const m=document.createElement('div'); m.className='empty'; m.textContent='… '+(rows.length-limit)+' more'+(this.topOnly?' (Top 10 active)':' (narrow the band filter)'); list.appendChild(m); }
   },
   select(r, row) {
     document.querySelectorAll('.gw-row.sel').forEach(e=>e.classList.remove('sel'));
@@ -11363,7 +11362,7 @@ const GwUI = {
     this.setTrxFreq(dialKHz);
     const fd = document.getElementById('freqDisplay'); if (fd) fd.textContent = dialKHz.toFixed(1);
     const ro = document.getElementById('freqReadout');
-    if (ro) ro.textContent = 'TRX-Frequenz: '+dialKHz.toFixed(1)+' kHz (Center '+r.center.toFixed(1)+' − 1,5) · ARDOP '+r.bw+' · Ziel '+r.call;
+    if (ro) ro.textContent = 'TRX frequency: '+dialKHz.toFixed(1)+' kHz (center '+r.center.toFixed(1)+' − 1.5) · ARDOP '+r.bw+' · target '+r.call;
     const geoStr = r.dist < 0 ? '' : ', '+r.dist+' km '+this.arrow(r.bear)+' '+r.bear+'°';
     log(tfn('log.gateway_gewaehlt_trx_khz_center', [r.call, dialKHz.toFixed(1), r.center, r.bw, geoStr]), 'log-ardop');
   },
@@ -11897,7 +11896,7 @@ const I18N = {
     'diag.decoder':'Decoder / Protocol','diag.sdft':'SDFT demod',
     'title.sdft':'Sliding-DFT 4FSK demod with adaptive symbol timing. Off = block Goertzel (default).',
     'diag.sid':'SID (hex)','diag.squelch':'Squelch','diag.txLevel':'TX level %',
-    'diag.lang':'Language / Sprache',
+    'diag.lang':'Language',
     'btn.reply':'↩ Reply','btn.fwd':'↪ Forward','btn.edit':'✎ Edit','btn.del':'🗑 Delete',
     'inbox.noSubj':'(no subject)','inbox.att':'Attachments:','inbox.to':'to',
     'outbox.waiting':'⏳ waiting','outbox.sent':'✓ sent','outbox.dupe':'✓ done (CMS already had it)',
@@ -11978,7 +11977,7 @@ const I18N = {
     'log.b2f_erstes_byte_0x_soh':'✗ B2F: first byte 0x%s ≠ SOH',
     'log.b2f_ff_empfang_fertig_eigener':'B2F → FF (reception done, our own outbox follows)',
     'log.b2f_ff_gateway_hat_keine':'B2F ← FF (gateway has no messages)',
-    'log.b2f_fq_auch_wir_sind':'B2F → FQ (auch wir sind fertig) — session ends once the FQ is acknowledged',
+    'log.b2f_fq_auch_wir_sind':'B2F → FQ (we are done too) — session ends once the FQ is acknowledged',
     'log.b2f_fq_empfang_fertig_nichts':'B2F → FQ (reception done, nothing more to send) — session ends once the FQ is acknowledged',
     'log.b2f_fq_gegenquittung_session_endet':'B2F → FQ (counter-acknowledge) — session ends once the FQ is acknowledged',
     'log.b2f_fq_gesendet_und_bestaetigt':'✓ B2F: FQ sent and acknowledged — ending session with DISC',
@@ -12111,7 +12110,7 @@ const I18N = {
     'log.import_fehlgeschlagen_keine_gueltige_jsondatei':'✗ Import failed — not a valid JSON file: %s',
     'log.in_die_mail_eingefuegt':'📍 %s — inserted into the mail.',
     'log.kanal_belegt_aber_override_aktiv':'🚦 Channel busy, but override active — transmitting anyway (at your own responsibility).',
-    'log.kanal_belegt_busy_connect_blockiert':'⚠ Channel busy — connect blocked. Im Radio-Tab „🚦 Busy-Sperre übergehen" to transmit anyway.',
+    'log.kanal_belegt_busy_connect_blockiert':'⚠ Channel busy — connect blocked. Use "🚦 Override busy lock" in the Radio tab to transmit anyway.',
     'log.keepalive_nicht_gestartet_txaudio_koennte':'keep-alive not started: %s — TX audio may be choppy on the USB output.',
     'log.kein_praeziser_gnssfix_versuche_netzwerkstandort':'📍 No precise GNSS fix — trying network location (coarser, note the ± value in the line) …',
     'log.kein_transceiver_gewaehlt':'❌ No transceiver selected',
@@ -12132,7 +12131,7 @@ const I18N = {
     'log.mode_usbd_kenwood_om0d_ungetestet':'Mode → USB-D (Kenwood OM0D;) — untested',
     'log.nachricht_konnte_nicht_erstellt_werden':'✗ Could not create message: %s',
     'log.nachricht_von_b_text_eingang':'📩 Message %s — "%s" from %s (%s B text%s) → Inbox',
-    'log.nachzuegelndes_disc_end_erneut_gesendet':'← trailing DISC — END re-sent (Regel 1.5)',
+    'log.nachzuegelndes_disc_end_erneut_gesendet':'← trailing DISC — END re-sent (rule 1.5)',
     'log.nak_q_retransmit_gear':'✗ NAK Q=%s — Retransmit @%s (Gear %s)',
     'log.netzwerkstandort_nicht_verfuegbar_versuche_jetzt':'📍 Network location unavailable — now trying high-accuracy GPS (up to 30 s, best outdoors) …',
     'log.neue_appversion_geladen_beim_naechsten':'🔄 New app version loaded — active on next start (or reopen the app).',
@@ -12198,7 +12197,7 @@ const I18N = {
     'log.symbolsync_failed_searchingforleader':'✗ SymbolSync failed → SearchingForLeader',
     'log.transportdiagnose_bytes_kommen_an_aber':'⚠ Transport diagnostics: bytes are arriving but no RX audio detected — probably only CAT replies, no audio stream (UA2/streaming not active, or the parser is not separating audio/CAT).',
     'log.transportdiagnose_nach_4_s_keine':'⚠ transport diagnostics: no bytes received from the radio after 4 s — the receive path (reader/transferIn) delivers nothing. Did CAT replies arrive on connect (← [CAT] …)? If no: baud rate/endpoint. If yes: the device may not be streaming.',
-    'log.transportdiagnose_rxaudio_fliesst_8bitspitze_vollaussteuerung':'✓ transport diagnostics: RX audio is flowing (8-bit peak ≈ %s % full scale). Richtwert ~40–80 %: too quiet wastes the 8-bit grid resolution (poor decode), ~100 % = clipping. set the level only on the (tr)uSDX via the AF/volume — digital gain does nothing here.',
+    'log.transportdiagnose_rxaudio_fliesst_8bitspitze_vollaussteuerung':'✓ transport diagnostics: RX audio is flowing (8-bit peak ≈ %s % full scale). Target ~40–80 %: too quiet wastes the 8-bit grid resolution (poor decode), ~100 % = clipping. Set the level only on the (tr)uSDX via the AF/volume — digital gain does nothing here.',
     'log.trennen':'Disconnect: %s',
     'log.trusdx_braucht_catverbindung_zuerst_bitte':'❌ (tr)uSDX needs a CAT connection first — please "Connect TRX" first',
     'log.trusdx_cat_audio_ueber_einen':'(tr)uSDX: CAT + audio over a single port — reader/writer belong to the audio source',
@@ -12217,7 +12216,7 @@ const I18N = {
     'log.trusdx_rxaudio_kehrt_nach_neuanforderungen':'⚠ (tr)uSDX: RX audio does not return after %s re-requests. Please check on the device: menu 2.4 "Semi QSK" = OFF, connection/USB seated. If audio returns, detection continues on its own.',
     'log.trusdx_s_kein_rxaudio_stream':'⚠ (tr)uSDX: no RX audio for %s s — stream dropped (device otherwise hangs on TX). Most common cause: menu 2.4 "Semi QSK" = ON. Re-requesting RX + audio stream now.',
     'log.trusdx_via_webusb_ch340_epin':'(tr)uSDX via WebUSB (CH340): EP-IN %s/EP-OUT %s, %s Baud, 8N1, DTR/RTS neutral',
-    'log.trusdxlautstaerke_startwert_bei_agc_on':'ℹ (tr)uSDX-volume (initial value): bei AGC ON Vol 10, bei AGC OFF Vol 7. Then fine-tune with the RX level meter (peaks into the green band ~40–80 %, no CLIP).',
+    'log.trusdxlautstaerke_startwert_bei_agc_on':'ℹ (tr)uSDX volume (initial value): AGC ON Vol 10, AGC OFF Vol 7. Then fine-tune with the RX level meter (peaks into the green band ~40–80 %, no CLIP).',
     'log.trusdxpflichteinstellung_menue_24_semi_qsk':'ℹ (tr)uSDX-required setting: menu 2.4 „Semi QSK" = OFF. If it is ON, the firmware mutes RX after every transmission and NO RX audio comes back (the TX/RX switchover seems to hang).',
     'log.trusdxrxdiagnose_moegliche_audioverluste_0x3bsample_als':'⚠ (tr)uSDX RX diagnostics: %s possible audio losses (0x3B sample misread as a CAT separator). If the decode is poor with it, report this number to me — then I can tune the stream parser specifically.',
     'log.trusdxrxmessung_hz_zum_soll_ueber':'📐 (tr)uSDX RX measurement: %s Hz (Δ%s%s % vs. target %s) over %s s | peak %s % | clips %s | max chunk gap %s ms | 0x3B: %s lookaheads / %s CAT switches / %s B swallowed',
@@ -12275,8 +12274,8 @@ const I18N = {
     'log.zurueck_auf_trxcodedefault':'⚙ %s: back to TRX/code default',
   }
 };
-let LANG = 'de';
-function t(k){ return (I18N[LANG] && I18N[LANG][k]) || (I18N.de && I18N.de[k]) || k; }
+let LANG = 'en';
+function t(k){ return (I18N.en && I18N.en[k]) || (I18N[LANG] && I18N[LANG][k]) || k; }
 // Wie t(), aber ersetzt das erste %s durch das Argument (für Status-Strings mit Variable).
 function tf(k, arg){ return t(k).replace('%s', arg); }
 // Wie tf(), aber mehrere %s der Reihe nach aus einem Array. Für Log-Strings mit
@@ -12290,15 +12289,13 @@ function applyI18n(){
   document.documentElement.lang = LANG;
   const sw = document.getElementById('langSwitch'); if (sw) sw.value = LANG;
 }
-function setLang(l){ LANG = (l === 'en') ? 'en' : 'de'; try { localStorage.setItem('ardop_v02_lang', LANG); } catch(_){} applyI18n();
+function setLang(l){ LANG = 'en'; try { localStorage.setItem('ardop_v02_lang', LANG); } catch(_){} applyI18n();
   // v0.3.0.21: JS-gerenderte UI (Inbox/Outbox/Funkwetter) sofort in der neuen Sprache neu zeichnen
   try { if (typeof Inbox !== 'undefined') Inbox.render(); if (typeof Outbox !== 'undefined') Outbox.render(); if (typeof GwInfo !== 'undefined') GwInfo.render(); } catch(_){}
 }
 function initLang(){
-  let stored = null; try { stored = localStorage.getItem('ardop_v02_lang'); } catch(_){}
-  if (stored === 'de' || stored === 'en') { LANG = stored; return; }
-  const n = (navigator.language || navigator.userLanguage || 'de').toLowerCase();
-  LANG = n.startsWith('en') ? 'en' : 'de';   // Fallback Deutsch
+  LANG = 'en';
+  try { localStorage.setItem('ardop_v02_lang', LANG); } catch(_){}
 }
 
 function switchTab(name) {
@@ -12498,7 +12495,7 @@ function llToGrid(lat, lon) {
 function tryGPS() {
   const st = document.getElementById('locStatus'), btn = document.getElementById('btnGps');
   if (!navigator.geolocation) {
-    if (st) st.textContent = '(kein GPS)';
+    if (st) st.textContent = '(no GPS)';
     log(t('log.gps_navigatorgeolocation_fehlt_browser_unterstuetzt'), 'log-warn');
     return;
   }
@@ -12507,7 +12504,7 @@ function tryGPS() {
   if (window.isSecureContext === false) {
     log(t('log.gpshinweis_kein_secure_context_vermutlich'), 'log-warn');
   }
-  if (st) st.textContent = '⏳ Standort…'; if (btn) btn.disabled = true;
+  if (st) st.textContent = '⏳ Location…'; if (btn) btn.disabled = true;
   log(t('log.standortabfrage_laeuft_zuerst_schneller_netzwerkstandort'), 'log-ardop');
 
   const onPos = async p => {
@@ -12533,20 +12530,20 @@ function tryGPS() {
     // e.code: 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
     let short, hint;
     if (e.code === 1) {
-      short = '(verweigert)';
+      short = '(denied)';
       if (location.protocol === 'file:') {
-        hint = 'Über file:// kann Chrome (v.a. auf Android) dem Standort keine speicherbare Berechtigung zuordnen (opaque origin) → sofort verweigert, oft ohne Abfrage. Lösung: die Datei über einen lokalen Server (http://localhost:…) oder https:// öffnen — dann erscheint die Standort-Abfrage. WebUSB/CAT laufen über file:// weiter; nur GPS braucht eine echte Herkunft.';
+        hint = 'With file:// Chrome, especially on Android, cannot attach a persistent location permission to the page (opaque origin), so it may deny immediately without a prompt. Open the file through a local server (http://localhost:...) or https:// so the location prompt can appear. WebUSB/CAT still work over file://; only GPS needs a real origin.';
       } else {
-        hint = 'Standort-Freigabe verweigert. Android-Chrome: ⋮ → Einstellungen → Website-Einstellungen → Standort erlauben; zusätzlich im System Standort EIN und Chrome die Standortberechtigung geben. Als installierte App (WebAPK) muss zusätzlich der App selbst die Android-Standortberechtigung erteilt sein (Einstellungen → Apps → ARDOP WL → Berechtigungen → Standort). Dann erneut 📍 tippen.';
+        hint = 'Location permission denied. Android Chrome: ⋮ → Settings → Site settings → allow Location; also turn Android Location on and grant Chrome the location permission. If installed as an app (WebAPK), grant the app itself Android location permission as well (Settings → Apps → ARDOP WL → Permissions → Location). Then tap 📍 again.';
       }
     } else if (e.code === 2) {
-      short = '(nicht verfügbar)';
-      hint = 'Position nicht ermittelbar (kein Fix / Standortdienst aus). Im Freien erneut versuchen, System-Standort prüfen.';
+      short = '(not available)';
+      hint = 'Position unavailable (no fix or location service off). Try again outdoors and check the system location setting.';
     } else if (e.code === 3) {
       short = '(Timeout)';
-      hint = 'Zeitüberschreitung — auch der GPS-Fallback hat keinen Fix bekommen. Im Freien erneut versuchen, oder den Locator manuell eintragen.';
+      hint = 'Timeout — the GPS fallback also did not get a fix. Try again outdoors or enter the locator manually.';
     } else {
-      short = '(Fehler)'; hint = e.message || 'unbekannt';
+      short = '(error)'; hint = e.message || 'unknown';
     }
     if (st) st.textContent = short;
     log(tfn('log.gps_fehlgeschlagen_code', [e.code, hint]), 'log-warn');
@@ -12612,8 +12609,8 @@ async function trxGpsPosition() {
 function composeInsertGps() {
   const btn = document.getElementById('btnGpsCompose');
   const ta = document.getElementById('compose-body');
-  const label = (typeof t === 'function') ? t('compose.gps') : '📍 GPS-Position einfügen';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Standort…'; }
+  const label = (typeof t === 'function') ? t('compose.gps') : '📍 Insert GPS position';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Location…'; }
   log(t('log.gpsposition_fuer_die_mail_wird'), 'log-ardop');
   const restore = () => { if (btn) { btn.disabled = false; btn.textContent = label; } };
   const insert = line => {
@@ -12654,7 +12651,7 @@ function composeInsertGps() {
     e => {
       if (e.code === 2 || e.code === 3) {  // kein präziser Fix → grober Netzwerk-Standort als Rückfall
         log(t('log.kein_praeziser_gnssfix_versuche_netzwerkstandort'), 'log-ardop');
-        if (btn) btn.textContent = '⏳ Netz…';
+        if (btn) btn.textContent = '⏳ Network…';
         navigator.geolocation.getCurrentPosition(onPos, onErr, { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 });
       } else onErr(e);  // PERMISSION_DENIED → Browser-Retry sinnlos, aber TRX-GPS greift (v0.4.13)
     },
@@ -12676,7 +12673,7 @@ const MIME = {
     if (hdrEnd < 0)
       for (let i = 0; i + 1 < bytes.length; i++)
         if (bytes[i]===10 && bytes[i+1]===10) { hdrEnd = i; sep = 2; break; }
-    if (hdrEnd < 0) throw new Error('kein Header-Ende (Leerzeile) gefunden');
+    if (hdrEnd < 0) throw new Error('no header end found (blank line missing)');
 
     const headers = this._parseHeaders(this._lat1(bytes.subarray(0, hdrEnd)));
     const bodyStart = hdrEnd + sep;
@@ -13310,7 +13307,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const text = Array.from(LOG_EL.children).map(d => d.textContent).join('\n');
     const orig = btnCopyLog.textContent;
     const ok = text ? await copyTextToClipboard(text) : false;
-    btnCopyLog.textContent = ok ? '✓ kopiert' : (text ? '✗ Fehler' : 'Log leer');
+    btnCopyLog.textContent = ok ? '✓ copied' : (text ? '✗ Error' : 'Log empty');
     setTimeout(() => { btnCopyLog.textContent = orig; }, 1500);
   });
   // Debug-Log-Schalter: blendet die technischen dlog()-Zeilen ein/aus. Persistiert.
@@ -13365,7 +13362,7 @@ window.addEventListener('DOMContentLoaded', () => {
           try {
             const n = GwUI.importCsv(String(r.result || ''));
             log(tfn('log.gatewayliste_importiert_ardopkanaele_aus', [n, f.name]), 'log-ok');
-          } catch (e) { log(tf('log.csvimport_fehlgeschlagen', e.message), 'log-err'); alert('CSV-Import fehlgeschlagen:\n' + e.message); }
+          } catch (e) { log(tf('log.csvimport_fehlgeschlagen', e.message), 'log-err'); alert('CSV import failed:\n' + e.message); }
         };
         r.onerror = () => log(t('log.csv_konnte_nicht_gelesen_werden'), 'log-err');
         r.readAsText(f);
@@ -13459,8 +13456,8 @@ window.addEventListener('DOMContentLoaded', () => {
       if (panel && !panel.classList.contains('active')) switchTab(panel.id.replace('panel-', ''));
       el.focus(); const prev = el.style.outline; el.style.outline = '2px solid #ff5555'; setTimeout(() => { el.style.outline = prev; }, 2500);
     };
-    if (!mycall || mycall.length < 2) { flagField('callInput', 'Eigenes Rufzeichen fehlt — bitte im Feld „Mein Rufzeichen" eintragen, dann erneut verbinden.'); return; }
-    if (!target || target.length < 2) { flagField('targetInput', 'Ziel-Gateway fehlt — bitte im Feld „Ziel-Gateway" eintragen oder aus der Liste wählen.'); return; }
+    if (!mycall || mycall.length < 2) { flagField('callInput', 'My callsign is missing — enter it in "My Callsign", then connect again.'); return; }
+    if (!target || target.length < 2) { flagField('targetInput', 'Target gateway is missing — enter it in "Target Gateway" or select one from the list.'); return; }
     const bw = parseInt(document.getElementById('bwSelect').value) || 2000;
     await Session.connect(mycall, target, bw);
   });

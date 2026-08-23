@@ -1,6 +1,6 @@
 # Third-party notices
 
-The FreeRig710 source in this repository is licensed under the MIT License. The following external software/data are used by the FT8 implementation and keep their own licenses.
+The FreeRig710 source in this repository is licensed under the MIT License. The following external software/data are used by the FT8 and Winlink implementations and keep their own licenses.
 
 ## ft8js 0.0.2 / ft8_lib
 
