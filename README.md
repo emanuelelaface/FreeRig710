@@ -16,6 +16,14 @@ FreeRig710 is not affiliated with or endorsed by Yaesu. “Yaesu” and “FT-71
 
 ![FreeRig710 FT8 operating console](docs/images/ft8-console.png)
 
+### Integrated JS8 console
+
+![FreeRig710 JS8 operating console](docs/images/js8-console.png)
+
+### Browser Winlink / ARDOP console
+
+![FreeRig710 Winlink ARDOP operating console](docs/images/winlink-console.png)
+
 ## Hardware
 
 The tested/reference build uses:
@@ -209,9 +217,17 @@ Detailed FT8 operation: [docs/FT8.md](docs/FT8.md).
 
 ## JS8 interface
 
-The **JS8** button opens `frontend/js8.html`, a native browser JS8 operating console. It uses vendored JS8 WASM assets from `wfweb`, based on JS8Call-improved, while FreeRig710 continues to provide CAT, DATA-U setup, PTT and 48 kHz audio transport through its existing FT-710 API and audio WebSocket.
+The **JS8** button opens `frontend/js8.html`, a native browser JS8 operating console for keyboard-to-keyboard weak-signal operation. It uses vendored JS8 WASM assets from `wfweb`, based on JS8Call-improved, while FreeRig710 continues to provide CAT, DATA-U setup, split VFO handling, PTT and 48 kHz audio transport through its existing FT-710 API and audio WebSocket.
 
-The page provides standard JS8 dial-frequency buttons, selectable JS8 submodes, waterfall click-to-set TX audio frequency, monitor decode, heard station table, CQ/heartbeat/direct-message transmit controls and a small ADIF line builder.
+The page provides:
+
+- Standard JS8 band buttons with automatic radio setup and split TX/RX handling.
+- Selectable JS8 submodes for Slow, Normal, Fast, JS8 40 and JS8 60 operation.
+- FFT waterfall over the JS8 audio passband, with click-to-set TX audio frequency.
+- Browser-side monitor/decode, heard-station table and scrollable QSO view.
+- CQ, heartbeat and directed-message transmit controls using the existing FreeRig710 audio path.
+- Automatic RF gain mode matching the FT8 page, plus manual RF-gain control.
+- QRZ Logbook submission for JS8 contacts as ADIF `MFSK` with `SUBMODE=JS8`.
 
 Upstream references:
 
