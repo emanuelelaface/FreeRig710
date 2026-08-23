@@ -3469,7 +3469,7 @@ mit BegrÃ¼ndung kommentieren. Hier nur die Liste zur Ãœbersicht.)
         </span>
       </div>
       <div class="gw-filter" id="bandFilter"><span class="band-cb">160m</span><span class="band-cb">80m</span><span class="band-cb">60m</span><span class="band-cb on">40m</span><span class="band-cb">30m</span><span class="band-cb">20m</span><span class="band-cb">17m</span><span class="band-cb">15m</span><span class="band-cb">12m</span><span class="band-cb">10m</span><span class="band-cb" id="gwTopBtn" title="Only the 10 nearest gateways in the selected bands, sorted by distance">Top 10</span></div>
-      <div class="gw-head"><span data-i18n="gw.head.call">CALLSIGN · BEARING</span><span data-i18n="gw.head.freq">TRX kHz</span><span class="gw-mode" data-i18n="gw.head.mode">MODE</span><span data-i18n="gw.head.dist">DIST.</span><span></span></div>
+      <div class="gw-head"><span data-i18n="gw.head.call">CALLSIGN · BEARING</span><span data-i18n="gw.head.freq">TRX/Dial kHz</span><span class="gw-mode" data-i18n="gw.head.mode">MODE</span><span data-i18n="gw.head.dist">DIST.</span><span></span></div>
       <div id="gateway-list"></div>
     </div>
 
@@ -6881,6 +6881,7 @@ const ardopRx = {
   // SearchFor2ToneLeader3 state
   _dblPriorFineOffset: 1000,
   _squelch: 5,  // ardopcf-Default. Höhere Werte sind kontraproduktiv (siehe Changelog).
+  _lastLeaderInfo: null,
 
   // State machine
   _state: 'SearchingForLeader',
@@ -6892,6 +6893,7 @@ const ardopRx = {
   _lastDecodedSid: 0xFF,
   _arqConnected: false,   // α15: TRUE nach ConAck (ARQ.c Z.2023). Schaltet MD-Decode in den Connected-Branch (0.4-Schwelle für unkritische Frames).
   _protocolState: 'DISC', // α15: Spiegel von Session.protocolState. Bei 'ISS' nutzt MD nur die ISS-Frame-Typ-Teilmenge (SoundInput.c Z.2146).
+  _lastMdInfo: null,
 
   // Header-ToneMags (für Quality-Berechnung nach Acquire4FSKFrameType)
   _headerToneMags: new Float32Array(40),
@@ -6921,6 +6923,7 @@ const ardopRx = {
     this._priorMixedSamples.fill(0); this._priorMixedSamplesLen = 0;
     this._dblNCOPhase = 0; this._dblNCOPhaseInc = 0; this._dblOffsetHz = 0;
     this._dblPriorFineOffset = 1000;
+    this._lastLeaderInfo = null; this._lastMdInfo = null;
     this._state = 'SearchingForLeader';
     this._samplesSeen = 0; this._dttLastLeaderDetect = 0;
     this._lastDecodedSid = 0xFF;
@@ -6949,6 +6952,7 @@ const ardopRx = {
     this._state = 'SearchingForLeader';
     this._frameType = 0; this._frameInfo = null;
     this._modPath = '4FSK'; this._charIndex = 0; this._totalChars = 0;
+    this._lastLeaderInfo = null; this._lastMdInfo = null;
     fsf.reset();
   },
 
@@ -7123,6 +7127,7 @@ const ardopRx = {
       if (d2 < dMin2) { dMin2 = d2; iat2 = ft; }
       if (d3 < dMin3) { dMin3 = d3; iat3 = ft; }
     }
+    this._lastMdInfo = { iat1, dMin1, iat2, dMin2, iat3, dMin3, sessionId, pending: blnPending };
     dlog(tfn('log.md_d10x_d20x_d30x_sess0x', [iat1.toString(16), dMin1.toFixed(3), iat2.toString(16), dMin2.toFixed(3), iat3.toString(16), dMin3.toFixed(3), sessionId.toString(16), blnPending]), 'log-info');
 
     const DISCFRAME = 0x29, BREAK = 0x23, END = 0x2C;
@@ -7428,6 +7433,30 @@ const ardopRx = {
     return ft;
   },
 
+  _fmtFrameType(ft) {
+    return ft >= 0 ? '0x' + ft.toString(16).padStart(2, '0') : String(ft);
+  },
+
+  _formatNoDecodeMessage() {
+    const parts = [t('log.frame_nodecode_mddistanz_zu_hoch')];
+    const leader = this._lastLeaderInfo;
+    if (leader) {
+      parts.push(tfn('log.frame_nodecode_leader_suffix', [
+        leader.offsetHz.toFixed(1), leader.sn, leader.sample
+      ]));
+    }
+    const md = this._lastMdInfo;
+    if (md) {
+      parts.push(tfn('log.frame_nodecode_md_suffix', [
+        this._fmtFrameType(md.iat1), md.dMin1.toFixed(3),
+        this._fmtFrameType(md.iat2), md.dMin2.toFixed(3),
+        this._fmtFrameType(md.iat3), md.dMin3.toFixed(3),
+        this._fmtFrameType(md.sessionId), md.pending ? 'yes' : 'no'
+      ]));
+    }
+    return parts.join(' ');
+  },
+
   // ── Buffer-Trim (= ardopcf memmove nach AcquireFrameSync) ─────────
   _trimFilteredMixed() {
     if (this._MFSReadPtr <= 0) return;
@@ -7478,6 +7507,7 @@ const ardopRx = {
       if (r && r.found) {
         this._dblOffsetHz = r.offsetHz;
         this._dttLastLeaderDetect = this._samplesSeen;
+        this._lastLeaderInfo = { offsetHz: r.offsetHz, sn: r.sn, sample: this._bufPtr, at: this._samplesSeen };
         dlog(tfn('log.leader_offset_hz_sn_db', [r.offsetHz.toFixed(1), r.sn, this._bufPtr]), 'log-ok');
         if (typeof TurnMeter !== 'undefined') TurnMeter.leader(r.offsetHz, r.sn, this._bufPtr);   // v0.4.22-M1
         this._bufPtr += 480;
@@ -7538,7 +7568,7 @@ const ardopRx = {
       if (ft === -2) return;
       if (ft === -1) {
         if (typeof TurnMeter !== 'undefined') TurnMeter.result(false);   // v0.4.22-M1
-        log(t('log.frame_nodecode_mddistanz_zu_hoch'), 'log-warn');
+        log(this._formatNoDecodeMessage(), 'log-warn');
         this.ClearAllMixedSamples();
         this._state = 'SearchingForLeader';
         return;
@@ -9122,6 +9152,23 @@ const ARQData = {
     }
   },
 
+  pendingPtr() {
+    if (this.shiftUpDn < 0) return Math.max(0, this.ptr + this.shiftUpDn);
+    if (this.shiftUpDn > 0) return Math.min(this.gears.length - 1, this.ptr + this.shiftUpDn);
+    return this.ptr;
+  },
+
+  forceDown() {
+    if (!this.gears || this.ptr <= 0) return null;
+    const from = this.gears[this.ptr];
+    this.ptr -= 1;
+    const to = this.gears[this.ptr];
+    this.shiftUpDn = 0;
+    this.avgQ = 0; this.nakCtr = 0; this.ackCtr = 0;
+    if (this.modeTried) this.modeTried[this.ptr] = 1;
+    return { from, to, ptr: this.ptr };
+  },
+
   // ISS empfängt DataACK (ARQ.c Z.2126-2142).
   onAck(q, bytesRemaining) {
     this.ackCtr++;
@@ -9156,6 +9203,7 @@ const Session = {
   sessionId: 0xFF,
   _repeatCount: 0,
   _repeatTimer: null,
+  _conAckStartedAt: 0,
   REPEAT_INTERVAL_MS: 2000,      // ARQ.c intFrameRepeatInterval
   MAX_CONREQ: 5,                 // ARQ.c ARQConReqRepeats
   IDLEFRAME: 0x24, BREAK: 0x23,  // ARDOPC.c Control-Frame-Typen
@@ -9184,6 +9232,7 @@ const Session = {
   _sending: 'none',             // none | data | idle | break — was zuletzt gesendet wurde
   FRAME_REPEAT_MS: 2000,         // intFrameRepeatInterval
   MAX_FRAME_REPEAT: 10,
+  DATA_TIMEOUT_DOWNSHIFT_REPEATS: [3, 6, 9],
 
   // ── IRS-Empfangsseite ──
   _lastDeliveredType: -1,        // intLastARQDataFrameToHost (Duplikatschutz)
@@ -9211,6 +9260,7 @@ const Session = {
     this._txQueuedCum = 0; this._txAckedCum = 0;                    // v0.4.20: kumulierter Sende-Bytestrom (fuer XferUI-Region)
     if (typeof XferUI !== 'undefined') XferUI.reset();              // v0.4.20: Balken der Vorsitzung sofort weg
     this._repeatCount = 1;
+    this._conAckStartedAt = 0;
     log(tfn('log.connect_hz_sessionid0x', [mycall, target, this.bw, this.sessionId.toString(16).padStart(2,'0')]), 'log-ardop');
     setStatus(tf('status.calling', target), 'active');
     await this._sendConReqAndArm();
@@ -9252,6 +9302,10 @@ const Session = {
     const maxRep = this.MAX_CONREQ || 5;
     if (this._conAckRepeats > maxRep) {
       log(tf('log.handshake_unvollstaendig_conack_ohne_dataack', maxRep), 'log-warn');
+      if (this._conAckStartedAt) {
+        const waitedMs = Math.max(0, Math.round(performance.now() - this._conAckStartedAt));
+        log(tf('log.handshake_dataack_waited_ms', waitedMs), 'log-warn');
+      }
       this.protocolState = 'DISC'; this.arqState = 'None'; this.sessionId = 0xFF;
       ardopRx._arqConnected = false; ardopRx._sessionId = 0xFF; ardopRx._protocolState = 'DISC';
       setStatus(t('status.ready'), '');
@@ -9347,6 +9401,19 @@ const Session = {
     return this.FRAME_REPEAT_MS + (apply ? Math.floor(Math.random() * j) : 0);
   },
 
+  _maybeDownshiftOnDataTimeout() {
+    if (!this.DATA_TIMEOUT_DOWNSHIFT_REPEATS.includes(this._repeats)) return;
+    const down = ARQData.forceDown();
+    if (!down) return;
+    log(tfn('log.data_timeout_downshift', [
+      this._repeats,
+      this.MAX_FRAME_REPEAT,
+      down.from.toString(16).padStart(2, '0'),
+      down.to.toString(16).padStart(2, '0'),
+      down.ptr
+    ]), 'log-warn');
+  },
+
   _onFrameTimeout() {
     if (this._discRepeating) { this._discTick(); return; }   // v0.3.0.14: DISC-Repeat hat Vorrang (ARQ.c Z.369)
     if (this.protocolState === 'ISS') {
@@ -9354,6 +9421,7 @@ const Session = {
         this._repeats++;
         if (this._repeats > this.MAX_FRAME_REPEAT) { log(tf('log.data_ohne_acknak_disc', this.MAX_FRAME_REPEAT), 'log-warn'); this.disconnect(); return; }
         log(tfn('log.data_wiederholung', [this._repeats, this.MAX_FRAME_REPEAT]), 'log-ardop');
+        this._maybeDownshiftOnDataTimeout();
         if (typeof XferUI !== 'undefined') XferUI.txAttempt(this._repeats + 1);  // v0.4.20
       }
       this._issStep();   // Daten-Retransmit oder erneutes IDLE
@@ -9390,6 +9458,7 @@ const Session = {
         this.bw = ackBw;
         this._conAckType = ft;
         this._conAckRepeats = 0;
+        this._conAckStartedAt = performance.now();
         this.arqState = 'ISSConAck';
         ARQData.init(ackBw, true);    // v0.3.0.14: fastStart=TRUE (ardopcf-Default ARDOPC.c Z.119; Init-Punkt = ARQ.c Z.1949)
         log(tfn('log.conack_empfangen_bw_hz_q', [ackBw, fr.name, fr.quality]), 'log-ardop');
@@ -9403,6 +9472,11 @@ const Session = {
     if (this.arqState === 'ISSConAck') {
       if (fr.sessionId === this.sessionId && ft >= 0xE0) {        // DataACK (0xE0..0xFF)
         clearTimeout(this._repeatTimer);
+        if (this._conAckStartedAt) {
+          const waitedMs = Math.max(0, Math.round(performance.now() - this._conAckStartedAt));
+          log(tfn('log.dataack_after_conack_ms_repeats', [waitedMs, this._conAckRepeats || 0]), 'log-ardop');
+        }
+        this._conAckStartedAt = 0;
         log(tfn('log.verbunden_mit_sessionid0x_bw_hz', [this.target, this.sessionId.toString(16).padStart(2, '0'), this.bw, fr.quality]), 'log-ok');
         setStatus(tf('status.connected', this.target), 'active');
         this._enterISS();              // → ISSData; B2F reiht jetzt die Client-Kennung ein
@@ -9413,6 +9487,7 @@ const Session = {
       } else if (fr.sessionId === this.sessionId && ft >= 0x39 && ft <= 0x3C) {
         // IRS hat unseren ConAck verpasst und seinen ConAck wiederholt → erneut bestätigen
         clearTimeout(this._repeatTimer);
+        if (!this._conAckStartedAt) this._conAckStartedAt = performance.now();
         log(t('log.conack_erneut_empfangen_irs_verpasste'), 'log-ardop');
         this._sendConAckReplyAndArm();
       }
@@ -9492,8 +9567,9 @@ const Session = {
         clearTimeout(this._frameTimer);
         const q = 38 + 2 * (ft & 0x1F);
         if (this._sending === 'data' && this._tx) {
+          this._repeats = 0;                               // NAK is link progress; give the lower gear a full retry budget.
           ARQData.onNak(q, this._tx.buf.length - this._tx.off);
-          log(tfn('log.nak_q_retransmit_gear', [q, this._tx.off, ARQData.ptr]), 'log-warn');
+          log(tfn('log.nak_q_retransmit_gear', [q, this._tx.off, ARQData.pendingPtr()]), 'log-warn');
         }
         this._issStep();
         return;
@@ -10069,7 +10145,7 @@ const B2F = {
   // nutzt dafür eine conn-Deadline ~60 s); läuft sie ab, gilt der Versand als gescheitert.
   _pendingConfirm: [], _fwdTimer: null, FORWARD_TIMEOUT_MS: 90000,
   // Binärparser-State (inkrementell über mehrere ARQ-Frames)
-  _binState: 'soh', _binCurProp: null, _binTitle: '', _binOffset: '',
+  _binState: 'soh', _binCurProp: null, _binTitle: '', _binOffset: '', _binPreline: '',
   _binHdrLen: 0, _binData: [], _binSum: 0, _binBlockRemain: 0,
 
   reset() {
@@ -10080,7 +10156,7 @@ const B2F = {
     this._acceptedProps = []; this._acceptedIdx = 0; this._acceptedRemaining = 0;
     this._pendingConfirm = []; clearTimeout(this._fwdTimer); this._fwdTimer = null;
     this._binState = 'soh'; this._binCurProp = null;
-    this._binTitle = ''; this._binOffset = ''; this._binHdrLen = 0;
+    this._binTitle = ''; this._binOffset = ''; this._binPreline = ''; this._binHdrLen = 0;
     this._binData = []; this._binSum = 0; this._binBlockRemain = 0;
   },
 
@@ -10387,90 +10463,122 @@ const B2F = {
     log(tfn('log.b2f_proposal_mid_b', [prop.code, prop.type, prop.mid, prop.usize, prop.csize]), 'log-ardop');
   },
 
-  // FS-Antwort: ein Code je Proposal (Y=accept, N=reject). Wir akzeptieren Code C
-  // (LZHUF); alles andere (z. B. D=gzip) lehnen wir vorerst ab.
-  _sendProposalAnswer() {
-    let ans = '';
-    for (const p of this._proposals) {
-      // v0.4.14: bereits vorhandene MID → 'N'. Spart die komplette Sendezeit für eine
-      // Nachricht, die schon im Posteingang liegt, und nimmt sie beim Gateway aus dem Angebot.
-      if (typeof MidHistory !== 'undefined' && MidHistory.has(p.mid)) {
-        p.answer = 'N'; ans += 'N';
-        log(tf('log.b2f_mid_bereits_vorhanden_abgelehnt', p.mid), 'log-ok');
+    // FS-Antwort: ein Code je Proposal (Y=accept, N=reject). Wir akzeptieren Code C
+    // (LZHUF); alles andere (z. B. D=gzip) lehnen wir vorerst ab.
+    _sendProposalAnswer() {
+      let ans = '';
+      for (const p of this._proposals) {
+        // v0.4.14: bereits vorhandene MID → 'N'. Spart die komplette Sendezeit für eine
+        // Nachricht, die schon im Posteingang liegt, und nimmt sie beim Gateway aus dem Angebot.
+        if (typeof MidHistory !== 'undefined' && MidHistory.has(p.mid)) {
+          p.answer = 'N'; ans += 'N';
+          log(tf('log.b2f_mid_bereits_vorhanden_abgelehnt', p.mid), 'log-ok');
+        }
+        else if (p.code === 'C' || p.code === 'c') { p.answer = 'Y'; ans += 'Y'; }
+        else { p.answer = 'N'; ans += 'N'; log(tfn('log.b2f_code_nicht_unterstuetzt_n', [p.code, p.mid]), 'log-warn'); }
       }
-      else if (p.code === 'C' || p.code === 'c') { p.answer = 'Y'; ans += 'Y'; }
-      else { p.answer = 'N'; ans += 'N'; log(tfn('log.b2f_code_nicht_unterstuetzt_n', [p.code, p.mid]), 'log-warn'); }
-    }
-    this._queueLine('FS ' + ans);
-    this._acceptedProps = this._proposals.filter(p => p.answer === 'Y');
-    this._acceptedIdx = 0;
-    this._acceptedRemaining = this._acceptedProps.length;
-    log(tfn('log.b2f_fs_akzeptiert', [ans, this._acceptedRemaining]), 'log-ardop');
-    if (this._acceptedRemaining > 0) {
-      const _rt = this._acceptedProps.reduce((a, p) => a + (p.csize || 0), 0);
-      if (typeof XferUI !== 'undefined') XferUI.rxStart(_rt);   // v0.4.20: Soll = Summe csize der ANGENOMMENEN (FC-Feld 5 == Summe der STX-Nutzbytes, s. _finishBinary-Laengenpruefung)
-      this._binCurProp = this._acceptedProps[0];
-      this._binState = 'soh';
-      this._phase = 'binary';                               // ab jetzt kommt komprimierter Strom
-    } else {
+      this._queueLine('FS ' + ans);
+      this._acceptedProps = this._proposals.filter(p => p.answer === 'Y');
+      this._acceptedIdx = 0;
+      this._acceptedRemaining = this._acceptedProps.length;
+      log(tfn('log.b2f_fs_akzeptiert', [ans, this._acceptedRemaining]), 'log-ardop');
       this._proposals = [];
-      this._queueLine('FF');
-      this._armForwardDeadline();   // v0.3.0.17                                // nichts akzeptiert → nächste Runde
-    }
-  },
+      if (this._acceptedRemaining > 0) {
+        const _rt = this._acceptedProps.reduce((a, p) => a + (p.csize || 0), 0);
+        if (typeof XferUI !== 'undefined') XferUI.rxStart(_rt);   // v0.4.20: Soll = Summe csize der ANGENOMMENEN (FC-Feld 5 == Summe der STX-Nutzbytes, s. _finishBinary-Laengenpruefung)
+        this._binCurProp = this._acceptedProps[0];
+        this._binState = 'soh';
+        this._phase = 'binary';                               // ab jetzt kommt komprimierter Strom
+      } else {
+        this._proposals = [];
+        this._queueLine('FF');
+        this._armForwardDeadline();   // v0.3.0.17                                // nichts akzeptiert → nächste Runde
+      }
+    },
 
-  // Inkrementeller Parser für eine komprimierte B2-Nachricht:
-  // <SOH><hdrLen><title><NUL><offset><NUL> ( <STX><len><len Bytes> )* <EOT><checksum>
-  _binFeed(b) {
-    switch (this._binState) {
-      case 'soh':
-        if (b === 0x01) { this._binState = 'hdrlen'; }
-        else if (b === 0x2A) {                              // '*' = Klartext-Fehlermeldung vom CMS
-          log(t('log.b2f_cmsfehler_im_datenstrom_zurueck'), 'log-warn');
-          if (typeof XferUI !== 'undefined') XferUI.rxEnd();       // v0.4.20
-          this._phase = 'forward'; this._rxBuf = '*';
-        } else { log(tf('log.b2f_erstes_byte_0x_soh', b.toString(16)), 'log-err'); this._abortBinary(); }
-        break;
-      case 'hdrlen':
-        this._binHdrLen = b; this._binTitle = ''; this._binState = 'title';
-        break;
-      case 'title':
-        if (b === 0x00) { this._binOffset = ''; this._binState = 'offset'; }
-        else this._binTitle += String.fromCharCode(b);
-        break;
-      case 'offset':
-        if (b === 0x00) {
-          const want = this._binTitle.length + this._binOffset.length + 2;
-          if (want !== this._binHdrLen) log(tfn('log.b2f_headerlaenge_erwartet', [this._binHdrLen, want]), 'log-warn');
-          log(tfn('log.b2f_nachricht_offset', [this._binTitle, this._binOffset]), 'log-ok');
-          this._binData = []; this._binSum = 0; this._binState = 'block';
-        } else this._binOffset += String.fromCharCode(b);
-        break;
-      case 'block':
-        if (b === 0x02) this._binState = 'stxlen';
-        else if (b === 0x04) this._binState = 'eotsum';
-        else { log(tf('log.b2f_0x_statt_stxeot', b.toString(16)), 'log-err'); this._abortBinary(); }
-        break;
-      case 'stxlen':
-        this._binBlockRemain = (b === 0 ? 256 : b); this._binState = 'stxdata';
-        break;
-      case 'stxdata':
-        this._binData.push(b); this._binSum = (this._binSum + b) % 256; this._rxDelta++;   // v0.4.20
-        if (--this._binBlockRemain === 0) this._binState = 'block';
-        break;
-      case 'eotsum':
-        this._binSum = (this._binSum + b) % 256;
-        this._finishBinary(this._binSum === 0);
-        break;
-    }
-  },
+    // Inkrementeller Parser für eine komprimierte B2-Nachricht:
+    // <SOH><hdrLen><title><NUL><offset><NUL> ( <STX><len><len Bytes> )* <EOT><checksum>
+    _binFeed(b) {
+      switch (this._binState) {
+        case 'soh':
+          if (b === 0x01) { this._binState = 'hdrlen'; }
+          else if (b === 0x2A) {                              // '*' = Klartext-Fehlermeldung vom CMS
+            log(t('log.b2f_cmsfehler_im_datenstrom_zurueck'), 'log-warn');
+            if (typeof XferUI !== 'undefined') XferUI.rxEnd();       // v0.4.20
+            this._phase = 'forward'; this._rxBuf = '*';
+          } else if (this._isB2FTextByte(b)) {
+            this._binPreline = String.fromCharCode(b);
+            this._binState = 'preline';
+          } else { log(tf('log.b2f_erstes_byte_0x_soh', b.toString(16)), 'log-err'); this._abortBinary(); }
+          break;
+        case 'preline':
+          if (b === 13) {
+            this._handleBinaryPreambleLine(this._binPreline);
+            this._binPreline = '';
+            this._binState = 'soh';
+          } else if (b === 10) {
+            // tolerate LF after CR or line folding noise
+          } else if (this._isB2FTextByte(b) && this._binPreline.length < 160) {
+            this._binPreline += String.fromCharCode(b);
+          } else {
+            log(tf('log.b2f_erstes_byte_0x_soh', b.toString(16)), 'log-err');
+            this._abortBinary();
+          }
+          break;
+        case 'hdrlen':
+          this._binHdrLen = b; this._binTitle = ''; this._binState = 'title';
+          break;
+        case 'title':
+          if (b === 0x00) { this._binOffset = ''; this._binState = 'offset'; }
+          else this._binTitle += String.fromCharCode(b);
+          break;
+        case 'offset':
+          if (b === 0x00) {
+            const want = this._binTitle.length + this._binOffset.length + 2;
+            if (want !== this._binHdrLen) log(tfn('log.b2f_headerlaenge_erwartet', [this._binHdrLen, want]), 'log-warn');
+            log(tfn('log.b2f_nachricht_offset', [this._binTitle, this._binOffset]), 'log-ok');
+            this._binData = []; this._binSum = 0; this._binState = 'block';
+          } else this._binOffset += String.fromCharCode(b);
+          break;
+        case 'block':
+          if (b === 0x02) this._binState = 'stxlen';
+          else if (b === 0x04) this._binState = 'eotsum';
+          else { log(tf('log.b2f_0x_statt_stxeot', b.toString(16)), 'log-err'); this._abortBinary(); }
+          break;
+        case 'stxlen':
+          this._binBlockRemain = (b === 0 ? 256 : b); this._binState = 'stxdata';
+          break;
+        case 'stxdata':
+          this._binData.push(b); this._binSum = (this._binSum + b) % 256; this._rxDelta++;   // v0.4.20
+          if (--this._binBlockRemain === 0) this._binState = 'block';
+          break;
+        case 'eotsum':
+          this._binSum = (this._binSum + b) % 256;
+          this._finishBinary(this._binSum === 0);
+          break;
+      }
+    },
 
-  _abortBinary() {
-    if (typeof XferUI !== 'undefined') XferUI.rxEnd();               // v0.4.20
-    this._phase = 'forward';
-    this._binState = 'soh';
-    this._proposals = [];
-  },
+    _isB2FTextByte(b) {
+      return b === 9 || (b >= 32 && b <= 126);
+    },
+
+    _handleBinaryPreambleLine(line) {
+      const txt = (line || '').replace(/\n/g, '').trim();
+      if (!txt) return;
+      // In marginal ARQ conditions RMS Trimode may repeat the tail of the just-finished
+      // proposal block after we already sent FS Y/YY. That text is not a new B2F command;
+      // the next real byte for the accepted message is still SOH.
+      log(tf('log.b2f_text_vor_binary_ignoriert', txt.slice(0, 80)), 'log-warn');
+    },
+
+    _abortBinary() {
+      if (typeof XferUI !== 'undefined') XferUI.rxEnd();               // v0.4.20
+      this._phase = 'forward';
+      this._binState = 'soh';
+      this._binPreline = '';
+      this._proposals = [];
+    },
 
   // Eine komprimierte Nachricht ist vollständig empfangen.
   _finishBinary(checksumOk) {
@@ -11243,9 +11351,12 @@ const GwUI = {
       const mode = (row[ci.mode] || '').trim();
       if (!/^ARDOP/i.test(mode)) continue;                       // nur ARDOP-Kanäle
       const call = (row[ci.callsign] || '').trim();
-      const fm = (row[ci.frequency] || '').replace(/,/g, '').match(/([\d.]+)/);  // "3,593.000 KHz" → 3593.000
+      const freqRaw = String(row[ci.frequency] || '').trim();
+      const fm = freqRaw.replace(/,/g, '').match(/([\d.]+)/);  // "3,593.000 KHz" → 3593.000
       if (!call || !fm) continue;
-      const center = parseFloat(fm[1]);                          // = ARDOP-Center-kHz (1:1 wie eingebettet)
+      let center = parseFloat(fm[1]);                            // = ARDOP-Center-kHz (1:1 wie eingebettet)
+      if (/\bmhz\b/i.test(freqRaw)) center *= 1000;
+      if (!Number.isFinite(center) || center <= 0) continue;
       const bwm = mode.match(/ARDOP\s*(\d+)/i);                  // Bandbreite steckt im Mode
       out.push([call, ci.gridsquare>=0?(row[ci.gridsquare]||'').trim():'', center,
                 bwm?parseInt(bwm[1],10):2000, ci.hours>=0?(row[ci.hours]||'').trim():'00-23',
@@ -11334,6 +11445,7 @@ const GwUI = {
     const frag = document.createDocumentFragment();
     for (const r of rows.slice(0, limit)) {
       const dial = (r.center-1.5).toFixed(1);
+      const centerText = Number(r.center).toFixed(1);
       const hrsBadge = (r.hrs && r.hrs !== '00-23') ? ' <span class="gw-hrs">⏰'+r.hrs+'</span>' : '';
       const row = document.createElement('div');
       row.className = 'gw-row';
@@ -11342,7 +11454,7 @@ const GwUI = {
       row.innerHTML =
         '<span><span class="gw-call">'+r.call+'</span> '+bearStr+'<br>'+
           '<span class="gw-reason">'+(r.qth||'')+hrsBadge+'</span></span>'+
-        '<span class="gw-freq">'+dial+'</span>'+
+        '<span class="gw-freq" title="ARDOP center '+centerText+' kHz; radio dial '+dial+' kHz in USB/DATA-U">'+dial+'</span>'+
         '<span class="gw-meta gw-mode">ARDOP '+r.bw+'</span>'+
         '<span class="gw-meta">'+distStr+'</span>'+
         '<button class="gw-conn">' + t('gw.select') + '</button>';
@@ -11419,7 +11531,7 @@ const I18N = {
     'btn.gwOpen':'🌐 RMS-Liste','btn.gwImport':'⬆ CSV importieren',
     'title.gwOpen':'winlink.org/RMSChannels öffnen – dort ARDOP anhaken und CSV herunterladen',
     'title.gwImport':'Heruntergeladene Winlink-CSV importieren (bleibt gespeichert)',
-    'gw.head.call':'RUFZEICHEN · PEILUNG','gw.head.freq':'TRX kHz','gw.head.mode':'MODUS','gw.head.dist':'ENTF.',
+    'gw.head.call':'RUFZEICHEN · PEILUNG','gw.head.freq':'TRX/Dial kHz','gw.head.mode':'MODUS','gw.head.dist':'ENTF.',
     'gw.loading':'Lade Gateway-Daten…',
     'inbox.hdr':'Empfangene Nachrichten','btn.exportMails':'⬇ Export','btn.importMails':'⬆ Import',
     'title.exportMails':'Alle Nachrichten als JSON-Datei sichern','title.importMails':'Nachrichten aus JSON-Datei einlesen',
@@ -11533,6 +11645,7 @@ const I18N = {
     'log.b2f_code_nicht_unterstuetzt_n':'B2F: Code %s (%s) nicht unterstützt → N',
     'log.b2f_eotpruefsummenfehler_im_komprimierten_strom':'✗ B2F: EOT-Prüfsummenfehler im komprimierten Strom',
     'log.b2f_erstes_byte_0x_soh':'✗ B2F: erstes Byte 0x%s ≠ SOH',
+    'log.b2f_text_vor_binary_ignoriert':'B2F: Text vor SOH ignoriert — %s',
     'log.b2f_ff_empfang_fertig_eigener':'B2F → FF (Empfang fertig, eigener Ausgang folgt)',
     'log.b2f_ff_gateway_hat_keine':'B2F ← FF (Gateway hat keine Nachrichten)',
     'log.b2f_fq_auch_wir_sind':'B2F → FQ (auch wir sind fertig) — Session endet, sobald das FQ bestätigt ist',
@@ -11616,6 +11729,7 @@ const I18N = {
     'log.data_0x_decodefehler_nak_q':'✗ DATA 0x%s Decode-Fehler → NAK Q=%s',
     'log.data_0x_empfangen_b_ack':'✓ DATA 0x%s empfangen (%s B) → ACK Q=%s',
     'log.data_ohne_acknak_disc':'✗ %s× DATA ohne ACK/NAK → DISC',
+    'log.data_timeout_downshift':'No ACK/NAK after retry %s/%s — downshift DATA gear 0x%s → 0x%s (Gear %s)',
     'log.data_wiederholung':'↻ DATA Wiederholung %s/%s',
     'log.datei_konnte_nicht_gelesen_werden':'⚠ Datei konnte nicht gelesen werden: %s',
     'log.dateiname_auf_50_zeichen_gekuerzt':'⚠ Dateiname auf 50 Zeichen gekürzt (Winlink-Grenze): %s',
@@ -11638,6 +11752,8 @@ const I18N = {
     'log.fqdraintimeout_gegenstelle_gibt_nicht_ab':'⚠ FQ-Drain-Timeout (Gegenstelle gibt nicht ab) — trenne mit DISC',
     'log.frame_b00x_sid0x_q':'✓ FRAME: %s b0=0x%s SID=0x%s Q=%s',
     'log.frame_nodecode_mddistanz_zu_hoch':'✗ FRAME no-decode (MD-Distanz zu hoch)',
+    'log.frame_nodecode_leader_suffix':'leader offset=%s Hz, S/N=%s dB @sample %s',
+    'log.frame_nodecode_md_suffix':'MD candidates: d1=%s/%s d2=%s/%s d3=%s/%s session=%s pending=%s',
     'log.turnmeter':'⏱ Wende: Abspann %s ms | Restaudio %s ms | Wiederanlauf %s ms | Blindzeit %s ms | %s | Umschaltknall %s % | RX-Spitze %s | Rauschboden %s %',
     'turn.peakSplit':'%s % (Anlauf %s % / Rest %s %)',
     'log.turnsummary':'⏱ Wende-Bilanz: %s Sendungen | Wiederanlauf: Median %s ms (kleinster %s / groesster %s) | Blindzeit: Median %s ms (groesster %s) | Antwort erkannt bei %s Sendungen (%s %), Antwortzeit Median %s ms, davon dekodiert %s | Rauschboden Median %s % | Umschaltknall Median %s % | ohne Erkennung trotz Signalspur (Spitze mindestens 5 dB ueber dem Rauschboden des Fensters): %s',
@@ -11659,6 +11775,8 @@ const I18N = {
     'log.gpshinweis_kein_secure_context_vermutlich':'📍 GPS-Hinweis: kein secure context (vermutlich http://). Über file:// oder https:// ist die Abfrage erlaubt.',
     'log.gpsposition_fuer_die_mail_wird':'📍 GPS-Position für die Mail wird ermittelt — präziser GNSS-Fix zuerst (am besten im Freien, ggf. Freigabe bestätigen) …',
     'log.handshake_unvollstaendig_conack_ohne_dataack':'✗ Handshake unvollständig — %s× ConAck ohne DataACK → DISC',
+    'log.handshake_dataack_waited_ms':'DataACK wait time: %s ms',
+    'log.dataack_after_conack_ms_repeats':'DataACK received after %s ms (%s ConAck repeat(s))',
     'log.hinweis_b_komprimiert_ueber_funk':'⚠ Hinweis: %s B komprimiert — über Funk (QRP) entsprechend lange Sendezeit.',
     'log.icom_via_webusb_cp210x_iface':'Icom via WebUSB (CP210x): Iface %s, EP-IN %s/EP-OUT %s, %s Baud, 8N1, DTR/RTS neutral',
     'log.id':'  → ID: %s [%s]',
@@ -11861,7 +11979,7 @@ const I18N = {
     'btn.gwOpen':'🌐 RMS list','btn.gwImport':'⬆ Import CSV',
     'title.gwOpen':'Open winlink.org/RMSChannels – tick ARDOP and download the CSV',
     'title.gwImport':'Import the downloaded Winlink CSV (stays saved)',
-    'gw.head.call':'CALLSIGN · BEARING','gw.head.freq':'TRX kHz','gw.head.mode':'MODE','gw.head.dist':'DIST.',
+    'gw.head.call':'CALLSIGN · BEARING','gw.head.freq':'TRX/Dial kHz','gw.head.mode':'MODE','gw.head.dist':'DIST.',
     'gw.loading':'Loading gateway data…',
     'inbox.hdr':'Received Messages','btn.exportMails':'⬇ Export','btn.importMails':'⬆ Import',
     'title.exportMails':'Save all messages as a JSON file','title.importMails':'Load messages from a JSON file',
@@ -11975,6 +12093,7 @@ const I18N = {
     'log.b2f_code_nicht_unterstuetzt_n':'B2F: code %s (%s) not supported → N',
     'log.b2f_eotpruefsummenfehler_im_komprimierten_strom':'✗ B2F: EOT checksum error in the compressed stream',
     'log.b2f_erstes_byte_0x_soh':'✗ B2F: first byte 0x%s ≠ SOH',
+    'log.b2f_text_vor_binary_ignoriert':'B2F: ignored text before SOH — %s',
     'log.b2f_ff_empfang_fertig_eigener':'B2F → FF (reception done, our own outbox follows)',
     'log.b2f_ff_gateway_hat_keine':'B2F ← FF (gateway has no messages)',
     'log.b2f_fq_auch_wir_sind':'B2F → FQ (we are done too) — session ends once the FQ is acknowledged',
@@ -12058,6 +12177,7 @@ const I18N = {
     'log.data_0x_decodefehler_nak_q':'✗ DATA 0x%s decode error → NAK Q=%s',
     'log.data_0x_empfangen_b_ack':'✓ DATA 0x%s received (%s B) → ACK Q=%s',
     'log.data_ohne_acknak_disc':'✗ %s× DATA without ACK/NAK → DISC',
+    'log.data_timeout_downshift':'No ACK/NAK after retry %s/%s — downshift DATA gear 0x%s → 0x%s (Gear %s)',
     'log.data_wiederholung':'↻ DATA retry %s/%s',
     'log.datei_konnte_nicht_gelesen_werden':'⚠ could not read file: %s',
     'log.dateiname_auf_50_zeichen_gekuerzt':'⚠ filename truncated to 50 characters (Winlink limit): %s',
@@ -12080,6 +12200,8 @@ const I18N = {
     'log.fqdraintimeout_gegenstelle_gibt_nicht_ab':'⚠ FQ drain timeout (far end does not hand over) — disconnecting with DISC',
     'log.frame_b00x_sid0x_q':'✓ FRAME: %s b0=0x%s SID=0x%s Q=%s',
     'log.frame_nodecode_mddistanz_zu_hoch':'✗ FRAME no-decode (MD distance too high)',
+    'log.frame_nodecode_leader_suffix':'leader offset=%s Hz, S/N=%s dB @sample %s',
+    'log.frame_nodecode_md_suffix':'MD candidates: d1=%s/%s d2=%s/%s d3=%s/%s session=%s pending=%s',
     'log.turnmeter':'⏱ Turnaround: host tail %s ms | audio left %s ms | stream restart %s ms | blind time %s ms | %s | switching transient %s % | RX peak %s | noise floor %s %',
     'turn.peakSplit':'%s % (onset %s % / rest %s %)',
     'log.turnsummary':'⏱ Turnaround summary: %s transmissions | restart: median %s ms (min %s / max %s) | blind time: median %s ms (max %s) | answer detected on %s transmissions (%s %), median answer time %s ms, decoded %s | median noise floor %s % | median switching transient %s % | no detection despite a signal trace (peak at least 5 dB above the window noise floor): %s',
@@ -12101,6 +12223,8 @@ const I18N = {
     'log.gpshinweis_kein_secure_context_vermutlich':'📍 GPS note: no secure context (probably http://). Over file:// or https:// the query is allowed.',
     'log.gpsposition_fuer_die_mail_wird':'📍 Determining GPS position for the mail — precise GNSS fix first (best outdoors, confirm the permission prompt if asked) …',
     'log.handshake_unvollstaendig_conack_ohne_dataack':'✗ Handshake incomplete — %s× ConAck without DataACK → DISC',
+    'log.handshake_dataack_waited_ms':'DataACK wait time: %s ms',
+    'log.dataack_after_conack_ms_repeats':'DataACK received after %s ms (%s ConAck repeat(s))',
     'log.hinweis_b_komprimiert_ueber_funk':'⚠ Note: %s B compressed — correspondingly long transmit time over the air (QRP).',
     'log.icom_via_webusb_cp210x_iface':'Icom via WebUSB (CP210x): Iface %s, EP-IN %s/EP-OUT %s, %s Baud, 8N1, DTR/RTS neutral',
     'log.id':'  → ID: %s [%s]',
