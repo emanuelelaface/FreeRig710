@@ -824,12 +824,14 @@ static const char *band_for(uint32_t hz)
     return NULL;
 }
 
-static bool adif_mode(const char *radio, const char *override, char *mode, size_t ms, char *sub, size_t ss)
+static bool adif_mode(const char *radio, const char *override, const char *sub_override, char *mode, size_t ms, char *sub, size_t ss)
 {
     sub[0] = '\0';
     if (override && strcasecmp(override, "AUTO")) {
         if (!strcasecmp(override, "FT8")) snprintf(mode, ms, "FT8");
         else if (!strcasecmp(override, "FT4")) { snprintf(mode, ms, "MFSK"); snprintf(sub, ss, "FT4"); }
+        else if (!strcasecmp(override, "JS8")) { snprintf(mode, ms, "MFSK"); snprintf(sub, ss, "JS8"); }
+        else if (!strcasecmp(override, "MFSK") && sub_override && !strcasecmp(sub_override, "JS8")) { snprintf(mode, ms, "MFSK"); snprintf(sub, ss, "JS8"); }
         else if (!strcasecmp(override, "PSK31")) { snprintf(mode, ms, "PSK"); snprintf(sub, ss, "PSK31"); }
         else if (!strcasecmp(override, "RTTY")) snprintf(mode, ms, "RTTY");
         else if (!strcasecmp(override, "SSB")) { snprintf(mode, ms, "SSB"); if (!strcasecmp(radio, "USB") || !strcasecmp(radio, "LSB")) snprintf(sub, ss, "%s", radio); }
@@ -1698,6 +1700,7 @@ static esp_err_t qrz_log_handler(httpd_req_t *req)
     if (!j) return send_error(req, "422 Unprocessable Entity", "invalid JSON");
     const char *call = json_string(j, "call", NULL);
     const char *override = json_string(j, "mode", "AUTO");
+    const char *sub_override = json_string(j, "submode", NULL);
     const char *iso = json_string(j, "timestamp_utc", NULL);
     const char *iso_off = json_string(j, "timestamp_off_utc", NULL);
     if (!call || strlen(call) < 3 || strlen(call) > 16) {
@@ -1726,7 +1729,7 @@ static esp_err_t qrz_log_handler(httpd_req_t *req)
     const char *band_override = json_string(j, "band", NULL);
     const char *band = band_override && band_override[0] ? band_override : band_for(job->frequency_hz);
     if (!band || strlen(band) >= sizeof(job->band) ||
-        !adif_mode(radio.mode, override, job->mode, sizeof(job->mode), job->submode, sizeof(job->submode))) {
+        !adif_mode(radio.mode, override, sub_override, job->mode, sizeof(job->mode), job->submode, sizeof(job->submode))) {
         cJSON_Delete(j); memset(job->config.api_key, 0, sizeof(job->config.api_key)); free(job);
         return send_error(req, "422 Unprocessable Entity", "frequency/mode cannot be mapped to QRZ ADIF");
     }

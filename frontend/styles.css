@@ -282,7 +282,7 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
 }
 
 @media (max-width: 520px) {
-  .station-actions { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .station-actions { display: grid; grid-template-columns: repeat(2, 1fr); }
   .station-button { min-width: 0; width: 100%; padding-inline: .5rem; font-size: .82rem; }
 }
 
@@ -813,6 +813,8 @@ body.panel-reorder-active {
 a.station-button { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
 .station-button.ft8-launch-button { border-color: #36789e; color: #c9efff; background: rgba(66,184,255,.09); }
 .station-button.ft8-launch-button:hover { border-color: var(--accent); background: rgba(66,184,255,.16); }
+.station-button.js8-launch-button { border-color: #36789e; color: #c9efff; background: rgba(66,184,255,.09); }
+.station-button.js8-launch-button:hover { border-color: var(--accent); background: rgba(66,184,255,.16); }
 
 
 /* Main display states and compact mobile workstation layout. */

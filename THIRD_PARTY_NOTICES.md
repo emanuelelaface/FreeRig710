@@ -1,6 +1,6 @@
 # Third-party notices
 
-The FreeRig710 source in this repository is licensed under the MIT License. The following external software/data are used by the FT8 and Winlink implementations and keep their own licenses.
+The FreeRig710 source in this repository is licensed under the MIT License. The following external software/data are used by the FT8, JS8 and Winlink implementations and keep their own licenses.
 
 ## ft8js 0.0.2 / ft8_lib
 
@@ -41,6 +41,25 @@ The generator uses the GeoNames `cities500`, `admin1CodesASCII` and `countryInfo
 License: <https://creativecommons.org/licenses/by/4.0/>
 
 GeoNames export documentation: <https://download.geonames.org/export/dump/readme.txt>
+
+## JS8 WASM codec from wfweb / JS8Call-improved
+
+`frontend/js8.html` loads the vendored browser JS8 codec from:
+
+```text
+frontend/vendor/js8/js8.mjs
+frontend/vendor/js8/wasm/js8.mjs
+frontend/vendor/js8/wasm/js8.wasm
+```
+
+- wfweb: https://github.com/adecarolis/wfweb
+- wfweb license: GPL-3.0
+- copied wfweb commit: `07179615dd5a5cded0c6512d5d5aed4e2de04cf0`
+- JS8Call-improved: https://github.com/JS8Call-improved/JS8Call-improved
+- JS8Call-improved license: GPL-3.0
+- JS8Call-improved source commit referenced by wfweb vendoring notes: `3f1b548965a45d41eaae57b61a23c2f42fc8d4cc`
+
+Notes: FreeRig710 uses these files for native browser JS8 encode/decode while keeping CAT, audio routing and PTT on the existing FreeRig710 browser/ESP32 path. Review the GPL-3.0 terms before redistributing builds that include these vendored JS8 assets.
 
 ## ARDOP Winlink by DL2MAN
 

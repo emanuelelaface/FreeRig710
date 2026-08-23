@@ -1,6 +1,6 @@
 # FreeRig710
 
-**FreeRig710** is a self-hosted remote-control, FT8 and Winlink station for the **Yaesu FT-710**, rebuilt around a **Waveshare ESP32-P4-NANO**. The ESP32-P4 talks directly to the radio over USB for CAT and audio, captures the FT-710 external display through HDMI/DVI-to-CSI-2, serves the control API over wired Ethernet, and owns the time-critical/safety-critical FT8 transmit path. The web frontend can be served locally for development or from Apache over HTTPS with form authentication.
+**FreeRig710** is a self-hosted remote-control, FT8, JS8 and Winlink station for the **Yaesu FT-710**, rebuilt around a **Waveshare ESP32-P4-NANO**. The ESP32-P4 talks directly to the radio over USB for CAT and audio, captures the FT-710 external display through HDMI/DVI-to-CSI-2, serves the control API over wired Ethernet, and owns the time-critical/safety-critical digital transmit path. The web frontend can be served locally for development or from Apache over HTTPS with form authentication.
 
 > **RF safety:** this software can key a real transmitter. Start at low power or into a dummy load, verify CAT/PTT/audio behavior locally, and do not expose the ESP32 HTTP port directly to the public Internet.
 
@@ -43,11 +43,12 @@ See [docs/HARDWARE.md](docs/HARDWARE.md) for the complete wiring and signal path
 - FT-710 memory synchronization and local metadata.
 - CW decoder/keyer and browser SSTV decoder.
 - Integrated FT8 waterfall, decoder, band activity, QSO state machine, auto sequencing, staged 48 kHz TX, ALC tune helper and logging.
+- Native browser JS8 console with JS8 encode/decode, band selection, heard list, CQ/heartbeat, directed messages and ADIF line generation, using the existing FreeRig710 CAT and audio WebSocket path.
 - Browser Winlink/ARDOP client based on DL2MAN's ARDOP Winlink work, adapted to use the existing FreeRig710 CAT and browser audio/WebSocket path.
 - QRZ Logbook configuration, QSO upload, full import and incremental synchronization.
 - Local worked-call/DXCC/country tracking and configurable FT8 color-priority rules.
 - Offline Maidenhead geography lookup for continent, country, region and representative nearby city.
-- Apache2 deployment with one HTTPS form-login session protecting the frontend, API, audio WebSocket, video and FT8.
+- Apache2 deployment with one HTTPS form-login session protecting the frontend, API, audio WebSocket, video and digital-mode pages.
 
 ## Architecture
 
@@ -81,7 +82,7 @@ The firmware obtains an address by DHCP and advertises `ft710.local` through mDN
 FreeRig710/
 ├── components/              ESP-IDF components: CAT, USB, audio, video, API, config
 ├── main/                    ESP32-P4 application entry point
-├── frontend/                static main, FT8 and Winlink web interfaces
+├── frontend/                static main, FT8, JS8 and Winlink web interfaces
 ├── deploy/apache/           authenticated Apache2 reverse-proxy templates
 ├── docs/                    installation, hardware, radio, QRZ and UI documentation
 ├── hardware/case/           top.stl and bottom.stl enclosure files
@@ -148,7 +149,7 @@ sudo install -d -o www-data -g www-data /var/www/ft710
 sudo rsync -a --delete frontend/ /var/www/ft710/
 ```
 
-Then use the template in [deploy/apache/ft710-ssl.conf.example](deploy/apache/ft710-ssl.conf.example). The current frontend expects same-origin paths such as `/api/v1/...`, `/api/v1/audio/ws` and `/video.mjpeg`; `winlink.html` uses the same API and audio WebSocket origin. It does **not** need the old Raspberry Pi `/ft710-api/` or noVNC `/ft8/` proxies.
+Then use the template in [deploy/apache/ft710-ssl.conf.example](deploy/apache/ft710-ssl.conf.example). The current frontend expects same-origin paths such as `/api/v1/...`, `/api/v1/audio/ws` and `/video.mjpeg`; `js8.html` and `winlink.html` use the same API and audio WebSocket origin. It does **not** need the old Raspberry Pi `/ft710-api/` or noVNC `/ft8/` proxies.
 
 Complete authenticated Apache setup: [docs/APACHE.md](docs/APACHE.md).
 
@@ -206,6 +207,19 @@ FreeRig710 keeps a compact offline Maidenhead-4 geographic index. A decoded grid
 
 Detailed FT8 operation: [docs/FT8.md](docs/FT8.md).
 
+## JS8 interface
+
+The **JS8** button opens `frontend/js8.html`, a native browser JS8 operating console. It uses vendored JS8 WASM assets from `wfweb`, based on JS8Call-improved, while FreeRig710 continues to provide CAT, DATA-U setup, PTT and 48 kHz audio transport through its existing FT-710 API and audio WebSocket.
+
+The page provides standard JS8 dial-frequency buttons, selectable JS8 submodes, waterfall click-to-set TX audio frequency, monitor decode, heard station table, CQ/heartbeat/direct-message transmit controls and a small ADIF line builder.
+
+Upstream references:
+
+- wfweb: <https://github.com/adecarolis/wfweb>
+- JS8Call-improved: <https://github.com/JS8Call-improved/JS8Call-improved>
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for GPL-3.0 license and attribution notes for the vendored JS8 codec assets.
+
 ## Winlink / ARDOP interface
 
 The **Winlink** button opens `frontend/winlink.html`, a browser Winlink/ARDOP client integrated with FreeRig710. The modem/client code is based on DL2MAN's ARDOP Winlink project and keeps DL2MAN's ARDOP/B2F implementation in the browser while routing CAT and audio through FreeRig710's existing FT-710 API and audio WebSocket.
@@ -230,7 +244,7 @@ Both meshes are watertight in the supplied files. See [hardware/case/README.md](
 
 FreeRig710 source code is released under the **MIT License**; see [LICENSE](LICENSE).
 
-The FT8 browser path and the Winlink/ARDOP page also use external components and data with their own licenses, notably `ft8js`/`ft8_lib`, `@e04/ft8ts`, GeoNames data and DL2MAN's ARDOP Winlink client work. They are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The external FT8 JS/WASM modules are currently loaded at runtime from jsDelivr, so a completely air-gapped FT8 deployment requires vendoring those reviewed assets separately.
+The FT8 browser path, JS8 page and Winlink/ARDOP page also use external components and data with their own licenses, notably `ft8js`/`ft8_lib`, `@e04/ft8ts`, GeoNames data, the vendored GPL-3.0 JS8 codec assets from `wfweb`/JS8Call-improved and DL2MAN's ARDOP Winlink client work. They are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The external FT8 JS/WASM modules are currently loaded at runtime from jsDelivr, so a completely air-gapped FT8 deployment requires vendoring those reviewed assets separately.
 
 ## Replacing the old Raspberry Pi repository
 

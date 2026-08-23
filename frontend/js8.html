@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FreeRig710 · JS8</title>
+  <link rel="stylesheet" href="styles.css?v=1.0">
+  <link rel="stylesheet" href="js8-page.css?v=1.0-js8">
+</head>
+<body class="js8-page-body">
+  <main class="js8-page-shell">
+    <header class="js8-page-header">
+      <div class="js8-title-block">
+        <p class="eyebrow">FREERIG710 · YAESU FT-710</p>
+        <h1>JS8 Operating Console</h1>
+      </div>
+      <div class="js8-header-status" aria-label="JS8 operating status">
+        <span id="js8-radio-state" class="js8-page-pill">RADIO --</span>
+        <span id="js8-audio-state" class="js8-page-pill">AUDIO OFF</span>
+        <span id="js8-codec-state" class="js8-page-pill">CODEC --</span>
+        <span id="js8-rx-state" class="js8-page-pill">RX OFF</span>
+        <span id="js8-clock-state" class="js8-page-pill">CLOCK --</span>
+        <a class="station-button js8-back-button" href="index.html">Main radio</a>
+      </div>
+    </header>
+
+    <section class="card js8-waterfall-card" aria-label="JS8 waterfall">
+      <div class="js8-section-title js8-waterfall-title">
+        <strong>Waterfall · FFT 200-3000 Hz</strong>
+        <span id="js8-tx-df-label">TX DF 1500 Hz</span>
+      </div>
+      <div class="js8-axis js8-axis-top" aria-hidden="true">
+        <span style="--js8-axis-left:0%">200</span><span style="--js8-axis-left:14.29%">600</span><span style="--js8-axis-left:28.57%">1000</span><span style="--js8-axis-left:42.86%">1400</span><span style="--js8-axis-left:57.14%">1800</span><span style="--js8-axis-left:71.43%">2200</span><span style="--js8-axis-left:85.71%">2600</span><span style="--js8-axis-left:100%">3000 Hz</span>
+      </div>
+      <div class="js8-waterfall-wrap" id="js8-waterfall-hitbox">
+        <canvas id="js8-waterfall" width="1200" height="210" aria-label="JS8 waterfall from 200 to 3000 Hz; click to set TX audio frequency"></canvas>
+        <div id="js8-tx-cursor" class="js8-tx-cursor" aria-hidden="true"><span id="js8-tx-cursor-label">1500</span></div>
+      </div>
+      <div class="js8-slot-strip">
+        <div><span>UTC</span><strong id="js8-utc">--:--:--.---</strong></div>
+        <div><span>Submode</span><strong id="js8-submode-readout">Normal</strong></div>
+        <div><span>Next</span><strong id="js8-next">--.-- s</strong></div>
+        <div><span>Decoder</span><strong id="js8-decode-state">idle</strong></div>
+        <div><span>RX Level</span><strong id="js8-audio-level">-- dBFS</strong></div>
+      </div>
+      <div class="js8-timing-bar" aria-label="JS8 slot phase"><div id="js8-timing-progress" class="js8-timing-progress"></div></div>
+    </section>
+
+    <section class="card js8-control-strip" aria-label="JS8 band and receiver controls">
+      <div class="js8-band-button-row" id="js8-band-buttons" aria-label="JS8 band selection">
+        <button type="button" data-js8-band="160m">160</button><button type="button" data-js8-band="80m">80</button><button type="button" data-js8-band="40m">40</button><button type="button" data-js8-band="30m">30</button><button type="button" data-js8-band="20m">20</button><button type="button" data-js8-band="17m">17</button><button type="button" data-js8-band="15m">15</button><button type="button" data-js8-band="12m">12</button><button type="button" data-js8-band="10m">10</button><button type="button" data-js8-band="6m">6</button>
+      </div>
+      <label class="js8-native-band-select"><span>Band</span>
+        <select id="js8-band-select">
+          <option value="">Select band…</option>
+        </select>
+      </label>
+      <div class="js8-readouts">
+        <div class="js8-readout-box"><span>RX VFO A</span><strong id="js8-rx-dial">--.---.---</strong></div>
+        <div class="js8-readout-box"><span>TX VFO B</span><strong id="js8-tx-vfo-b">--.---.---</strong></div>
+        <div class="js8-readout-box"><span>TX RF</span><strong id="js8-tx-rf">--.---.---</strong></div>
+        <label class="js8-readout-box js8-control-cell"><span>TX DF</span><div class="js8-inline-input"><input id="js8-tx-audio" type="number" min="200" max="3000" step="10" value="1500"><strong>Hz</strong></div></label>
+        <label class="js8-readout-box js8-control-cell"><span>Submode</span><select id="js8-submode"><option value="4">Slow · 30 s</option><option value="0" selected>Normal · 15 s</option><option value="1">Fast · 10 s</option><option value="2">JS8 40 · 6 s</option><option value="8">JS8 60 · 4 s</option></select></label>
+        <label class="js8-switch-control js8-readout-box js8-control-cell"><span>Monitor</span><span class="js8-switch-line"><input id="js8-enabled" type="checkbox"><strong>RX</strong></span></label>
+        <label class="js8-switch-control js8-readout-box js8-control-cell"><span>Auto Freq</span><span class="js8-switch-line"><input id="js8-auto-freq" type="checkbox" checked><strong>TX</strong></span></label>
+        <label class="js8-switch-control js8-readout-box js8-control-cell"><span>Auto RF Gain</span><span class="js8-switch-line"><input id="js8-auto-rf" type="checkbox" checked><strong id="js8-rf-gain">-- / 255</strong></span></label>
+        <label class="js8-rf-target-control js8-readout-box js8-control-cell"><span>RX Target</span><div class="js8-inline-input"><input id="js8-rf-target" type="number" min="-70" max="-30" step="1" value="-50"><strong>dBFS</strong></div></label>
+        <label class="js8-rf-manual-control js8-readout-box js8-control-cell"><span>RX RF Gain</span><div class="js8-inline-input"><input id="js8-rf-gain-slider" type="range" min="0" max="255" step="1" value="180" disabled><strong id="js8-rf-gain-slider-label">--</strong></div></label>
+      </div>
+      <div class="js8-config-row">
+        <p id="js8-radio-config-state" class="help js8-operating-note">Select a JS8 band to configure DATA-U, split A→B and browser RX.</p>
+      </div>
+    </section>
+
+    <section class="js8-activity-layout">
+      <article class="card js8-activity-card">
+        <div class="js8-section-title"><strong>Heard</strong><span id="js8-decode-count">0 decodes</span><button id="js8-clear-decodes" class="secondary small" type="button">Clear</button></div>
+        <div class="js8-table-wrap">
+          <table class="js8-table">
+            <thead><tr><th>UTC</th><th>CALL</th><th>SNR</th><th>DF</th><th>MODE</th><th>COUNT</th><th>TEXT</th></tr></thead>
+            <tbody id="js8-heard-body"><tr class="js8-empty-row"><td colspan="7">Select a band and enable Monitor</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card js8-qso-card">
+        <div class="js8-section-title"><strong>QSO</strong><span id="js8-frame-count">0 messages · 0 queued</span></div>
+        <div class="js8-chat-log" id="js8-chat-log" aria-live="polite"><p class="js8-empty-chat">Decoded messages and your transmissions appear here.</p></div>
+        <div class="js8-qso-grid">
+          <label><span>My Call</span><input id="js8-my-call" type="text" maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="SA7CHI"></label>
+          <label><span>My Grid</span><input id="js8-my-grid" type="text" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="JO65"></label>
+          <label><span>To</span><input id="js8-to-call" type="text" maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="@ALLCALL or CALL"></label>
+          <label><span>Message</span><input id="js8-message" type="text" maxlength="280" autocomplete="off" spellcheck="true" placeholder="Message text"></label>
+        </div>
+        <div class="js8-command-row" id="js8-command-buttons" aria-label="JS8 quick commands">
+          <button type="button" data-command="SNR?">SNR?</button><button type="button" data-command="GRID?">GRID?</button><button type="button" data-command="INFO?">INFO?</button><button type="button" data-command="STATUS?">STATUS?</button><button type="button" data-command="AGN?">AGN?</button><button type="button" data-command="QSL">QSL</button><button type="button" data-command="RR">RR</button><button type="button" data-command="73">73</button>
+        </div>
+        <div class="js8-tx-actions">
+          <button id="js8-send" type="button" class="js8-primary">Send</button>
+          <button id="js8-cq" type="button">CQ</button>
+          <button id="js8-heartbeat" type="button">HB</button>
+          <button id="js8-halt" type="button" class="danger" disabled>Halt TX</button>
+        </div>
+        <dl class="status-list js8-qso-status">
+          <div><dt>TX status</dt><dd id="js8-tx-state">idle</dd></div>
+          <div><dt>Last TX</dt><dd id="js8-last-tx">--</dd></div>
+        </dl>
+      </article>
+    </section>
+
+    <section class="card js8-qrz-card" aria-label="JS8 QRZ log">
+      <div class="js8-section-title"><strong>QRZ Log</strong><span id="js8-qrz-status" class="js8-qrz-status">CHECKING</span></div>
+      <dl class="status-list js8-qrz-preview">
+        <div><dt>My call</dt><dd id="js8-qrz-station-call">Not configured</dd></div>
+        <div><dt>TX frequency</dt><dd id="js8-qrz-tx-frequency">--.---.---</dd></div>
+        <div><dt>RX frequency</dt><dd id="js8-qrz-rx-frequency">--.---.---</dd></div>
+        <div><dt>Band</dt><dd id="js8-qrz-band">--</dd></div>
+        <div><dt>Mode</dt><dd id="js8-qrz-mode">JS8</dd></div>
+        <div><dt>Power</dt><dd id="js8-qrz-power">--</dd></div>
+        <div><dt>UTC</dt><dd id="js8-qrz-utc">--</dd></div>
+      </dl>
+      <form id="js8-qrz-form" class="js8-qrz-grid">
+        <label><span>Call</span><input id="js8-qrz-call" type="text" minlength="3" maxlength="16" pattern="[A-Za-z0-9/]+" autocomplete="off" autocapitalize="characters" spellcheck="false" required></label>
+        <label><span>Grid</span><input id="js8-qrz-grid" type="text" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+        <label><span>RST sent</span><input id="js8-qrz-rst-sent" type="text" maxlength="7" placeholder="-12"></label>
+        <label><span>RST received</span><input id="js8-qrz-rst-rcvd" type="text" maxlength="7" placeholder="+01"></label>
+        <label class="js8-qrz-notes"><span>Notes</span><input id="js8-qrz-notes" type="text" maxlength="120" placeholder="Optional"></label>
+        <button id="js8-qrz-submit" type="submit" disabled>Log QSO to QRZ</button>
+      </form>
+      <p id="js8-qrz-result" class="help js8-qrz-result" aria-live="polite">QRZ status checking…</p>
+    </section>
+
+    <details class="card js8-diagnostics-card">
+      <summary>Developer diagnostics</summary>
+      <pre id="js8-log" class="js8-log">JS8 page loading…</pre>
+    </details>
+
+    <p class="help js8-page-footer-status">FreeRig710 · native browser JS8 using the existing FT-710 CAT and audio WebSocket path.</p>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <script src="config.js?v=1.0"></script>
+  <script type="module" src="js8-page.js?v=1.0-js8-qrz2"></script>
+</body>
+</html>
