@@ -44,12 +44,14 @@ static uint64_t s_audio_ws_rx_bytes;
 static uint64_t s_audio_ws_tx_bytes;
 static uint64_t s_audio_ws_tx_microphone_bytes;
 static uint64_t s_audio_ws_tx_ft8_bytes;
+static uint64_t s_audio_ws_tx_digital_bytes;
 static uint64_t s_audio_ws_tx_rejected_bytes;
 
 typedef enum {
     AUDIO_TX_SOURCE_NONE = 0,
     AUDIO_TX_SOURCE_MICROPHONE,
     AUDIO_TX_SOURCE_FT8,
+    AUDIO_TX_SOURCE_DIGITAL,
 } audio_tx_source_t;
 static audio_tx_source_t s_audio_tx_source = AUDIO_TX_SOURCE_NONE;
 
@@ -136,6 +138,17 @@ static void ft8_tune_request_stop(const char *reason);
 #define FT8_TX_WAVEFORM_QUEUE_LOW          8000U   /* ~83 ms at 48 kHz mono */
 #define FT8_TX_WAVEFORM_QUEUE_HIGH        18000U   /* ~188 ms; below stream capacity */
 
+#define DIGITAL_TX_WAVEFORM_MAX_BYTES   6000000U
+#define DIGITAL_TX_STAGE_RATE_HZ           48000U
+#define DIGITAL_TX_WAVEFORM_FEED_CHUNK      3840U
+#define DIGITAL_TX_WAVEFORM_QUEUE_LOW        8000U
+#define DIGITAL_TX_WAVEFORM_QUEUE_HIGH      18000U
+#define DIGITAL_TX_MAX_LABEL_LEN              48U
+#define DIGITAL_TX_MAX_PTT_DELAY_MS         1500U
+#define DIGITAL_TX_MAX_TAIL_MS              1200U
+#define DIGITAL_TX_MIN_LEASE_MS             2500U
+#define DIGITAL_TX_MAX_LEASE_MS           90000U
+
 typedef struct {
     bool task_running;
     bool active;
@@ -194,16 +207,42 @@ static bool s_ft8_wave_ready;
 static uint64_t s_ft8_wave_upload_started_ms;
 static char s_ft8_tx_last_reason[96] = "";
 
+static SemaphoreHandle_t s_digital_wave_mutex;
+static uint8_t *s_digital_wave_data;
+static size_t s_digital_wave_expected_bytes;
+static size_t s_digital_wave_received_bytes;
+static size_t s_digital_wave_consumed_bytes;
+static uint32_t s_digital_wave_id;
+static uint32_t s_digital_wave_sample_rate_hz;
+static int s_digital_wave_owner_fd = -1;
+static bool s_digital_wave_uploading;
+static bool s_digital_wave_ready;
+static uint64_t s_digital_wave_upload_started_ms;
+
+static portMUX_TYPE s_digital_tx_mux = portMUX_INITIALIZER_UNLOCKED;
+static bool s_digital_tx_task_running;
+static bool s_digital_tx_active;
+static bool s_digital_tx_stop_requested;
+static uint32_t s_digital_tx_waveform_id;
+static uint64_t s_digital_tx_started_ms;
+static uint64_t s_digital_tx_deadline_ms;
+static char s_digital_tx_phase[20] = "IDLE";
+static char s_digital_tx_last_reason[96] = "";
+
 static cJSON *ft8_tx_status_json(void);
 static void ft8_tx_request_stop(const char *reason);
 static bool ft8_tx_is_running(void);
 static uint64_t monotonic_ms(void);
+static bool digital_tx_is_running(void);
+static void digital_tx_request_stop(const char *reason);
+static void digital_waveform_clear(void);
 
 static const char *audio_tx_source_name(audio_tx_source_t source)
 {
     switch (source) {
         case AUDIO_TX_SOURCE_MICROPHONE: return "MICROPHONE";
         case AUDIO_TX_SOURCE_FT8: return "FT8";
+        case AUDIO_TX_SOURCE_DIGITAL: return "DIGITAL";
         default: return "NONE";
     }
 }
@@ -564,6 +603,171 @@ static bool ft8_waveform_ready_for(int fd, uint32_t id, size_t *bytes_out, uint3
     return ready;
 }
 
+typedef struct {
+    bool uploading;
+    bool ready;
+    uint32_t id;
+    uint32_t sample_rate_hz;
+    int owner_fd;
+    size_t expected_bytes;
+    size_t received_bytes;
+    size_t consumed_bytes;
+    uint64_t upload_started_ms;
+    uint8_t *data;
+} digital_wave_snapshot_t;
+
+typedef struct {
+    int fd;
+    uint32_t id;
+    uint32_t ptt_delay_ms;
+    uint32_t tail_ms;
+    uint32_t lease_ms;
+    char label[DIGITAL_TX_MAX_LABEL_LEN];
+} digital_tx_params_t;
+
+static void digital_waveform_get_snapshot(digital_wave_snapshot_t *out)
+{
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (s_digital_wave_mutex == NULL || xSemaphoreTake(s_digital_wave_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return;
+    out->uploading = s_digital_wave_uploading;
+    out->ready = s_digital_wave_ready;
+    out->id = s_digital_wave_id;
+    out->sample_rate_hz = s_digital_wave_sample_rate_hz;
+    out->owner_fd = s_digital_wave_owner_fd;
+    out->expected_bytes = s_digital_wave_expected_bytes;
+    out->received_bytes = s_digital_wave_received_bytes;
+    out->consumed_bytes = s_digital_wave_consumed_bytes;
+    out->upload_started_ms = s_digital_wave_upload_started_ms;
+    out->data = s_digital_wave_data;
+    xSemaphoreGive(s_digital_wave_mutex);
+}
+
+static void digital_waveform_clear(void)
+{
+    if (s_digital_wave_mutex == NULL) return;
+    uint8_t *old = NULL;
+    if (xSemaphoreTake(s_digital_wave_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return;
+    old = s_digital_wave_data;
+    s_digital_wave_data = NULL;
+    s_digital_wave_expected_bytes = 0;
+    s_digital_wave_received_bytes = 0;
+    s_digital_wave_consumed_bytes = 0;
+    s_digital_wave_id = 0;
+    s_digital_wave_sample_rate_hz = 0;
+    s_digital_wave_owner_fd = -1;
+    s_digital_wave_uploading = false;
+    s_digital_wave_ready = false;
+    s_digital_wave_upload_started_ms = 0;
+    xSemaphoreGive(s_digital_wave_mutex);
+    if (old) heap_caps_free(old);
+}
+
+static bool digital_waveform_begin_upload(int fd, uint32_t id, size_t bytes, uint32_t sample_rate_hz, char *reason, size_t reason_len)
+{
+    if (fd < 0 || id == 0 || bytes == 0 || bytes > DIGITAL_TX_WAVEFORM_MAX_BYTES || (bytes & 1U)) {
+        snprintf(reason, reason_len, "invalid staged digital waveform size/id");
+        return false;
+    }
+    if (sample_rate_hz != DIGITAL_TX_STAGE_RATE_HZ) {
+        snprintf(reason, reason_len, "staged digital sample rate must be 48000 Hz");
+        return false;
+    }
+    if (digital_tx_is_running() || ft8_rf_operation_is_running()) {
+        snprintf(reason, reason_len, "cannot upload staged digital waveform during RF TX");
+        return false;
+    }
+    if (s_digital_wave_mutex == NULL) {
+        snprintf(reason, reason_len, "digital waveform mutex unavailable");
+        return false;
+    }
+    uint8_t *data = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!data) data = heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
+    if (!data) {
+        snprintf(reason, reason_len, "could not allocate staged digital waveform buffer");
+        return false;
+    }
+    if (xSemaphoreTake(s_digital_wave_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        heap_caps_free(data);
+        snprintf(reason, reason_len, "digital waveform staging lock timeout");
+        return false;
+    }
+    uint8_t *old = s_digital_wave_data;
+    s_digital_wave_data = data;
+    s_digital_wave_expected_bytes = bytes;
+    s_digital_wave_received_bytes = 0;
+    s_digital_wave_consumed_bytes = 0;
+    s_digital_wave_id = id;
+    s_digital_wave_sample_rate_hz = sample_rate_hz;
+    s_digital_wave_owner_fd = fd;
+    s_digital_wave_uploading = true;
+    s_digital_wave_ready = false;
+    s_digital_wave_upload_started_ms = monotonic_ms();
+    xSemaphoreGive(s_digital_wave_mutex);
+    if (old) heap_caps_free(old);
+    return true;
+}
+
+static bool digital_waveform_append(int fd, const uint8_t *data, size_t bytes, bool *became_ready)
+{
+    if (became_ready) *became_ready = false;
+    if (!data || bytes == 0 || s_digital_wave_mutex == NULL) return false;
+    if (xSemaphoreTake(s_digital_wave_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return false;
+    bool ok = false;
+    if (s_digital_wave_uploading && s_digital_wave_data && s_digital_wave_owner_fd == fd &&
+        s_digital_wave_received_bytes + bytes <= s_digital_wave_expected_bytes) {
+        memcpy(s_digital_wave_data + s_digital_wave_received_bytes, data, bytes);
+        s_digital_wave_received_bytes += bytes;
+        if (s_digital_wave_received_bytes == s_digital_wave_expected_bytes) {
+            s_digital_wave_uploading = false;
+            s_digital_wave_ready = true;
+            if (became_ready) *became_ready = true;
+        }
+        ok = true;
+    }
+    xSemaphoreGive(s_digital_wave_mutex);
+    return ok;
+}
+
+static bool digital_waveform_ready_for(int fd, uint32_t id, size_t *bytes_out, uint32_t *sample_rate_out)
+{
+    if (s_digital_wave_mutex == NULL || xSemaphoreTake(s_digital_wave_mutex, pdMS_TO_TICKS(50)) != pdTRUE) return false;
+    const bool ready = s_digital_wave_ready && s_digital_wave_data && s_digital_wave_owner_fd == fd && s_digital_wave_id == id &&
+                       s_digital_wave_received_bytes == s_digital_wave_expected_bytes && s_digital_wave_expected_bytes > 0 &&
+                       s_digital_wave_sample_rate_hz == DIGITAL_TX_STAGE_RATE_HZ;
+    if (ready && bytes_out) *bytes_out = s_digital_wave_expected_bytes;
+    if (ready && sample_rate_out) *sample_rate_out = s_digital_wave_sample_rate_hz;
+    xSemaphoreGive(s_digital_wave_mutex);
+    return ready;
+}
+
+static bool digital_tx_is_running(void)
+{
+    bool running;
+    portENTER_CRITICAL(&s_digital_tx_mux);
+    running = s_digital_tx_task_running;
+    portEXIT_CRITICAL(&s_digital_tx_mux);
+    return running;
+}
+
+static void digital_tx_set_phase(const char *phase, const char *reason)
+{
+    portENTER_CRITICAL(&s_digital_tx_mux);
+    if (phase) snprintf(s_digital_tx_phase, sizeof(s_digital_tx_phase), "%s", phase);
+    if (reason) snprintf(s_digital_tx_last_reason, sizeof(s_digital_tx_last_reason), "%s", reason);
+    portEXIT_CRITICAL(&s_digital_tx_mux);
+}
+
+static void digital_tx_request_stop(const char *reason)
+{
+    portENTER_CRITICAL(&s_digital_tx_mux);
+    if (s_digital_tx_task_running) {
+        s_digital_tx_stop_requested = true;
+        if (reason && reason[0]) snprintf(s_digital_tx_last_reason, sizeof(s_digital_tx_last_reason), "%s", reason);
+    }
+    portEXIT_CRITICAL(&s_digital_tx_mux);
+}
+
 static esp_err_t reject_radio_reconfigure_during_ft8_tune(httpd_req_t *req)
 {
     return ft8_rf_operation_is_running()
@@ -702,7 +906,7 @@ static esp_err_t manual_audio_tx_set(bool enabled)
 
         s_manual_tx_cat_quiet = true;
         s_manual_tx_isolated = true;
-        ESP_LOGI(TAG, "FT8.5.16 manual TX isolation active: UAC RX suspended, CAT BULK IN halted");
+        ESP_LOGI(TAG, "manual/staged TX isolation active: UAC RX suspended, CAT BULK IN halted");
     } else {
         /* TX0 must be attempted first.  Only resources owned by the manual PTT
          * path are restored here; automatic FT8/Tune tasks own their cleanup. */
@@ -721,7 +925,7 @@ static esp_err_t manual_audio_tx_set(bool enabled)
             s_manual_tx_isolated = false;
             s_manual_tx_cat_quiet = false;
             s_manual_tx_rx_paused = false;
-            ESP_LOGI(TAG, "FT8.5.16 manual TX isolation released: CAT BULK IN and UAC RX restored");
+            ESP_LOGI(TAG, "manual/staged TX isolation released: CAT BULK IN and UAC RX restored");
         }
     }
 
@@ -760,11 +964,13 @@ static esp_err_t ptt_handler(httpd_req_t *req)
     if (!present) return send_error(req, "422 Unprocessable Entity", "enabled is required");
     if (enabled) {
         if (ft8_rf_operation_is_running()) return send_error(req, "409 Conflict", "manual PTT is blocked during FT8 automatic TX/Tune");
+        if (digital_tx_is_running()) return send_error(req, "409 Conflict", "manual PTT is blocked during staged digital TX");
         ft710_audio_tx_status_t tx;
         ft710_audio_tx_get_status(&tx);
         if (!tx.streaming) return send_error(req, "409 Conflict", "TX audio is not ready");
     }
     if (!enabled && ft8_tx_is_running()) ft8_tx_request_stop("manual PTT OFF / operator halt");
+    if (!enabled && digital_tx_is_running()) digital_tx_request_stop("manual PTT OFF / operator halt");
     esp_err_t err = manual_audio_tx_set(enabled);
     if (err != ESP_OK) return send_error(req, "502 Bad Gateway", esp_err_to_name(err));
     return ok_state(req);
@@ -1872,6 +2078,7 @@ static cJSON *ft8_status_json(void)
     cJSON_AddNumberToObject(f, "audio_ws_tx_bytes", (double)s_audio_ws_tx_bytes);
     cJSON_AddNumberToObject(f, "audio_ws_tx_microphone_bytes", (double)s_audio_ws_tx_microphone_bytes);
     cJSON_AddNumberToObject(f, "audio_ws_tx_ft8_bytes", (double)s_audio_ws_tx_ft8_bytes);
+    cJSON_AddNumberToObject(f, "audio_ws_tx_digital_bytes", (double)s_audio_ws_tx_digital_bytes);
     cJSON_AddNumberToObject(f, "audio_ws_tx_rejected_bytes", (double)s_audio_ws_tx_rejected_bytes);
     portEXIT_CRITICAL(&s_ws_mux);
     ft8_wave_snapshot_t wave;
@@ -1884,7 +2091,26 @@ static cJSON *ft8_status_json(void)
     cJSON_AddNumberToObject(wave_json, "expected_bytes", (double)wave.expected_bytes);
     cJSON_AddNumberToObject(wave_json, "received_bytes", (double)wave.received_bytes);
     cJSON_AddNumberToObject(wave_json, "consumed_bytes", (double)wave.consumed_bytes);
+
+    digital_wave_snapshot_t digital_wave;
+    digital_waveform_get_snapshot(&digital_wave);
+    cJSON *digital_json = cJSON_AddObjectToObject(f, "digital_tx_waveform");
+    cJSON_AddBoolToObject(digital_json, "uploading", digital_wave.uploading);
+    cJSON_AddBoolToObject(digital_json, "ready", digital_wave.ready);
+    cJSON_AddNumberToObject(digital_json, "id", digital_wave.id);
+    cJSON_AddNumberToObject(digital_json, "sample_rate_hz", digital_wave.sample_rate_hz);
+    cJSON_AddNumberToObject(digital_json, "expected_bytes", (double)digital_wave.expected_bytes);
+    cJSON_AddNumberToObject(digital_json, "received_bytes", (double)digital_wave.received_bytes);
+    cJSON_AddNumberToObject(digital_json, "consumed_bytes", (double)digital_wave.consumed_bytes);
+    portENTER_CRITICAL(&s_digital_tx_mux);
+    cJSON_AddBoolToObject(digital_json, "tx_running", s_digital_tx_task_running);
+    cJSON_AddBoolToObject(digital_json, "tx_active", s_digital_tx_active);
+    cJSON_AddNumberToObject(digital_json, "tx_waveform_id", s_digital_tx_waveform_id);
+    cJSON_AddStringToObject(digital_json, "tx_phase", s_digital_tx_phase);
+    cJSON_AddStringToObject(digital_json, "tx_last_reason", s_digital_tx_last_reason);
+    portEXIT_CRITICAL(&s_digital_tx_mux);
     cJSON_AddNumberToObject(wave_json, "upload_started_ms", (double)wave.upload_started_ms);
+    cJSON_AddNumberToObject(digital_json, "upload_started_ms", (double)digital_wave.upload_started_ms);
     cJSON_AddItemToObject(f, "tune", ft8_tune_status_json());
     cJSON_AddItemToObject(f, "tx", ft8_tx_status_json());
     return f;
@@ -2199,6 +2425,274 @@ static void ws_send_text_async_fd(int fd, const char *text)
         .len = strlen(text),
     };
     (void)httpd_ws_send_data(s_server, fd, &frame);
+}
+
+static void digital_tx_task(void *arg)
+{
+    digital_tx_params_t *params = (digital_tx_params_t *)arg;
+    const int fd = params ? params->fd : -1;
+    const uint32_t id = params ? params->id : 0;
+    const uint32_t ptt_delay_ms = params ? params->ptt_delay_ms : 100U;
+    const uint32_t tail_ms = params ? params->tail_ms : 180U;
+    const uint32_t lease_ms = params ? params->lease_ms : DIGITAL_TX_MIN_LEASE_MS;
+    char reason[96] = "completed";
+    bool completed = false;
+    bool keyed = false;
+    size_t wave_pos = 0;
+    uint64_t output_empty_since_ms = 0;
+    uint64_t last_keepalive_ms = 0;
+    uint64_t audio_source_start = 0;
+    uint64_t audio_source_end = 0;
+    uint64_t audio_silence_start = 0;
+    uint64_t audio_silence_end = 0;
+    uint64_t audio_drop_start = 0;
+    uint64_t audio_drop_end = 0;
+    uint32_t audio_error_start = 0;
+    uint64_t lossless_backpressure_retries = 0;
+
+    digital_wave_snapshot_t wave;
+    digital_waveform_get_snapshot(&wave);
+    if (!params || !wave.ready || !wave.data || wave.id != id || wave.owner_fd != fd ||
+        wave.received_bytes != wave.expected_bytes || wave.sample_rate_hz != DIGITAL_TX_STAGE_RATE_HZ) {
+        snprintf(reason, sizeof(reason), "staged digital waveform vanished before TX");
+        goto cleanup;
+    }
+
+    portENTER_CRITICAL(&s_digital_tx_mux);
+    s_digital_tx_started_ms = monotonic_ms();
+    s_digital_tx_deadline_ms = s_digital_tx_started_ms + lease_ms;
+    snprintf(s_digital_tx_phase, sizeof(s_digital_tx_phase), "%s", "KEYING");
+    portEXIT_CRITICAL(&s_digital_tx_mux);
+
+    if (!audio_ws_is_active(fd)) { snprintf(reason, sizeof(reason), "audio WebSocket disconnected"); goto cleanup; }
+    if (audio_ws_get_tx_source() != AUDIO_TX_SOURCE_DIGITAL) { snprintf(reason, sizeof(reason), "digital TX source was not armed"); goto cleanup; }
+
+    ft710_audio_tx_status_t audio_start;
+    ft710_audio_tx_get_status(&audio_start);
+    if (!audio_start.streaming) { snprintf(reason, sizeof(reason), "TX audio is not ready"); goto cleanup; }
+
+    esp_err_t err = manual_audio_tx_set(true);
+    if (err != ESP_OK) { snprintf(reason, sizeof(reason), "PTT start failed: %s", esp_err_to_name(err)); goto cleanup; }
+    keyed = true;
+    last_keepalive_ms = monotonic_ms();
+    ft710_audio_tx_input_reset();
+    ft710_audio_tx_get_status(&audio_start);
+    audio_source_start = audio_start.source_frames_sent;
+    audio_silence_start = audio_start.silence_frames_sent;
+    audio_drop_start = audio_start.input_bytes_dropped_old;
+    audio_error_start = audio_start.transfer_errors;
+    if (s_digital_wave_mutex && xSemaphoreTake(s_digital_wave_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        s_digital_wave_consumed_bytes = 0;
+        xSemaphoreGive(s_digital_wave_mutex);
+    }
+
+    portENTER_CRITICAL(&s_digital_tx_mux);
+    s_digital_tx_active = true;
+    snprintf(s_digital_tx_phase, sizeof(s_digital_tx_phase), "%s", "ACTIVE");
+    portEXIT_CRITICAL(&s_digital_tx_mux);
+    char active_msg[192];
+    snprintf(active_msg, sizeof(active_msg), "{\"type\":\"digital_tx_state\",\"state\":\"ACTIVE\",\"id\":%" PRIu32 ",\"bytes\":%u,\"sample_rate_hz\":%" PRIu32 "}", id, (unsigned)wave.expected_bytes, wave.sample_rate_hz);
+    ws_send_text_async_fd(fd, active_msg);
+
+    const uint64_t delay_until = monotonic_ms() + ptt_delay_ms;
+    while (monotonic_ms() < delay_until) {
+        if (!audio_ws_is_active(fd)) { snprintf(reason, sizeof(reason), "audio WebSocket disconnected"); goto cleanup; }
+        bool stop = false;
+        portENTER_CRITICAL(&s_digital_tx_mux);
+        stop = s_digital_tx_stop_requested || monotonic_ms() >= s_digital_tx_deadline_ms;
+        portEXIT_CRITICAL(&s_digital_tx_mux);
+        if (stop) { snprintf(reason, sizeof(reason), "digital TX stopped before audio"); goto cleanup; }
+        ft710_cat_ptt_keepalive();
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
+    while (true) {
+        const uint64_t now = monotonic_ms();
+        bool stop = false;
+        uint64_t deadline = 0;
+        portENTER_CRITICAL(&s_digital_tx_mux);
+        stop = s_digital_tx_stop_requested;
+        deadline = s_digital_tx_deadline_ms;
+        portEXIT_CRITICAL(&s_digital_tx_mux);
+        if (stop) { snprintf(reason, sizeof(reason), "digital TX stopped"); break; }
+        if (now >= deadline) { snprintf(reason, sizeof(reason), "digital TX lease expired"); break; }
+        if (!audio_ws_is_active(fd)) { snprintf(reason, sizeof(reason), "audio WebSocket disconnected"); break; }
+        if (audio_ws_get_tx_source() != AUDIO_TX_SOURCE_DIGITAL) { snprintf(reason, sizeof(reason), "digital TX source changed"); break; }
+        if (now - last_keepalive_ms >= 500U) {
+            ft710_cat_ptt_keepalive();
+            last_keepalive_ms = now;
+        }
+
+        ft710_cat_status_t cat;
+        ft710_cat_get_status(&cat);
+        if (!cat.ptt_active) { snprintf(reason, sizeof(reason), "PTT watchdog/safety released TX"); break; }
+
+        ft710_audio_tx_status_t audio_now;
+        ft710_audio_tx_get_status(&audio_now);
+        if (!audio_now.streaming) { snprintf(reason, sizeof(reason), "UAC1 TX stream stopped during digital TX"); break; }
+        if (audio_now.transfer_errors > audio_error_start) { snprintf(reason, sizeof(reason), "UAC TX transfer error during digital TX"); break; }
+
+        if (wave_pos < wave.expected_bytes && audio_now.input_buffered_bytes < DIGITAL_TX_WAVEFORM_QUEUE_LOW) {
+            while (wave_pos < wave.expected_bytes && audio_now.input_buffered_bytes < DIGITAL_TX_WAVEFORM_QUEUE_HIGH) {
+                size_t room = DIGITAL_TX_WAVEFORM_QUEUE_HIGH - audio_now.input_buffered_bytes;
+                size_t left = wave.expected_bytes - wave_pos;
+                size_t chunk = left < DIGITAL_TX_WAVEFORM_FEED_CHUNK ? left : DIGITAL_TX_WAVEFORM_FEED_CHUNK;
+                if (chunk > room) chunk = room;
+                chunk &= ~(size_t)1U;
+                if (chunk == 0) break;
+
+                const size_t accepted = ft710_audio_tx_push_mono_s16_lossless(wave.data + wave_pos, chunk);
+                if (accepted != 0 && accepted != chunk) {
+                    snprintf(reason, sizeof(reason), "ESP32 UAC1 queue partially accepted staged digital PCM");
+                    goto cleanup;
+                }
+                if (accepted == 0) {
+                    lossless_backpressure_retries++;
+                    break;
+                }
+                wave_pos += accepted;
+                if (s_digital_wave_mutex && xSemaphoreTake(s_digital_wave_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                    s_digital_wave_consumed_bytes = wave_pos;
+                    xSemaphoreGive(s_digital_wave_mutex);
+                }
+                portENTER_CRITICAL(&s_ws_mux);
+                s_audio_ws_tx_bytes += accepted;
+                s_audio_ws_tx_digital_bytes += accepted;
+                portEXIT_CRITICAL(&s_ws_mux);
+                ft710_audio_tx_get_status(&audio_now);
+            }
+        }
+
+        if (wave_pos >= wave.expected_bytes) {
+            ft710_audio_tx_get_status(&audio_now);
+            if (audio_now.input_buffered_bytes == 0U) {
+                if (output_empty_since_ms == 0U) output_empty_since_ms = now;
+                if (now - output_empty_since_ms >= tail_ms) {
+                    snprintf(reason, sizeof(reason), "staged digital waveform complete");
+                    completed = true;
+                    break;
+                }
+            } else {
+                output_empty_since_ms = 0U;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+
+cleanup:
+    if (keyed) {
+        ft710_audio_tx_status_t audio_rf_end;
+        ft710_audio_tx_get_status(&audio_rf_end);
+        audio_source_end = audio_rf_end.source_frames_sent;
+        audio_silence_end = audio_rf_end.silence_frames_sent;
+        audio_drop_end = audio_rf_end.input_bytes_dropped_old;
+    }
+    digital_tx_set_phase("STOPPING", reason);
+    if (keyed) (void)manual_audio_tx_set(false);
+    if (audio_ws_is_active(fd)) (void)audio_ws_set_tx_source(fd, AUDIO_TX_SOURCE_NONE);
+    ft710_audio_tx_input_reset();
+
+    portENTER_CRITICAL(&s_digital_tx_mux);
+    s_digital_tx_active = false;
+    s_digital_tx_task_running = false;
+    s_digital_tx_stop_requested = false;
+    s_digital_tx_deadline_ms = 0;
+    snprintf(s_digital_tx_phase, sizeof(s_digital_tx_phase), "%s", "IDLE");
+    snprintf(s_digital_tx_last_reason, sizeof(s_digital_tx_last_reason), "%s", reason);
+    portEXIT_CRITICAL(&s_digital_tx_mux);
+
+    char complete_msg[320];
+    snprintf(complete_msg, sizeof(complete_msg), "{\"type\":\"digital_tx_complete\",\"ok\":%s,\"id\":%" PRIu32 ",\"bytes\":%u,\"sent_bytes\":%u,\"reason\":\"%.160s\"}",
+             completed ? "true" : "false", id, (unsigned)wave.expected_bytes, (unsigned)wave_pos, reason);
+    ws_send_text_async_fd(fd, complete_msg);
+    char idle_msg[240];
+    snprintf(idle_msg, sizeof(idle_msg), "{\"type\":\"digital_tx_state\",\"state\":\"IDLE\",\"ok\":%s,\"id\":%" PRIu32 ",\"reason\":\"%.150s\"}",
+             completed ? "true" : "false", id, reason);
+    ws_send_text_async_fd(fd, idle_msg);
+    if (!completed) {
+        char abort_msg[240];
+        snprintf(abort_msg, sizeof(abort_msg), "{\"type\":\"tx_abort\",\"reason\":\"%.160s\"}", reason);
+        ws_send_text_async_fd(fd, abort_msg);
+    }
+    const uint64_t source_delta = keyed && audio_source_end >= audio_source_start ? audio_source_end - audio_source_start : 0;
+    const uint64_t silence_delta = keyed && audio_silence_end >= audio_silence_start ? audio_silence_end - audio_silence_start : 0;
+    const uint64_t drop_delta = keyed && audio_drop_end >= audio_drop_start ? audio_drop_end - audio_drop_start : 0;
+    ESP_LOGW(TAG, "Digital staged TX stopped: %s; id=%" PRIu32 " staged=%u/%u B rate=%" PRIu32 "Hz ptt_delay=%ums tail=%ums source_frames=%" PRIu64 " silence_fill_frames=%" PRIu64 " dropped_old_bytes=%" PRIu64 " backpressure_retries=%" PRIu64,
+             reason, id, (unsigned)wave_pos, (unsigned)wave.expected_bytes, wave.sample_rate_hz,
+             ptt_delay_ms, tail_ms, source_delta, silence_delta, drop_delta, lossless_backpressure_retries);
+    if (!audio_ws_is_active(fd)) digital_waveform_clear();
+    if (params) free(params);
+    vTaskDelete(NULL);
+}
+
+static bool digital_tx_start(int fd, uint32_t id, uint32_t ptt_delay_ms, uint32_t tail_ms, uint32_t lease_ms, const char *label, char *reason, size_t reason_len)
+{
+    if (fd < 0 || id == 0) { snprintf(reason, reason_len, "invalid digital TX id"); return false; }
+    if (digital_tx_is_running() || ft8_rf_operation_is_running()) { snprintf(reason, reason_len, "another RF TX is already running"); return false; }
+    size_t waveform_bytes = 0;
+    uint32_t waveform_rate_hz = 0;
+    if (!digital_waveform_ready_for(fd, id, &waveform_bytes, &waveform_rate_hz)) {
+        snprintf(reason, reason_len, "staged digital waveform is not ready");
+        return false;
+    }
+    if (waveform_rate_hz != DIGITAL_TX_STAGE_RATE_HZ) { snprintf(reason, reason_len, "staged digital TX requires 48 kHz PCM"); return false; }
+
+    ft710_audio_tx_status_t tx;
+    ft710_audio_tx_get_status(&tx);
+    if (!tx.streaming) { snprintf(reason, reason_len, "TX audio is not ready"); return false; }
+    ft710_cat_status_t cat;
+    ft710_cat_get_status(&cat);
+    if (!cat.power_known || !cat.radio_power_on) { snprintf(reason, reason_len, "radio must be ON for staged digital TX"); return false; }
+    if (cat.ptt_active || !strcasecmp(cat.tx_state, "TX")) { snprintf(reason, reason_len, "radio must be in RX before staged digital TX"); return false; }
+    if (!audio_ws_set_tx_source(fd, AUDIO_TX_SOURCE_DIGITAL)) { snprintf(reason, reason_len, "could not claim digital TX audio source"); return false; }
+
+    ptt_delay_ms = ptt_delay_ms > DIGITAL_TX_MAX_PTT_DELAY_MS ? DIGITAL_TX_MAX_PTT_DELAY_MS : ptt_delay_ms;
+    tail_ms = tail_ms > DIGITAL_TX_MAX_TAIL_MS ? DIGITAL_TX_MAX_TAIL_MS : tail_ms;
+    const uint32_t duration_ms = (uint32_t)((waveform_bytes / 2ULL) * 1000ULL / DIGITAL_TX_STAGE_RATE_HZ);
+    uint32_t computed_lease = duration_ms + ptt_delay_ms + tail_ms + 3000U;
+    if (computed_lease < DIGITAL_TX_MIN_LEASE_MS) computed_lease = DIGITAL_TX_MIN_LEASE_MS;
+    if (computed_lease > DIGITAL_TX_MAX_LEASE_MS) computed_lease = DIGITAL_TX_MAX_LEASE_MS;
+    if (lease_ms == 0 || lease_ms < computed_lease) lease_ms = computed_lease;
+    if (lease_ms > DIGITAL_TX_MAX_LEASE_MS) lease_ms = DIGITAL_TX_MAX_LEASE_MS;
+
+    digital_tx_params_t *params = calloc(1, sizeof(*params));
+    if (!params) {
+        (void)audio_ws_set_tx_source(fd, AUDIO_TX_SOURCE_NONE);
+        snprintf(reason, reason_len, "digital TX task allocation failed");
+        return false;
+    }
+    params->fd = fd;
+    params->id = id;
+    params->ptt_delay_ms = ptt_delay_ms;
+    params->tail_ms = tail_ms;
+    params->lease_ms = lease_ms;
+    if (label && label[0]) snprintf(params->label, sizeof(params->label), "%s", label);
+
+    portENTER_CRITICAL(&s_digital_tx_mux);
+    s_digital_tx_task_running = true;
+    s_digital_tx_active = false;
+    s_digital_tx_stop_requested = false;
+    s_digital_tx_waveform_id = id;
+    s_digital_tx_started_ms = 0;
+    s_digital_tx_deadline_ms = 0;
+    snprintf(s_digital_tx_phase, sizeof(s_digital_tx_phase), "%s", "ARMING");
+    s_digital_tx_last_reason[0] = '\0';
+    portEXIT_CRITICAL(&s_digital_tx_mux);
+
+    if (xTaskCreate(digital_tx_task, "digital_tx", 6144, params, 4, NULL) != pdPASS) {
+        portENTER_CRITICAL(&s_digital_tx_mux);
+        s_digital_tx_task_running = false;
+        snprintf(s_digital_tx_phase, sizeof(s_digital_tx_phase), "%s", "IDLE");
+        snprintf(s_digital_tx_last_reason, sizeof(s_digital_tx_last_reason), "%s", "digital TX task allocation failed");
+        portEXIT_CRITICAL(&s_digital_tx_mux);
+        free(params);
+        (void)audio_ws_set_tx_source(fd, AUDIO_TX_SOURCE_NONE);
+        snprintf(reason, reason_len, "could not start digital TX task");
+        return false;
+    }
+    ESP_LOGW(TAG, "Digital staged TX armed: id=%" PRIu32 " bytes=%u rate=%" PRIu32 "Hz ptt_delay=%ums tail=%ums lease=%ums label=%s",
+             id, (unsigned)waveform_bytes, waveform_rate_hz, ptt_delay_ms, tail_ms, lease_ms, label && label[0] ? label : "-");
+    return true;
 }
 
 static void ft8_tx_task(void *arg)
@@ -3032,10 +3526,12 @@ static void audio_ws_close(int fd)
     if (mine) {
         ft8_tune_request_stop("audio WebSocket disconnected");
         ft8_tx_request_stop("audio WebSocket disconnected");
+        digital_tx_request_stop("audio WebSocket disconnected");
         (void)manual_audio_tx_set(false);
         ft710_audio_tx_input_reset();
         ft710_audio_pcm_stream_close();
         if (!ft8_tx_is_running()) ft8_waveform_clear();
+        if (!digital_tx_is_running()) digital_waveform_clear();
         ESP_LOGI(TAG, "audio WS closed fd=%d; TX source NONE; PTT forced RX", fd);
     }
 }
@@ -3046,7 +3542,7 @@ static void audio_ws_sender(void*arg)
     if (!audio_ws_is_active(fd)) { vTaskDelete(NULL); return; }
     httpd_handle_t server=s_server;
     httpd_ws_frame_t f={0};
-    const char ready[]="{\"type\":\"ready\",\"sample_rate\":48000,\"tx_sample_rate\":48000,\"channels\":1,\"bits_per_sample\":16,\"ptt_mode\":\"latching\",\"ptt_watchdog_ms\":1500,\"tx_source\":\"NONE\",\"tx_source_model\":\"NONE|MICROPHONE|FT8\",\"ft8_tx_audio\":true,\"ft8_tune\":true,\"ft8_auto_ptt\":true}";
+    const char ready[]="{\"type\":\"ready\",\"sample_rate\":48000,\"tx_sample_rate\":48000,\"channels\":1,\"bits_per_sample\":16,\"ptt_mode\":\"latching\",\"ptt_watchdog_ms\":1500,\"tx_source\":\"NONE\",\"tx_source_model\":\"NONE|MICROPHONE|FT8|DIGITAL\",\"ft8_tx_audio\":true,\"ft8_tune\":true,\"ft8_auto_ptt\":true,\"digital_staged_tx\":true}";
     f.type=HTTPD_WS_TYPE_TEXT;f.payload=(uint8_t*)ready;f.len=strlen(ready);
     if (httpd_ws_send_data(server,fd,&f) != ESP_OK) { audio_ws_close(fd); vTaskDelete(NULL); return; }
     (void)httpd_sess_update_lru_counter(server, fd);
@@ -3201,6 +3697,27 @@ static esp_err_t audio_ws_handler(httpd_req_t *req)
             free(payload);
             return ESP_OK;
         }
+        digital_wave_snapshot_t digital_staged;
+        digital_waveform_get_snapshot(&digital_staged);
+        if (digital_staged.uploading && digital_staged.owner_fd == fd) {
+            bool ready_now = false;
+            const bool accepted = digital_waveform_append(fd, payload, frame.len, &ready_now);
+            if (!accepted) {
+                free(payload);
+                (void)ws_send_text_req(req, "{\"type\":\"digital_waveform_error\",\"error\":\"waveform upload rejected\"}");
+                return ESP_OK;
+            }
+            if (ready_now) {
+                digital_wave_snapshot_t done;
+                digital_waveform_get_snapshot(&done);
+                char reply[208];
+                snprintf(reply, sizeof(reply), "{\"type\":\"digital_waveform_ready\",\"id\":%" PRIu32 ",\"bytes\":%u,\"sample_rate_hz\":%" PRIu32 "}", done.id, (unsigned)done.received_bytes, done.sample_rate_hz);
+                (void)ws_send_text_req(req, reply);
+                ESP_LOGI(TAG, "Digital waveform staged in PSRAM: id=%" PRIu32 " rate=%" PRIu32 "Hz bytes=%u upload_ms=%" PRIu64, done.id, done.sample_rate_hz, (unsigned)done.received_bytes, monotonic_ms() - done.upload_started_ms);
+            }
+            free(payload);
+            return ESP_OK;
+        }
         ft710_cat_status_t st;
         ft710_cat_get_status(&st);
         const audio_tx_source_t source = audio_ws_get_tx_source();
@@ -3275,7 +3792,7 @@ static esp_err_t audio_ws_handler(httpd_req_t *req)
                 char wave_reason[128] = {0};
                 if (requested_bytes <= 0 || !ft8_waveform_begin_upload(fd, wave_id, (size_t)requested_bytes, sample_rate_hz, wave_reason, sizeof(wave_reason))) {
                     char reply[240];
-                    snprintf(reply, sizeof(reply), "{\"type\":\"ft8_waveform_begin\",\"ok\":false,\"error\":\"%.140s\"}", wave_reason[0] ? wave_reason : "waveform upload rejected");
+                    snprintf(reply, sizeof(reply), "{\"type\":\"ft8_waveform_begin\",\"ok\":false,\"id\":%" PRIu32 ",\"error\":\"%.140s\"}", wave_id, wave_reason[0] ? wave_reason : "waveform upload rejected");
                     (void)ws_send_text_req(req, reply);
                 } else {
                     char reply[180];
@@ -3285,6 +3802,42 @@ static esp_err_t audio_ws_handler(httpd_req_t *req)
             } else if (!strcmp(type, "ft8_waveform_clear")) {
                 if (!ft8_rf_operation_is_running()) ft8_waveform_clear();
                 (void)ws_send_text_req(req, "{\"type\":\"ft8_waveform_clear\",\"ok\":true}");
+            } else if (!strcmp(type, "digital_waveform_begin")) {
+                const uint32_t wave_id = (uint32_t)json_int(json, "id", 0);
+                const int requested_bytes = json_int(json, "bytes", 0);
+                const uint32_t sample_rate_hz = (uint32_t)json_int(json, "sample_rate", DIGITAL_TX_STAGE_RATE_HZ);
+                char wave_reason[128] = {0};
+                if (requested_bytes <= 0 || !digital_waveform_begin_upload(fd, wave_id, (size_t)requested_bytes, sample_rate_hz, wave_reason, sizeof(wave_reason))) {
+                    char reply[240];
+                    snprintf(reply, sizeof(reply), "{\"type\":\"digital_waveform_begin\",\"ok\":false,\"id\":%" PRIu32 ",\"error\":\"%.140s\"}", wave_id, wave_reason[0] ? wave_reason : "waveform upload rejected");
+                    (void)ws_send_text_req(req, reply);
+                } else {
+                    char reply[192];
+                    snprintf(reply, sizeof(reply), "{\"type\":\"digital_waveform_begin\",\"ok\":true,\"id\":%" PRIu32 ",\"bytes\":%d,\"sample_rate_hz\":%" PRIu32 "}", wave_id, requested_bytes, sample_rate_hz);
+                    (void)ws_send_text_req(req, reply);
+                }
+            } else if (!strcmp(type, "digital_waveform_clear")) {
+                if (!digital_tx_is_running()) digital_waveform_clear();
+                (void)ws_send_text_req(req, "{\"type\":\"digital_waveform_clear\",\"ok\":true}");
+            } else if (!strcmp(type, "digital_tx_play")) {
+                const uint32_t wave_id = (uint32_t)json_int(json, "id", 0);
+                const uint32_t ptt_delay_ms = (uint32_t)json_int(json, "ptt_delay_ms", 100);
+                const uint32_t tail_ms = (uint32_t)json_int(json, "tail_ms", 180);
+                const uint32_t lease_ms = (uint32_t)json_int(json, "lease_ms", 0);
+                const char *label = json_string(json, "label", "");
+                char play_reason[128] = {0};
+                if (!digital_tx_start(fd, wave_id, ptt_delay_ms, tail_ms, lease_ms, label, play_reason, sizeof(play_reason))) {
+                    char reply[240];
+                    snprintf(reply, sizeof(reply), "{\"type\":\"digital_tx_play\",\"ok\":false,\"id\":%" PRIu32 ",\"error\":\"%.140s\"}", wave_id, play_reason[0] ? play_reason : "digital TX rejected");
+                    (void)ws_send_text_req(req, reply);
+                } else {
+                    char reply[160];
+                    snprintf(reply, sizeof(reply), "{\"type\":\"digital_tx_play\",\"ok\":true,\"id\":%" PRIu32 "}", wave_id);
+                    (void)ws_send_text_req(req, reply);
+                }
+            } else if (!strcmp(type, "digital_tx_stop")) {
+                digital_tx_request_stop("operator stop");
+                (void)ws_send_text_req(req, "{\"type\":\"digital_tx_stop\",\"ok\":true}");
             } else if (!strcmp(type, "tx_source")) {
                 const char *requested = json_string(json, "source", "NONE");
                 ft710_cat_status_t cat;
@@ -3308,9 +3861,24 @@ static esp_err_t audio_ws_handler(httpd_req_t *req)
                 } else if (!strcasecmp(requested, "MICROPHONE")) {
                     if (ft8_rf_operation_is_running()) {
                         (void)ws_send_text_req(req, "{\"type\":\"tx_source\",\"source\":\"NONE\",\"ok\":false,\"error\":\"microphone source is locked during FT8 TX/Tune\"}");
+                    } else if (digital_tx_is_running()) {
+                        (void)ws_send_text_req(req, "{\"type\":\"tx_source\",\"source\":\"NONE\",\"ok\":false,\"error\":\"microphone source is locked during staged digital TX\"}");
                     } else {
                         (void)audio_ws_set_tx_source(fd, AUDIO_TX_SOURCE_MICROPHONE);
                         (void)ws_send_text_req(req, "{\"type\":\"tx_source\",\"source\":\"MICROPHONE\",\"ok\":true}");
+                    }
+                } else if (!strcasecmp(requested, "DIGITAL")) {
+                    if (!tx.streaming) {
+                        (void)ws_send_text_req(req, "{\"type\":\"tx_source\",\"source\":\"NONE\",\"ok\":false,\"error\":\"TX audio is not ready\"}");
+                    } else if (!cat.power_known || !cat.radio_power_on) {
+                        (void)ws_send_text_req(req, "{\"type\":\"tx_source\",\"source\":\"NONE\",\"ok\":false,\"error\":\"radio must be ON for staged digital TX\"}");
+                    } else if (cat.ptt_active || !strcasecmp(cat.tx_state, "TX")) {
+                        (void)ws_send_text_req(req, "{\"type\":\"tx_source\",\"source\":\"NONE\",\"ok\":false,\"error\":\"radio must be in RX before staged digital TX\"}");
+                    } else if (ft8_rf_operation_is_running() || digital_tx_is_running()) {
+                        (void)ws_send_text_req(req, "{\"type\":\"tx_source\",\"source\":\"NONE\",\"ok\":false,\"error\":\"another RF TX is already running\"}");
+                    } else {
+                        (void)audio_ws_set_tx_source(fd, AUDIO_TX_SOURCE_DIGITAL);
+                        (void)ws_send_text_req(req, "{\"type\":\"tx_source\",\"source\":\"DIGITAL\",\"ok\":true,\"staged\":true}");
                     }
                 } else {
                     (void)ws_send_text_req(req, "{\"type\":\"tx_source\",\"source\":\"NONE\",\"ok\":false,\"error\":\"invalid TX source\"}");
@@ -3348,6 +3916,8 @@ static esp_err_t audio_ws_handler(httpd_req_t *req)
                         ft710_audio_tx_get_status(&tx);
                         if (audio_ws_get_tx_source() == AUDIO_TX_SOURCE_FT8) {
                             (void)ws_send_text_req(req, "{\"type\":\"ptt\",\"enabled\":false,\"error\":\"FT8 PTT is controlled only by the bounded Tune/automatic FT8 TX backend\"}");
+                        } else if (audio_ws_get_tx_source() == AUDIO_TX_SOURCE_DIGITAL || digital_tx_is_running()) {
+                            (void)ws_send_text_req(req, "{\"type\":\"ptt\",\"enabled\":false,\"error\":\"staged digital TX owns PTT\"}");
                         } else if (!tx.streaming) {
                             (void)ws_send_text_req(req, "{\"type\":\"ptt\",\"enabled\":false,\"error\":\"TX audio is not ready\"}");
                         } else {
@@ -3364,6 +3934,7 @@ static esp_err_t audio_ws_handler(httpd_req_t *req)
                         }
                     } else {
                         if (ft8_tx_is_running()) ft8_tx_request_stop("manual PTT OFF / operator halt");
+                        if (digital_tx_is_running()) digital_tx_request_stop("manual PTT OFF / operator halt");
                         err = manual_audio_tx_set(false);
                         (void)audio_ws_set_tx_source(fd, AUDIO_TX_SOURCE_NONE);
                         if (err == ESP_OK) {
@@ -3399,6 +3970,10 @@ esp_err_t control_api_register(httpd_handle_t server)
     if (s_ft8_wave_mutex == NULL) {
         s_ft8_wave_mutex = xSemaphoreCreateMutex();
         if (s_ft8_wave_mutex == NULL) return ESP_ERR_NO_MEM;
+    }
+    if (s_digital_wave_mutex == NULL) {
+        s_digital_wave_mutex = xSemaphoreCreateMutex();
+        if (s_digital_wave_mutex == NULL) return ESP_ERR_NO_MEM;
     }
     if (s_manual_tx_mutex == NULL) {
         s_manual_tx_mutex = xSemaphoreCreateMutex();
@@ -3446,5 +4021,5 @@ esp_err_t control_api_register(httpd_handle_t server)
     R("/api/v1/radio/jog",HTTP_OPTIONS,options_handler);
     R("/*",HTTP_OPTIONS,options_handler);
 #undef R
-    ESP_LOGI(TAG,"FreeRig710 control API registered: CAT BULK IN halted during microphone and FT8 RF TX");return ESP_OK;
+    ESP_LOGI(TAG,"FreeRig710 control API registered: CAT BULK IN halted during microphone, FT8, and staged digital RF TX");return ESP_OK;
 }

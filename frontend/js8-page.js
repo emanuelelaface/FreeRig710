@@ -53,6 +53,7 @@ const state = {
   radio: null,
   decoding: false,
   audioReady: false,
+  audioReadyMessage: false,
   audioStarting: false,
   configuring: false,
   rxEnabled: false,
@@ -108,6 +109,7 @@ const state = {
   lastLevelDb: null,
   qrzState: { configured: false, station_callsign: null },
   qrzLogging: false,
+  digitalStagedTx: false,
   wfCanvas: null,
   wfCtx: null,
   wfImage: null,
@@ -954,8 +956,13 @@ function claimAudioChannel() {
 }
 
 async function ensureAudio() {
-  if (state.socket && state.socket.readyState === WebSocket.OPEN) return;
-  if (state.audioStarting) return;
+  if (state.socket && state.socket.readyState === WebSocket.OPEN && state.audioReadyMessage) return;
+  if (state.audioStarting) {
+    const started = Date.now();
+    while (state.audioStarting && Date.now() - started < 8500) await sleep(25);
+    if (state.socket && state.socket.readyState === WebSocket.OPEN && state.audioReadyMessage) return;
+    throw new Error("audio websocket timeout");
+  }
   state.audioStarting = true;
   claimAudioChannel();
   updatePill(elements["js8-audio-state"], "Audio connecting", "is-warn");
@@ -966,11 +973,7 @@ async function ensureAudio() {
       socket.binaryType = "arraybuffer";
       const timeout = setTimeout(() => reject(new Error("audio websocket timeout")), 8000);
       socket.onopen = () => {
-        clearTimeout(timeout);
-        state.audioReady = true;
-        updatePill(elements["js8-audio-state"], "Audio ready", "is-ok");
         log("FreeRig audio WebSocket connected for JS8");
-        resolve();
       };
       socket.onerror = () => {
         clearTimeout(timeout);
@@ -978,14 +981,24 @@ async function ensureAudio() {
       };
       socket.onclose = () => {
         state.audioReady = false;
+        state.audioReadyMessage = false;
+        state.digitalStagedTx = false;
         state.socket = null;
         clearKeepalive();
         updatePill(elements["js8-audio-state"], "Audio closed", "is-idle");
       };
-      socket.onmessage = (event) => handleAudioMessage(event.data);
+      socket.onmessage = (event) => {
+        const message = handleAudioMessage(event.data);
+        if (message && message.type === "ready") {
+          clearTimeout(timeout);
+          resolve();
+        }
+      };
     });
   } catch (error) {
     state.audioReady = false;
+    state.audioReadyMessage = false;
+    state.digitalStagedTx = false;
     updatePill(elements["js8-audio-state"], "Audio failed", "is-bad");
     log(`Audio start failed: ${error.message}`, "bad");
     throw error;
@@ -1004,6 +1017,8 @@ function closeAudio(updateStatus = true) {
   }
   state.socket = null;
   state.audioReady = false;
+  state.audioReadyMessage = false;
+  state.digitalStagedTx = false;
   clearKeepalive();
   if (updateStatus) updatePill(elements["js8-audio-state"], "Audio closed", "is-idle");
 }
@@ -1011,24 +1026,30 @@ function closeAudio(updateStatus = true) {
 function handleAudioMessage(data) {
   if (data instanceof ArrayBuffer) {
     handlePcm(data);
-    return;
+    return null;
   }
-  if (typeof data !== "string") return;
+  if (typeof data !== "string") return null;
   let message = null;
   try {
     message = JSON.parse(data);
   } catch {
     log(`Audio message: ${data}`, "warn");
-    return;
+    return null;
   }
   if (message.type === "ready") {
-    state.rxRate = Number(message.rx_rate || message.rxRate || state.rxRate || 48000);
-    state.txRate = Number(message.tx_rate || message.txRate || state.txRate || 48000);
+    state.rxRate = Number(message.sample_rate || message.rx_rate || message.rxRate || state.rxRate || 48000);
+    state.txRate = Number(message.tx_sample_rate || message.tx_rate || message.txRate || state.txRate || 48000);
+    state.digitalStagedTx = Boolean(message.digital_staged_tx);
+    state.audioReady = true;
+    state.audioReadyMessage = true;
     updatePill(elements["js8-audio-state"], `Audio ${state.rxRate} Hz`, "is-ok");
+  } else if (message.type === "digital_waveform_error" || (message.type === "digital_waveform_begin" && message.ok === false) || (message.type === "digital_tx_play" && message.ok === false) || message.type === "tx_abort") {
+    log(`Audio ${message.type}: ${message.error || message.reason || JSON.stringify(message)}`, "bad");
   } else if (message.type === "error" || message.type === "warning") {
     log(`Audio ${message.type}: ${message.message || JSON.stringify(message)}`, message.type === "error" ? "bad" : "warn");
   }
   resolveWaiters(message);
+  return message;
 }
 
 function sendAudioControl(message) {
@@ -1090,6 +1111,66 @@ async function setPtt(enabled) {
 function clearKeepalive() {
   if (state.pttKeepalive) clearInterval(state.pttKeepalive);
   state.pttKeepalive = null;
+}
+
+function nextDigitalWaveformId() {
+  const id = ((Date.now() & 0xfffffff) ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+  return id || 1;
+}
+
+function float32ToPcm16Buffer(samples) {
+  const pcm = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i += 1) {
+    pcm[i] = clamp(Math.round(samples[i] * 32767), -32768, 32767);
+  }
+  return pcm.buffer;
+}
+
+async function stageDigitalAudio(samples48, label = "JS8") {
+  await ensureAudio();
+  if (!state.socket || state.socket.readyState !== WebSocket.OPEN) throw new Error("audio websocket closed");
+  if (!state.digitalStagedTx) throw new Error("ESP32 firmware does not advertise staged digital TX; flash the updated firmware and refresh JS8");
+  const id = nextDigitalWaveformId();
+  const pcm = float32ToPcm16Buffer(samples48);
+  const bytes = new Uint8Array(pcm);
+  const beginWait = waitForAudio("digital_waveform_begin", (message) => message.id === id || message.ok === false, 5000);
+  sendAudioControl({ type: "digital_waveform_begin", id, bytes: bytes.byteLength, sample_rate: 48000, label });
+  const begin = await beginWait;
+  if (begin.ok === false) throw new Error(begin.error || "staged digital upload rejected");
+  const readyWait = waitForAudio("digital_waveform_ready", (message) => message.id === id, 15000);
+  const errorWait = waitForAudio("digital_waveform_error", () => true, 15000).then(
+    (message) => Promise.reject(new Error(message.error || "staged digital upload failed")),
+    () => new Promise(() => {})
+  );
+  const chunkBytes = 16000;
+  for (let offset = 0; offset < bytes.byteLength; offset += chunkBytes) {
+    if (state.txAbort) throw new Error("transmission halted");
+    while (state.socket && state.socket.bufferedAmount > 65536) await sleep(2);
+    state.socket.send(bytes.subarray(offset, Math.min(offset + chunkBytes, bytes.byteLength)));
+  }
+  await Promise.race([readyWait, errorWait]);
+  return { id, bytes: bytes.byteLength };
+}
+
+async function playStagedDigitalAudio(staged, samples48, label, pttDelayMs, tailMs) {
+  const durationMs = Math.ceil((samples48.length / 48000) * 1000);
+  const leaseMs = durationMs + pttDelayMs + tailMs + 4000;
+  const timeoutMs = leaseMs + 5000;
+  const completeWait = waitForAudio("digital_tx_complete", (message) => message.id === staged.id, timeoutMs);
+  const playWait = waitForAudio("digital_tx_play", (message) => message.id === staged.id, 3000);
+  sendAudioControl({
+    type: "digital_tx_play",
+    id: staged.id,
+    label,
+    ptt_delay_ms: pttDelayMs,
+    tail_ms: tailMs,
+    lease_ms: leaseMs,
+  });
+  const play = await playWait;
+  if (play.ok === false) throw new Error(play.error || "staged digital TX rejected");
+  const complete = await completeWait;
+  if (complete.ok === false) throw new Error(complete.reason || "staged digital TX failed");
+  return complete;
 }
 
 function handlePcm(buffer) {
@@ -1763,41 +1844,32 @@ async function transmitAudio(samples48, label) {
   const resumeRx = Boolean(state.rxEnabled || elements["js8-enabled"]?.checked);
   state.rxEnabled = false;
   updateRxUi();
-  updatePill(elements["js8-tx-state"], "TX waiting", "is-warn");
+  updatePill(elements["js8-tx-state"], "TX staging", "is-warn");
   if (elements["js8-last-tx"]) elements["js8-last-tx"].textContent = label;
   const info = submodeInfo();
-  const targetStartMs = nextSlotStartMs(info.slotSeconds, 700);
-  const delay = targetStartMs - Date.now();
-  if (delay > 0) {
-    log(`JS8 TX queued for next ${info.name} slot in ${(delay / 1000).toFixed(1)}s`);
-  }
+  let staged = null;
+  let completed = false;
   try {
+    await ensureAudio();
+    const txAudio = samples48;
+    staged = await stageDigitalAudio(txAudio, label);
+    if (state.txAbort) throw new Error("transmission halted");
+    const targetStartMs = nextSlotStartMs(info.slotSeconds, 700);
+    const delay = targetStartMs - Date.now();
+    if (delay > 0) {
+      log(`JS8 TX staged for next ${info.name} slot in ${(delay / 1000).toFixed(1)}s`);
+    }
     const pttLeadMs = clamp((info.prerollMs || 300) + 180, 300, 900);
     if (delay > pttLeadMs) await sleep(delay - pttLeadMs);
-    await setPtt(true);
-    await sleep(100);
-    const settleMs = targetStartMs - Date.now();
-    if (settleMs > 0) await sleep(settleMs);
+    if (state.txAbort) throw new Error("transmission halted");
     updatePill(elements["js8-tx-state"], "TX on air", "is-bad");
-    const audio = state.txRate && state.txRate !== 48000 ? resampleLinear(samples48, 48000, state.txRate) : samples48;
-    const sampleRate = state.txRate || 48000;
-    const chunkSize = Math.max(240, Math.round(sampleRate * 0.02));
-    const started = performance.now();
-    let sentSamples = 0;
-    for (let offset = 0; offset < audio.length; offset += chunkSize) {
-      if (state.txAbort) throw new Error("transmission halted");
-      const chunk = audio.subarray(offset, Math.min(offset + chunkSize, audio.length));
-      while (state.socket && state.socket.bufferedAmount > 65536) await sleep(2);
-      sendPcmChunk(chunk);
-      sentSamples += chunk.length;
-      const targetMs = (sentSamples / sampleRate) * 1000;
-      const waitMs = targetMs - (performance.now() - started);
-      if (waitMs > 1) await sleep(Math.min(waitMs, 25));
-    }
-    await sleep(220);
+    await playStagedDigitalAudio(staged, txAudio, label, pttLeadMs, 220);
+    completed = true;
     log(`JS8 TX complete: ${label}`);
   } finally {
-    await setPtt(false).catch((error) => log(`PTT release failed: ${error.message}`, "warn"));
+    if (!completed && staged) {
+      try { sendAudioControl({ type: "digital_tx_stop" }); } catch {}
+    }
     state.txBusy = false;
     state.txAbort = false;
     state.rxEnabled = resumeRx;
@@ -1849,6 +1921,7 @@ function haltTransmit() {
   if (!state.txBusy && !state.txQueue.length) return;
   state.txAbort = true;
   state.txQueue = [];
+  try { sendAudioControl({ type: "digital_tx_stop" }); } catch {}
   updateTxUi();
   log("JS8 transmit halted", "warn");
 }

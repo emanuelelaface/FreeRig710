@@ -5182,6 +5182,7 @@ class FreeRigAudioSource extends AudioSource {
     this._waiters = [];
     this._keepalive = null;
     this._ptt = false;
+    this.digitalStagedTx = false;
   }
   txSampleRate() { return this.txRate || 48000; }
   _sendControl(payload) {
@@ -5203,8 +5204,13 @@ class FreeRigAudioSource extends AudioSource {
     if (message.type === 'ready') {
       this.rxRate = Number(message.sample_rate) || 48000;
       this.txRate = Number(message.tx_sample_rate || message.sample_rate) || 48000;
+      this.digitalStagedTx = Boolean(message.digital_staged_tx);
       this.resampler = makeLanczosResampler(this.rxRate, 12000);
       log(`FreeRig audio WS ready: RX ${this.rxRate} Hz, TX ${this.txRate} Hz`, 'log-ok');
+    } else if (message.type === 'digital_tx_state') {
+      this._ptt = message.state === 'ACTIVE';
+    } else if (message.type === 'digital_waveform_error' || (message.type === 'digital_tx_play' && message.ok === false)) {
+      log(`FreeRig staged TX rejected: ${message.error || message.reason || 'unknown error'}`, 'log-err');
     } else if (message.type === 'tx_source' && message.ok === false) {
       log(`FreeRig TX source rejected: ${message.error || 'unknown error'}`, 'log-err');
     } else if (message.type === 'ptt' && message.error) {
@@ -5233,6 +5239,59 @@ class FreeRigAudioSource extends AudioSource {
       if (this.analyser) this.analyser.push(f12);
       if (this._rxCallback) this._rxCallback(f12);
     }
+  }
+  _nextDigitalWaveformId() {
+    const id = ((Date.now() & 0xfffffff) ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+    return id || 1;
+  }
+  _float32ToPcm16Buffer(samples) {
+    const pcm = new Int16Array(samples.length);
+    for (let i = 0; i < samples.length; i += 1) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      pcm[i] = Math.round(s * 32767);
+    }
+    return pcm.buffer;
+  }
+  async _stageDigitalAudio(samples, label) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('FreeRig audio is not connected');
+    if (!this.digitalStagedTx) throw new Error('ESP32 firmware does not advertise staged digital TX; flash the updated firmware and refresh Winlink');
+    const id = this._nextDigitalWaveformId();
+    const bytes = new Uint8Array(this._float32ToPcm16Buffer(samples));
+    const beginAck = this._waitFor((m) => m.type === 'digital_waveform_begin' && (m.id === id || m.ok === false), 5000);
+    this._sendControl({ type: 'digital_waveform_begin', id, bytes: bytes.byteLength, sample_rate: 48000, label: label || 'ARDOP' });
+    const begin = await beginAck;
+    if (begin.ok === false) throw new Error(begin.error || 'FreeRig staged TX upload rejected');
+    const readyWait = this._waitFor((m) => m.type === 'digital_waveform_ready' && m.id === id, 20000);
+    const errorWait = this._waitFor((m) => m.type === 'digital_waveform_error', 20000).then(
+      (m) => Promise.reject(new Error(m.error || 'FreeRig staged TX upload failed')),
+      () => new Promise(() => {})
+    );
+    const chunkBytes = 16000;
+    for (let offset = 0; offset < bytes.byteLength; offset += chunkBytes) {
+      while (this.ws && this.ws.bufferedAmount > 65536) await sleep(2);
+      this.ws.send(bytes.subarray(offset, Math.min(offset + chunkBytes, bytes.byteLength)));
+    }
+    await Promise.race([readyWait, errorWait]);
+    return { id, bytes: bytes.byteLength };
+  }
+  async _playStagedDigitalAudio(staged, sampleCount, label, pttDelayMs, tailMs) {
+    const durationMs = Math.ceil((sampleCount / 48000) * 1000);
+    const leaseMs = durationMs + pttDelayMs + tailMs + 3000;
+    const completeWait = this._waitFor((m) => m.type === 'digital_tx_complete' && m.id === staged.id, leaseMs + 5000);
+    const playAck = this._waitFor((m) => m.type === 'digital_tx_play' && m.id === staged.id, 3000);
+    this._sendControl({
+      type: 'digital_tx_play',
+      id: staged.id,
+      label: label || 'ARDOP',
+      ptt_delay_ms: pttDelayMs,
+      tail_ms: tailMs,
+      lease_ms: leaseMs,
+    });
+    const play = await playAck;
+    if (play.ok === false) throw new Error(play.error || 'FreeRig staged TX rejected');
+    const complete = await completeWait;
+    if (complete.ok === false) throw new Error(complete.reason || 'FreeRig staged TX failed');
+    return complete;
   }
   async start() {
     if (this._state !== 'stopped') return;
@@ -5306,34 +5365,20 @@ class FreeRigAudioSource extends AudioSource {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('FreeRig audio is not connected');
     const sampleRate = this.txSampleRate();
     const t = this.trx.timing || {};
-    const chunkSamples = Math.max(240, Math.round(sampleRate * 0.02));
-    let offset = 0;
-    let sentSamples = 0;
-    let t0 = 0;
+    if (sampleRate !== 48000) throw new Error(`FreeRig staged TX requires 48000 Hz, got ${sampleRate} Hz`);
+    const pttDelayMs = SESSION_TUNE.txDelayMs ?? (t.txDelayMs || 90);
+    const tailMs = SESSION_TUNE.txFlushMs ?? (t.txFlushMs || 180);
+    let staged = null;
+    let completed = false;
     try {
-      await this.setPtt(true);
-      await sleep(SESSION_TUNE.txDelayMs ?? (t.txDelayMs || 90));
-      t0 = performance.now();
-      while (offset < f48.length) {
-        const end = Math.min(f48.length, offset + chunkSamples);
-        const frame = new ArrayBuffer((end - offset) * 2);
-        const view = new DataView(frame);
-        for (let i = offset, j = 0; i < end; i++, j += 2) {
-          const s = Math.max(-1, Math.min(1, f48[i]));
-          view.setInt16(j, Math.round(s * 32767), true);
-        }
-        while (this.ws.bufferedAmount > 65536) await sleep(2);
-        this.ws.send(frame);
-        sentSamples += end - offset;
-        offset = end;
-        const targetMs = (sentSamples / sampleRate) * 1000;
-        const waitMs = targetMs - (performance.now() - t0);
-        if (waitMs > 1) await sleep(Math.min(waitMs, 25));
-      }
+      staged = await this._stageDigitalAudio(f48, label);
+      dlog(`FreeRig staged TX ${label || 'frame'} ${f48.length} samples`, 'log-ardop');
+      await this._playStagedDigitalAudio(staged, f48.length, label, pttDelayMs, tailMs);
+      completed = true;
       dlog(`FreeRig TX ${label || 'frame'} ${f48.length} samples`, 'log-ardop');
-      await sleep(SESSION_TUNE.txFlushMs ?? (t.txFlushMs || 180));
     } finally {
-      try { await this.setPtt(false); } catch (e) { log(`FreeRig PTT release failed: ${e.message}`, 'log-err'); }
+      if (!completed && staged) this._sendControl({ type: 'digital_tx_stop' });
+      this._ptt = false;
     }
   }
   async stop() {
