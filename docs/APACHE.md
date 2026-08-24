@@ -12,7 +12,7 @@ When the frontend is served from HTTPS, the current JavaScript uses same-origin 
 /video.mjpeg
 ```
 
-Do not use the old Raspberry Pi `/ft710-api/` prefix. Do not proxy `/ft8/` to noVNC/WSJT-X: integrated FT8 is the static file `/ft8.html`.
+Do not use the old Raspberry Pi `/ft710-api/` prefix. Do not proxy `/ft8/` to noVNC/WSJT-X: FT8, JS8 and Winlink are static files served as `/ft8.html`, `/js8.html` and `/winlink.html`.
 
 ## 1. Copy the frontend
 
@@ -52,7 +52,7 @@ Copy `deploy/apache/ft710-ssl.conf.example` to `/etc/apache2/sites-available/fre
 - certificate paths;
 - password/session file paths if you changed them.
 
-The template protects the static frontend, REST API, WebSocket, video and FT8 with the same Apache form-login cookie while leaving `/login.html` and `/ft710-login` public.
+The template protects the static frontend, REST API, WebSocket, video and digital-mode pages with the same Apache form-login cookie while leaving `/login.html` and `/ft710-login` public.
 
 ## 6. Enable and test
 

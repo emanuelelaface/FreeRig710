@@ -26,6 +26,10 @@ FreeRig710 moves the old Raspberry Pi responsibilities into the ESP32-P4 firmwar
 - `ft8-logbook.js` — local ADIF/IndexedDB worked/QSO database and QRZ sync support.
 - `ft8-decode-rules.js` — FT8 filter/color rule matching.
 - `ft8-geo.js` — compact offline Maidenhead geography index.
+- `js8.html`, `js8-page.js`, `js8-page.css` — native browser JS8 operating console.
+- `vendor/js8/` — vendored JS8 WASM codec assets from wfweb/JS8Call-improved.
+- `winlink.html` — browser Winlink/ARDOP console adapted from DL2MAN's ARDOP Winlink work.
+- `settings.js` — shared station/backend settings used by Radio, FT8, JS8 and Winlink.
 - `audio-worklet.js` — shared browser audio processing.
 - `cw.js`, `sstv.js` — auxiliary browser modes.
 
@@ -42,4 +46,4 @@ FreeRig710 moves the old Raspberry Pi responsibilities into the ESP32-P4 firmwar
 /video.jpg
 ```
 
-Apache should proxy only the API/audio/video paths. `index.html` and `ft8.html` are static files served directly from the web root.
+Apache should proxy only the API/audio/video paths. `index.html`, `ft8.html`, `js8.html` and `winlink.html` are static files served directly from the web root.

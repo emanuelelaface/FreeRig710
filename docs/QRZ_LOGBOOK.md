@@ -15,11 +15,11 @@ Select the API key belonging to the logbook/callsign you want FreeRig710 to use.
 
 ## Store the key in FreeRig710
 
-Open the main radio page and find **QRZ Log**.
+Open the main radio page and press the Settings button in the header.
 
-1. Enter **My callsign**.
+1. Enter **Call**.
 2. Enter the **QRZ Logbook API key**.
-3. Click **SAVE QRZ CONFIG**.
+3. Click **Save Settings**.
 
 The ESP32 stores:
 
@@ -32,7 +32,7 @@ Leaving the key field blank while saving keeps the existing saved key. The firmw
 
 ## Manual log from the main page
 
-The main QRZ panel builds a QSO from the current radio context and submits it through the ESP32 to `https://logbook.qrz.com/api`.
+The main QRZ panel builds a QSO from the current radio context and submits it through the ESP32 to `https://logbook.qrz.com/api`. FT8 and JS8 can also submit completed or prepared contacts through the same ESP32 QRZ path.
 
 The ESP32 performs the QRZ HTTPS request, so the API key never needs to be exposed to browser JavaScript.
 

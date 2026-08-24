@@ -99,4 +99,4 @@ The current worker loads pinned FT8 codec modules from jsDelivr at runtime:
 - RX: `ft8js` 0.0.2 / `ft8_lib`;
 - TX: `@e04/ft8ts` 0.0.14.
 
-Therefore the geography/worked database is offline, but the current decoder/encoder module loading is not fully air-gapped. See `THIRD_PARTY_NOTICES.md`.
+Therefore the geography/worked database is offline, but the current decoder/encoder module loading is not fully air-gapped. See [../THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).

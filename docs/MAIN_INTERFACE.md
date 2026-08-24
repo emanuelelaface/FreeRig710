@@ -6,7 +6,7 @@ The main page is the general FT-710 remote-control console.
 
 ## Header
 
-The header shows the station identity, the **FT8** button, radio power control and CAT connectivity. FT8 opens the dedicated integrated FT8 console.
+The header shows the station identity, digital-mode launch buttons, the shared Settings button, radio power control and CAT connectivity. **FT8**, **JS8** and **Winlink** open their dedicated operating consoles.
 
 ## Radio display
 
@@ -61,10 +61,10 @@ CW decoder/keyer and SSTV decoder share the normal browser receive-audio path. T
 
 Controls TX power, tuner enable/disable and tune.
 
-## QRZ Log
+## Settings And QRZ Log
 
-Stores station callsign/API-key configuration on the ESP32 and provides manual QRZ log submission from the current radio context. See `QRZ_LOGBOOK.md`.
+The Settings dialog stores the shared station callsign, grid, QRZ Logbook API key and ESP32 backend used by the main page, FT8, JS8 and Winlink. The QRZ Log panel provides manual QSO submission from the current radio context. See `QRZ_LOGBOOK.md`.
 
 ## Radio status and backend
 
-The status panel exposes current hardware/API state. When the page is served from localhost, a backend URL can be supplied for development; when served from the normal HTTPS reverse proxy, same-origin paths are used automatically.
+The status panel exposes current hardware/API state. When the page is served from localhost, the backend URL is managed from Settings; when served from the normal HTTPS reverse proxy, same-origin paths are used automatically.

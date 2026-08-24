@@ -82,7 +82,7 @@ sudo rsync -a --delete frontend/ /var/www/ft710/
 
 Then follow `APACHE.md`.
 
-For a development machine, `tools/serve_gui.py` can serve the static frontend; when loaded from localhost, `frontend/config.js` points the frontend at `http://ft710.local`.
+For a development machine, `tools/serve_gui.py` can serve the static frontend; on Windows, `tools/serve_gui.exe` provides the same local server. When loaded from localhost, the frontend points at `http://ft710.local` unless another backend is configured in Settings.
 
 ## 7. First-use checklist
 
@@ -90,7 +90,7 @@ For a development machine, `tools/serve_gui.py` can serve the static frontend; w
 2. Verify live video.
 3. Change frequency/mode at low risk and confirm the radio follows.
 4. Enable browser RX audio.
-5. Configure QRZ only after normal CAT/network operation is stable.
-6. For FT8, start with low RF power or a dummy load.
-7. Wait for **CLOCK SYNC** before automatic FT8 TX.
-8. Verify the selected FT8 band configures VFO A/B as expected before arming TX.
+5. Configure station Call/Grid and QRZ only after normal CAT/network operation is stable.
+6. For FT8, JS8 and Winlink, start with low RF power or a dummy load.
+7. Wait for **CLOCK SYNC** before automatic digital TX.
+8. Verify the selected digital-mode band configures VFO A/B as expected before transmitting.
