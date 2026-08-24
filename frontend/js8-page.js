@@ -6,7 +6,7 @@ const LOCAL_GUI_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const IS_LOCAL_GUI = LOCAL_GUI_HOSTS.has(window.location.hostname);
 let savedBackend = "";
 try {
-  savedBackend = localStorage.getItem("freerig710-backend") || "";
+  savedBackend = window.FreeRig710Settings?.get?.().backend || localStorage.getItem("freerig710-backend") || "";
 } catch {
   savedBackend = "";
 }
@@ -266,6 +266,33 @@ function sanitizeGrid(value) {
     .slice(0, 8);
 }
 
+function sharedStationSettings() {
+  return window.FreeRig710Settings?.get?.() || { call: "", grid: "", backend: "" };
+}
+
+function applySharedStationSettings() {
+  const settings = sharedStationSettings();
+  let call = sanitizeCall(settings.call || "");
+  let grid = sanitizeGrid(settings.grid || "");
+  if (!call) {
+    try { call = sanitizeCall(localStorage.getItem("freerig710-js8-my-call") || ""); } catch (_) {}
+  }
+  if (!grid) {
+    try { grid = sanitizeGrid(localStorage.getItem("freerig710-js8-my-grid") || ""); } catch (_) {}
+  }
+  state.station.call = call;
+  state.station.grid = grid;
+  if (elements["js8-my-call"]) {
+    elements["js8-my-call"].value = call;
+    elements["js8-my-call"].readOnly = true;
+  }
+  if (elements["js8-my-grid"]) {
+    elements["js8-my-grid"].value = grid;
+    elements["js8-my-grid"].readOnly = true;
+  }
+  renderQrzPreview();
+}
+
 function formatHz(hz) {
   if (!Number.isFinite(hz)) return "--";
   if (Math.abs(hz) >= 1000000) return `${(hz / 1000000).toFixed(6)} MHz`;
@@ -462,10 +489,7 @@ function loadSettings() {
   }
   const savedAutoRf = localStorage.getItem("freerig710-js8-auto-rf-v1");
   if (savedAutoRf !== null) state.autoRfGain = savedAutoRf === "1";
-  const savedCall = localStorage.getItem("freerig710-js8-my-call");
-  const savedGrid = localStorage.getItem("freerig710-js8-my-grid");
-  if (savedCall) state.station.call = sanitizeCall(savedCall);
-  if (savedGrid) state.station.grid = sanitizeGrid(savedGrid);
+  applySharedStationSettings();
 }
 
 function applySettingsToUi() {
@@ -474,8 +498,7 @@ function applySettingsToUi() {
   if (elements["js8-auto-freq"]) elements["js8-auto-freq"].checked = state.autoFreq;
   if (elements["js8-auto-rf"]) elements["js8-auto-rf"].checked = state.autoRfGain;
   if (elements["js8-rf-gain-slider"]) elements["js8-rf-gain-slider"].disabled = state.autoRfGain;
-  if (elements["js8-my-call"]) elements["js8-my-call"].value = state.station.call;
-  if (elements["js8-my-grid"]) elements["js8-my-grid"].value = state.station.grid;
+  applySharedStationSettings();
   updateSubmodeReadout();
   updateFrequencyReadout();
 }
@@ -683,7 +706,7 @@ function gridFromJs8Body(body) {
 }
 
 function reportForMyCall(entry) {
-  const myCall = sanitizeCall(elements["js8-my-call"]?.value || state.station.call);
+  const myCall = sanitizeCall(state.station.call);
   if (!myCall || entry.to !== myCall) return "";
   const match = /\b(?:HEARTBEAT\s+)?SNR\s+([+-]?\d{1,2}|0-\d{1,2})\b/i.exec(entry.body || "");
   return match ? normalizeJs8Report(match[1]) : "";
@@ -724,7 +747,7 @@ function applyQrzDefaultsForCall(call, overwrite = false) {
 function renderQrzPreview() {
   if (!elements["js8-qrz-tx-frequency"]) return;
   const context = qrzContext();
-  elements["js8-qrz-station-call"].textContent = state.qrzState?.station_callsign || "Not configured";
+  elements["js8-qrz-station-call"].textContent = state.qrzState?.station_callsign || state.station.call || "Not configured";
   elements["js8-qrz-tx-frequency"].textContent = Number.isFinite(context.txFrequency)
     ? `${formatFrequencyDigits(context.txFrequency)} Hz`
     : "--.---.---";
@@ -764,7 +787,7 @@ function applyQrzStatus(status) {
   } else {
     setQrzStatus("NOT CONFIGURED", "is-bad");
     if (elements["js8-qrz-result"] && /checking/i.test(elements["js8-qrz-result"].textContent || "")) {
-      elements["js8-qrz-result"].textContent = "Configure QRZ Logbook in the main Radio page, then return here.";
+      elements["js8-qrz-result"].textContent = "Configure QRZ Logbook in the main Settings panel, then return here.";
     }
   }
   renderQrzPreview();
@@ -777,14 +800,8 @@ async function loadStationIdentity() {
     applyQrzStatus(status);
     const call = sanitizeCall(status?.station_callsign || status?.callsign || "");
     const grid = sanitizeGrid(status?.grid || status?.grid_square || "");
-    if (call && !state.station.call) {
-      state.station.call = call;
-      if (elements["js8-my-call"]) elements["js8-my-call"].value = call;
-    }
-    if (grid && !state.station.grid) {
-      state.station.grid = grid;
-      if (elements["js8-my-grid"]) elements["js8-my-grid"].value = grid;
-    }
+    if (window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ call, grid });
+    applySharedStationSettings();
   } catch (error) {
     setQrzStatus("ERROR", "is-bad");
     if (elements["js8-qrz-result"]) elements["js8-qrz-result"].textContent = error.message;
@@ -841,7 +858,7 @@ async function submitQrzLog(event) {
       rx_frequency_hz: Math.round(context.rxFrequency),
       band: context.band,
       grid: sanitizeGrid(elements["js8-qrz-grid"]?.value || ""),
-      my_grid: sanitizeGrid(elements["js8-my-grid"]?.value || state.station.grid),
+      my_grid: sanitizeGrid(state.station.grid),
       rst_sent: String(elements["js8-qrz-rst-sent"]?.value || "").trim(),
       rst_rcvd: String(elements["js8-qrz-rst-rcvd"]?.value || "").trim(),
       comment: String(elements["js8-qrz-notes"]?.value || "").trim(),
@@ -1657,13 +1674,12 @@ function pickAutoFreq() {
 }
 
 function buildPackedMessage(target, text, bypassSelection = false) {
-  const myCall = sanitizeCall(elements["js8-my-call"]?.value || state.station.call);
-  const myGrid = sanitizeGrid(elements["js8-my-grid"]?.value || state.station.grid);
-  if (!myCall) throw new Error("Set My Call before transmitting JS8");
+  applySharedStationSettings();
+  const myCall = sanitizeCall(state.station.call);
+  const myGrid = sanitizeGrid(state.station.grid);
+  if (!myCall) throw new Error("Set My Call in the main Settings panel before transmitting JS8");
   state.station.call = myCall;
   state.station.grid = myGrid;
-  localStorage.setItem("freerig710-js8-my-call", myCall);
-  localStorage.setItem("freerig710-js8-my-grid", myGrid);
   if (elements["js8-my-call"]) elements["js8-my-call"].value = myCall;
   if (elements["js8-my-grid"]) elements["js8-my-grid"].value = myGrid;
 
@@ -1952,13 +1968,13 @@ function sendMessage() {
 }
 
 function sendCq() {
-  const grid = sanitizeGrid(elements["js8-my-grid"]?.value || state.station.grid);
+  const grid = sanitizeGrid(state.station.grid);
   const text = grid ? `CQ CQ CQ ${grid.slice(0, 4)}` : "CQ CQ CQ";
   queueTransmission(text, { target: "@ALLCALL", label: "CQ", bypassSelection: true }).catch((error) => log(error.message, "bad"));
 }
 
 function sendHeartbeat() {
-  const grid = sanitizeGrid(elements["js8-my-grid"]?.value || state.station.grid);
+  const grid = sanitizeGrid(state.station.grid);
   const text = grid ? `@HB HEARTBEAT ${grid.slice(0, 4)}` : "@HB HEARTBEAT";
   queueTransmission(text, { target: "@HB", label: "Heartbeat", bypassSelection: true }).catch((error) => log(error.message, "bad"));
 }
@@ -2140,18 +2156,7 @@ function bindEvents() {
       state.waterfallDragging = false;
     });
   }
-  ["js8-my-call", "js8-my-grid"].forEach((id) => {
-    if (!elements[id]) return;
-    elements[id].addEventListener("change", () => {
-      state.station.call = sanitizeCall(elements["js8-my-call"]?.value || "");
-      state.station.grid = sanitizeGrid(elements["js8-my-grid"]?.value || "");
-      if (elements["js8-my-call"]) elements["js8-my-call"].value = state.station.call;
-      if (elements["js8-my-grid"]) elements["js8-my-grid"].value = state.station.grid;
-      localStorage.setItem("freerig710-js8-my-call", state.station.call);
-      localStorage.setItem("freerig710-js8-my-grid", state.station.grid);
-      renderQrzPreview();
-    });
-  });
+  window.addEventListener("freerig710-settings-changed", () => applySharedStationSettings());
   if (elements["js8-qrz-call"]) {
     elements["js8-qrz-call"].addEventListener("input", () => {
       const input = elements["js8-qrz-call"];

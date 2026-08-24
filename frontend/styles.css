@@ -226,7 +226,7 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
   gap: 10px;
   min-width: 0;
   max-width: 100%;
-  flex: 0 1 420px;
+  flex: 0 0 auto;
 }
 .station-actions {
   display: flex;
@@ -234,7 +234,7 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 .station-button {
   min-width: 94px;
@@ -253,6 +253,19 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
   white-space: nowrap;
 }
 .station-button:not(:disabled):not(.disabled):hover { border-color: var(--accent); }
+.station-button.settings-button {
+  min-width: 42px;
+  padding-inline: .75rem;
+  font-size: 1.05rem;
+  line-height: 1;
+  overflow: hidden;
+}
+.settings-button-icon {
+  display: inline-block;
+  line-height: 1;
+  transform: scale(1.45);
+  transform-origin: center;
+}
 .station-button.power-on-action {
   border-color: #397759;
   background: linear-gradient(180deg, #173827, #10291d);
@@ -274,6 +287,71 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
   cursor: not-allowed;
   opacity: .45;
   pointer-events: none;
+}
+
+.settings-dialog[hidden] { display: none; }
+.settings-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(2, 6, 10, .72);
+  backdrop-filter: blur(6px);
+}
+.settings-dialog-panel {
+  width: min(560px, 100%);
+  max-height: min(86vh, 680px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0d141c;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, .42);
+  padding: 16px;
+}
+.settings-dialog-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.settings-dialog-heading h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.settings-close {
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+.settings-form {
+  display: grid;
+  gap: 12px;
+}
+.settings-form label {
+  display: grid;
+  gap: 6px;
+}
+.settings-form input {
+  min-height: 42px;
+}
+.settings-form .help.error {
+  color: #ff9ba6;
+}
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+input[readonly] {
+  color: var(--muted);
+  background: #091018;
+  cursor: default;
 }
 
 @media (max-width: 850px) {

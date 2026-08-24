@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FreeRig710 · Yaesu FT-710</title>
-  <link rel="stylesheet" href="styles.css?v=1.0-masonry1">
+  <link rel="stylesheet" href="styles.css?v=1.0-settings2">
 </head>
 <body>
   <main class="shell">
@@ -18,6 +18,7 @@
           <a id="ft8-open-button" class="station-button ft8-launch-button" href="ft8.html" target="freerig710-ft8">FT8</a>
           <a id="js8-open-button" class="station-button js8-launch-button" href="js8.html" target="freerig710-js8">JS8</a>
           <a id="winlink-open-button" class="station-button winlink-launch-button" href="winlink.html" target="freerig710-winlink">Winlink</a>
+          <button id="settings-button" class="station-button settings-button" type="button" aria-label="Settings" title="Settings"><span class="settings-button-icon" aria-hidden="true">⚙</span></button>
           <button id="radio-power-button" class="station-button power-button" type="button" disabled>POWER…</button>
         </div>
         <div class="connection">
@@ -26,6 +27,38 @@
         </div>
       </div>
     </header>
+
+    <div id="settings-dialog" class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
+      <div class="settings-dialog-panel">
+        <div class="settings-dialog-heading">
+          <h2 id="settings-title">Settings</h2>
+          <button id="settings-close" class="settings-close" type="button" aria-label="Close settings">×</button>
+        </div>
+        <form id="settings-form" class="settings-form">
+          <label>
+            <span class="control-label">Call</span>
+            <input id="settings-call" type="text" minlength="3" maxlength="16" pattern="[A-Za-z0-9/]+" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="SA7CHI" required>
+          </label>
+          <label>
+            <span class="control-label">Grid</span>
+            <input id="settings-grid" type="text" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="JO65">
+          </label>
+          <label>
+            <span class="control-label">QRZ Logbook API key</span>
+            <input id="settings-qrz-api-key" type="password" maxlength="128" autocomplete="new-password" placeholder="Leave blank to keep saved key">
+          </label>
+          <label>
+            <span class="control-label">ESP32 backend</span>
+            <input id="settings-backend" type="text" autocomplete="off" spellcheck="false" placeholder="http://ft710.local">
+          </label>
+          <p id="settings-status" class="help" aria-live="polite">Settings are shared by Radio, FT8, JS8 and Winlink.</p>
+          <div class="settings-actions">
+            <button id="settings-save" type="submit">Save Settings</button>
+            <button id="settings-cancel" type="button">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <div class="workspace">
       <div class="primary-column">
@@ -508,18 +541,7 @@
         </div>
         <p class="help">The browser captures the current QSO context and asks the ESP32 to submit it to QRZ. Station callsign and Logbook API key are stored on the ESP32; the key is never returned to the browser.</p>
 
-        <form id="qrz-config-form" class="qrz-log-form qrz-config-form">
-          <label>
-            <span class="control-label">My callsign</span>
-            <input id="qrz-config-callsign" type="text" minlength="3" maxlength="16" pattern="[A-Za-z0-9/]+" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="IU0ABC" required>
-          </label>
-          <label>
-            <span class="control-label">QRZ Logbook API key</span>
-            <input id="qrz-config-api-key" type="password" maxlength="128" autocomplete="new-password" placeholder="Leave blank to keep saved key">
-          </label>
-          <button id="qrz-config-save" class="wide" type="submit">SAVE QRZ CONFIG</button>
-          <p id="qrz-config-state" class="help">Reading configuration from ESP32…</p>
-        </form>
+        <p id="qrz-config-state" class="help">Reading QRZ configuration from ESP32…</p>
 
         <dl class="status-list qrz-preview">
           <div><dt>My call</dt><dd id="qrz-station-call">Not configured</dd></div>
@@ -569,11 +591,7 @@
           <div><dt>Radio ID</dt><dd id="radio-id">--</dd></div>
           <div><dt>ESP32 backend</dt><dd id="status-backend">ft710.local</dd></div>
         </dl>
-        <form id="backend-config-form" class="inline-control backend-config">
-          <input id="backend-host" type="text" autocomplete="off" spellcheck="false" placeholder="http://ft710.local" aria-label="ESP32 backend URL">
-          <button id="backend-save" type="submit">Apply</button>
-        </form>
-        <p id="backend-help" class="help">Local mode uses ft710.local. HTTPS reverse-proxy mode uses the current origin automatically.</p>
+        <p id="backend-help" class="help">Managed in Settings.</p>
       </article>
     </section>
 
@@ -594,8 +612,9 @@
   </main>
 
   <script src="config.js?v=1.0"></script>
+  <script src="settings.js?v=1.0-settings1"></script>
   <script src="cw.js?v=1.0"></script>
   <script src="sstv.js?v=1.0"></script>
-  <script src="app.js?v=1.0-mobile1"></script>
+  <script src="app.js?v=1.0-settings1"></script>
 </body>
 </html>

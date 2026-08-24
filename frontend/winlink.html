@@ -3537,7 +3537,7 @@ mit BegrÃ¼ndung kommentieren. Hier nur die Liste zur Ãœbersicht.)
       <div class="card">
         <div class="card-title" data-i18n="diag.wlAccount">Winlink Account (Secure Login)</div>
         <div class="row">
-          <div class="fld" style="flex:1;min-width:120px;"><label data-i18n="radio.mycall">My Callsign</label><input id="callInput" maxlength="10" data-i18n-ph="radio.mycall.ph" placeholder="AB1CDE" autocomplete="off"></div>
+          <div class="fld" style="flex:1;min-width:120px;"><label data-i18n="radio.mycall">My Callsign</label><input id="callInput" maxlength="10" data-i18n-ph="radio.mycall.ph" placeholder="Set in Settings" autocomplete="off" readonly title="Set this in the main Settings panel"></div>
           <div class="fld" style="flex:1;min-width:140px;"><label data-i18n="diag.wlPass" data-i18n-title="title.wlPass" title="Winlink account password for Secure Login (;PQ→;PR). Used only locally for the login hash, never sent in clear text.">Winlink Password</label><input type="password" id="wlPassword" autocomplete="off"></div>
         </div>
       </div>
@@ -3545,8 +3545,8 @@ mit BegrÃ¼ndung kommentieren. Hier nur die Liste zur Ãœbersicht.)
         <div class="card-title" data-i18n="diag.location">Location (for gateway distance &amp; bearing)</div>
         <div class="fld"><label><span data-i18n="diag.locator">Maidenhead Locator</span> <span id="locStatus" style="color:var(--dim);"></span></label>
           <div class="row" style="gap:5px;flex-wrap:nowrap;">
-            <input id="myLocator" maxlength="6" data-i18n-ph="diag.locator.ph" placeholder="e.g. JN59" style="flex:1;">
-            <button id="btnGps" data-i18n="btn.gps" data-i18n-title="title.gps" title="Determine position via GPS (mobile device)" style="flex-shrink:0;padding:5px 12px;">📍 GPS</button>
+            <input id="myLocator" maxlength="8" data-i18n-ph="diag.locator.ph" placeholder="Set in Settings" style="flex:1;" readonly title="Set this in the main Settings panel">
+            <button id="btnGps" data-i18n="btn.gps" data-i18n-title="title.gps" title="Set the locator in the main Settings panel" style="flex-shrink:0;padding:5px 12px;" hidden>📍 GPS</button>
           </div></div>
       </div>
       <!-- v0.4.24c: WAV-Menü wieder aktiv (war seit V0.3 auskommentiert). Gebraucht für
@@ -3605,6 +3605,7 @@ mit BegrÃ¼ndung kommentieren. Hier nur die Liste zur Ãœbersicht.)
   </div>
 
 <script src="config.js?v=1.0"></script>
+<script src="settings.js?v=1.0-settings1"></script>
 <script>
 'use strict';
 
@@ -3661,7 +3662,7 @@ const FreeRigBridge = (() => {
   }
 
   let savedBackend = '';
-  try { savedBackend = localStorage.getItem('freerig710-backend') || ''; } catch (_) {}
+  try { savedBackend = window.FreeRig710Settings?.get?.().backend || localStorage.getItem('freerig710-backend') || ''; } catch (_) {}
   const defaultBackend = normalizeBackend(window.FT710_CONFIG?.localDefaultBackend || 'http://ft710.local');
   const localGui = LOCAL_GUI_HOSTS.has(window.location.hostname);
   const API_BASE = localGui ? (normalizeBackend(savedBackend) || defaultBackend) : '';
@@ -3738,6 +3739,61 @@ window.FreeRig710API = Object.freeze({
   apiUrl: FreeRigBridge.apiUrl,
   websocketUrl: FreeRigBridge.websocketUrl
 });
+
+function sharedSettings() {
+  return window.FreeRig710Settings?.get?.() || { call: '', grid: '', backend: '' };
+}
+
+function normalizeSharedCall(value) {
+  if (window.FreeRig710Settings?.normalizeCall) return window.FreeRig710Settings.normalizeCall(value);
+  return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9/]/g, '').slice(0, 16);
+}
+
+function normalizeSharedGrid(value) {
+  if (window.FreeRig710Settings?.normalizeGrid) return window.FreeRig710Settings.normalizeGrid(value);
+  return String(value || '').trim().toUpperCase().replace(/[^A-R0-9]/g, '').slice(0, 8);
+}
+
+function saveSharedGrid(grid) {
+  const value = normalizeSharedGrid(grid);
+  if (window.FreeRig710Settings?.set) window.FreeRig710Settings.set({ grid: value });
+  try { if (value) localStorage.setItem('ardop_v02_locator', value); } catch (_) {}
+  return value;
+}
+
+function syncWinlinkStationFields(options = {}) {
+  const shouldRender = options.render !== false;
+  const settings = sharedSettings();
+  let call = normalizeSharedCall(settings.call);
+  let grid = normalizeSharedGrid(settings.grid);
+  if (!call) {
+    try { call = normalizeSharedCall(localStorage.getItem('ardop_v02_call') || ''); } catch (_) {}
+    if (call && window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ call });
+  }
+  if (!grid) {
+    try { grid = normalizeSharedGrid(localStorage.getItem('ardop_v02_locator') || ''); } catch (_) {}
+    if (grid && window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ grid });
+  }
+  const callEl = document.getElementById('callInput');
+  if (callEl) {
+    callEl.value = call;
+    callEl.readOnly = true;
+    callEl.title = 'Set this in the main Settings panel';
+  }
+  const locEl = document.getElementById('myLocator');
+  if (locEl) {
+    locEl.value = grid;
+    locEl.readOnly = true;
+    locEl.title = 'Set this in the main Settings panel';
+  }
+  if (typeof GwUI !== 'undefined') {
+    GwUI.myGrid = grid;
+    if (shouldRender && typeof GwUI.render === 'function') GwUI.render();
+  }
+  return { call, grid };
+}
+
+window.addEventListener('freerig710-settings-changed', () => syncWinlinkStationFields({ render: true }));
 
 // Text in die Zwischenablage kopieren — moderne Clipboard-API (nur in sicheren Kontexten/HTTPS),
 // mit textarea+execCommand-Fallback für ältere Android-WebViews / nicht-sichere Kontexte.
@@ -9721,8 +9777,7 @@ const Session = {
     // Regel 4.0: vor dem DISC die eigene Kennung senden (ardopcf ARDOPC.c Z.1844 SendID).
     // Der Sendevorgang laeuft asynchron; das DISC folgt erst danach, damit sich die beiden
     // Aussendungen nicht ueberlappen.
-    const grid = (typeof localStorage !== 'undefined')
-      ? (localStorage.getItem('ardop_v02_locator') || '').trim() : '';
+    const grid = normalizeSharedGrid(sharedSettings().grid);
     const after = () => { if (this._arqDisconnect) this._checkForDisconnect(); };
     if (typeof ardopTx !== 'undefined' && this.mycall) {
       Promise.resolve(ardopTx.sendID(this.mycall, grid, 'ARQ Timeout'))
@@ -10659,7 +10714,7 @@ const B2F = {
     // noch die Kommentarzeile "; <Gateway> DE <Mycall> (<Locator>)". Das CMS ignoriert sie,
     // aber wl2k_test.go verankert sie wörtlich als Soll-Zeile → für Konformität ergänzt.
     const _tgt = (localStorage.getItem('ardop_v02_target') || '').trim() || 'CMS';
-    const _loc = (localStorage.getItem('ardop_v02_locator') || '').trim();
+    const _loc = normalizeSharedGrid(sharedSettings().grid);
     resp += `; ${_tgt} DE ${this._mycall} (${_loc})\r`;
     // Haben wir etwas zu senden? Dann Proposal-Block statt FF (max. 5 = MaxBlockSize).
     if (this.outbox && this.outbox.length > 0) {
@@ -12640,9 +12695,9 @@ function tryGPS() {
       if (g) return;
     }
     if (btn) btn.disabled = false;
-    const grid = llToGrid(p.coords.latitude, p.coords.longitude);
+    const grid = saveSharedGrid(llToGrid(p.coords.latitude, p.coords.longitude));
     const el = document.getElementById('myLocator'); if (el) el.value = grid;
-    GwUI.myGrid = grid; localStorage.setItem('ardop_v02_locator', grid);
+    GwUI.myGrid = grid;
     if (st) st.textContent = '✅ ' + grid;
     const acc = (p.coords.accuracy != null) ? ` ±${Math.round(p.coords.accuracy)} m` : '';
     log(tfn('log.position', [grid, p.coords.latitude.toFixed(4), p.coords.longitude.toFixed(4), acc]), 'log-ok');
@@ -12679,9 +12734,9 @@ function tryGPS() {
     const g = await trxGpsPosition();   // v0.4.13: gemeinsamer Helfer (identische Meldungen in beiden Buttons)
     if (!g) return null;
     if (btn) btn.disabled = false;
-    const grid = llToGrid(g.lat, g.lon);
+    const grid = saveSharedGrid(llToGrid(g.lat, g.lon));
     const el = document.getElementById('myLocator'); if (el) el.value = grid;
-    GwUI.myGrid = grid; localStorage.setItem('ardop_v02_locator', grid);
+    GwUI.myGrid = grid;
     if (st) st.textContent = '✅ ' + grid + ' (TRX)';
     log(tfn('log.gps_trx_position', [grid, g.lat.toFixed(4), g.lon.toFixed(4)]), 'log-ok');
     GwUI.render();
@@ -13459,15 +13514,8 @@ window.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.tabbtn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   // Eigener Locator (für Entfernung/Peilung der Gateways)
   const locEl = document.getElementById('myLocator');
-  const locStored = localStorage.getItem('ardop_v02_locator');
-  if (locStored) locEl.value = locStored;
-  GwUI.myGrid = (locEl.value || '').toUpperCase();
-  locEl.addEventListener('input', () => locEl.value = locEl.value.toUpperCase());
-  locEl.addEventListener('change', () => {
-    GwUI.myGrid = (locEl.value || '').toUpperCase();
-    localStorage.setItem('ardop_v02_locator', GwUI.myGrid);
-    GwUI.render();
-  });
+  syncWinlinkStationFields({ render: false });
+  if (locEl) locEl.readOnly = true;
   // Gateway-Liste aufbauen
   GwUI.init();
   // Gateway-Liste aktualisieren: RMS-Liste öffnen / CSV importieren / zurücksetzen
@@ -13580,7 +13628,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if (panel && !panel.classList.contains('active')) switchTab(panel.id.replace('panel-', ''));
       el.focus(); const prev = el.style.outline; el.style.outline = '2px solid #ff5555'; setTimeout(() => { el.style.outline = prev; }, 2500);
     };
-    if (!mycall || mycall.length < 2) { flagField('callInput', 'My callsign is missing — enter it in "My Callsign", then connect again.'); return; }
+    if (!mycall || mycall.length < 2) { flagField('callInput', 'My callsign is missing — set it in the main Settings panel, then connect again.'); return; }
     if (!target || target.length < 2) { flagField('targetInput', 'Target gateway is missing — enter it in "Target Gateway" or select one from the list.'); return; }
     const bw = parseInt(document.getElementById('bwSelect').value) || 2000;
     await Session.connect(mycall, target, bw);
@@ -13721,15 +13769,8 @@ window.addEventListener('DOMContentLoaded', () => {
     localStorage.setItem('ardop_v02_wlpass', e.target.value);
   });
   // V0.3: B2F-Identifier (Software-SID) fest in B2F.SID_DEFAULT, kein UI/localStorage mehr.
-  // Eigenes Rufzeichen: aus localStorage laden + bei Änderung speichern (keine Vorbelegung im Code).
-  const callStored = localStorage.getItem('ardop_v02_call');
-  if (callStored) document.getElementById('callInput').value = callStored;
-  document.getElementById('callInput').addEventListener('input', (e) => { e.target.value = e.target.value.toUpperCase(); });
-  document.getElementById('callInput').addEventListener('change', (e) => {
-    const v = (e.target.value || '').trim().toUpperCase();
-    e.target.value = v;
-    localStorage.setItem('ardop_v02_call', v);
-  });
+  // Eigenes Rufzeichen kommt aus dem zentralen Settings-Panel der Hauptseite.
+  syncWinlinkStationFields({ render: true });
   // Ziel-Gateway: aus localStorage laden + bei Änderung speichern.
   const targetStored = localStorage.getItem('ardop_v02_target');
   if (targetStored) document.getElementById('targetInput').value = targetStored;

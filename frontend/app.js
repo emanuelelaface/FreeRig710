@@ -38,6 +38,30 @@ function websocketUrl(path) {
 function backendDisplayName() {
   return API_BASE || window.location.origin;
 }
+
+function stationSettings() {
+  return window.FreeRig710Settings?.get?.() || { call: "", grid: "", backend: "" };
+}
+
+function normalizeStationCall(value) {
+  return window.FreeRig710Settings?.normalizeCall?.(value)
+    || String(value || "").trim().toUpperCase().replace(/[^A-Z0-9/]/g, "").slice(0, 16);
+}
+
+function normalizeGridSquare(value) {
+  return window.FreeRig710Settings?.normalizeGrid?.(value)
+    || String(value || "").trim().toUpperCase().replace(/[^A-R0-9]/g, "").slice(0, 8);
+}
+
+function saveStationSettings(values) {
+  if (window.FreeRig710Settings?.set) return window.FreeRig710Settings.set(values);
+  try {
+    if (Object.prototype.hasOwnProperty.call(values, "call")) localStorage.setItem("freerig710-settings-call", normalizeStationCall(values.call));
+    if (Object.prototype.hasOwnProperty.call(values, "grid")) localStorage.setItem("freerig710-settings-grid", normalizeGridSquare(values.grid));
+    if (Object.prototype.hasOwnProperty.call(values, "backend")) localStorage.setItem("freerig710-backend", normalizeBackend(values.backend));
+  } catch (_) { /* optional */ }
+  return stationSettings();
+}
 const MODES = [
   "LSB", "USB", "CW-U", "FM", "AM", "RTTY-L", "CW-L", "DATA-L",
   "RTTY-U", "DATA-FM", "FM-N", "DATA-U", "AM-N", "PSK", "DATA-FM-N"
@@ -363,7 +387,7 @@ function updateQrzLogButton() {
 function renderQrzPreview(state = lastState) {
   if (!byId("qrz-tx-frequency")) return;
   const context = qrzRadioContext(state);
-  byId("qrz-station-call").textContent = qrzState.station_callsign || "Not configured";
+  byId("qrz-station-call").textContent = qrzState.station_callsign || stationSettings().call || "Not configured";
   byId("qrz-tx-frequency").textContent = Number.isFinite(context.txFrequency)
     ? `${formatFrequency(context.txFrequency)} Hz`
     : "--.---.---";
@@ -377,15 +401,36 @@ function renderQrzPreview(state = lastState) {
   updateQrzLogButton();
 }
 
+function applyQrzStatus(status, options = {}) {
+  qrzState = status || qrzState;
+  const stationCall = normalizeStationCall(qrzState.station_callsign || "");
+  if (stationCall && !stationSettings().call) saveStationSettings({ call: stationCall });
+  const configState = byId("qrz-config-state");
+  const resultElement = byId("qrz-log-result");
+  if (configState) {
+    configState.textContent = qrzState.configured
+      ? `Saved on ESP32 · API key ${qrzState.api_key_set ? "present" : "missing"} · edit in Settings`
+      : `Not configured · API key ${qrzState.api_key_set ? "present" : "missing"} · edit in Settings`;
+  }
+  if (qrzState.configured) {
+    setQrzLogStatus("READY", "ready");
+    if (resultElement && !options.keepResult) {
+      resultElement.textContent = options.resultMessage || "Ready. QSO time is captured when you press LOG QSO TO QRZ.";
+    }
+  } else {
+    setQrzLogStatus("NOT CONFIGURED", "error");
+    if (resultElement && !options.keepResult) {
+      resultElement.textContent = "Open Settings to enter your callsign and QRZ Logbook API key.";
+    }
+  }
+  renderQrzPreview();
+}
+
 async function initQrzLog() {
   const form = byId("qrz-log-form");
-  const configForm = byId("qrz-config-form");
-  if (!form || !configForm) return;
+  if (!form) return;
   const callInput = byId("qrz-call");
-  const configCallsign = byId("qrz-config-callsign");
-  const configApiKey = byId("qrz-config-api-key");
   const configState = byId("qrz-config-state");
-  const configSave = byId("qrz-config-save");
   const resultElement = byId("qrz-log-result");
 
   const sanitizeCall = (input) => {
@@ -398,24 +443,7 @@ async function initQrzLog() {
     sanitizeCall(callInput);
     updateQrzLogButton();
   });
-  configCallsign.addEventListener("input", () => sanitizeCall(configCallsign));
   byId("qrz-log-mode").addEventListener("change", () => renderQrzPreview());
-
-  const applyQrzStatus = (status) => {
-    qrzState = status || qrzState;
-    configCallsign.value = qrzState.station_callsign || "";
-    configState.textContent = qrzState.configured
-      ? `Saved on ESP32 · API key ${qrzState.api_key_set ? "present" : "missing"}`
-      : `Not configured · API key ${qrzState.api_key_set ? "present" : "missing"}`;
-    if (qrzState.configured) {
-      setQrzLogStatus("READY", "ready");
-      resultElement.textContent = "Ready. QSO time is captured when you press LOG QSO TO QRZ.";
-    } else {
-      setQrzLogStatus("NOT CONFIGURED", "error");
-      resultElement.textContent = "Enter your callsign and QRZ Logbook API key above, then save them on the ESP32.";
-    }
-    renderQrzPreview();
-  };
 
   try {
     const response = await api("/api/v1/qrz/status");
@@ -425,28 +453,6 @@ async function initQrzLog() {
     configState.textContent = error.message;
     resultElement.textContent = error.message;
   }
-
-  configForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const stationCallsign = configCallsign.value.trim().toUpperCase();
-    if (!stationCallsign) return;
-    configSave.disabled = true;
-    configState.textContent = "Saving on ESP32…";
-    try {
-      const payload = { station_callsign: stationCallsign };
-      const key = configApiKey.value.trim();
-      if (key) payload.api_key = key;
-      const response = await post("/api/v1/qrz/config", payload);
-      configApiKey.value = "";
-      applyQrzStatus(response.qrz || response);
-      showToast("QRZ configuration saved on ESP32");
-    } catch (error) {
-      configState.textContent = error.message;
-      showToast(error.message, true);
-    } finally {
-      configSave.disabled = false;
-    }
-  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -506,6 +512,127 @@ async function initQrzLog() {
 
   window.setInterval(() => renderQrzPreview(), 1000);
 }
+
+function initStationSettings() {
+  const button = byId("settings-button");
+  const dialog = byId("settings-dialog");
+  const form = byId("settings-form");
+  const closeButton = byId("settings-close");
+  const cancelButton = byId("settings-cancel");
+  const callInput = byId("settings-call");
+  const gridInput = byId("settings-grid");
+  const apiKeyInput = byId("settings-qrz-api-key");
+  const backendInput = byId("settings-backend");
+  const saveButton = byId("settings-save");
+  const status = byId("settings-status");
+  if (!button || !dialog || !form || !callInput || !gridInput || !apiKeyInput || !backendInput || !saveButton || !status) return;
+
+  const setStatus = (message, isError = false) => {
+    status.textContent = message;
+    status.classList.toggle("error", isError);
+  };
+
+  const syncFields = () => {
+    const settings = stationSettings();
+    callInput.value = settings.call || normalizeStationCall(qrzState.station_callsign || "");
+    gridInput.value = settings.grid || "";
+    backendInput.value = IS_LOCAL_GUI ? (settings.backend || API_BASE || DEFAULT_LOCAL_BACKEND) : window.location.origin;
+    backendInput.disabled = !IS_LOCAL_GUI;
+    apiKeyInput.value = "";
+    apiKeyInput.placeholder = qrzState.api_key_set ? "Saved on ESP32; leave blank to keep it" : "Paste QRZ Logbook API key";
+    setStatus("Settings are shared by Radio, FT8, JS8 and Winlink.");
+  };
+
+  const openDialog = () => {
+    syncFields();
+    dialog.hidden = false;
+    window.setTimeout(() => callInput.focus(), 0);
+  };
+
+  const closeDialog = () => {
+    dialog.hidden = true;
+  };
+
+  button.addEventListener("click", openDialog);
+  closeButton?.addEventListener("click", closeDialog);
+  cancelButton?.addEventListener("click", closeDialog);
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) closeDialog();
+  });
+  window.addEventListener("keydown", (event) => {
+    if (!dialog.hidden && event.key === "Escape") closeDialog();
+  });
+  callInput.addEventListener("input", () => {
+    callInput.value = normalizeStationCall(callInput.value);
+  });
+  gridInput.addEventListener("input", () => {
+    gridInput.value = normalizeGridSquare(gridInput.value);
+  });
+  window.addEventListener("freerig710-settings-changed", () => {
+    const settings = stationSettings();
+    const backend = IS_LOCAL_GUI ? (settings.backend || API_BASE || DEFAULT_LOCAL_BACKEND) : window.location.origin;
+    const backendStatus = byId("status-backend");
+    if (backendStatus) backendStatus.textContent = backend;
+    renderQrzPreview();
+  });
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const call = normalizeStationCall(callInput.value);
+    const grid = normalizeGridSquare(gridInput.value);
+    const backend = IS_LOCAL_GUI ? normalizeBackend(backendInput.value || DEFAULT_LOCAL_BACKEND) : "";
+    const qrzKey = apiKeyInput.value.trim();
+    const gridOk = !grid || /^[A-R]{2}\d{2}(?:[A-X]{2}(?:\d{2})?)?$/.test(grid);
+
+    if (!call) {
+      setStatus("Call is required.", true);
+      return;
+    }
+    if (!gridOk) {
+      setStatus("Grid must be a valid Maidenhead locator, for example JO65 or JO65MO.", true);
+      return;
+    }
+    if (IS_LOCAL_GUI && !backend) {
+      setStatus("ESP32 backend URL is invalid.", true);
+      return;
+    }
+
+    const previousBackend = API_BASE;
+    const backendChanged = IS_LOCAL_GUI && backend && backend !== previousBackend;
+    saveButton.disabled = true;
+    setStatus("Saving settings…");
+    saveStationSettings({ call, grid, backend: IS_LOCAL_GUI ? backend : stationSettings().backend });
+    if (backendChanged) API_BASE = backend;
+
+    let qrzError = "";
+    try {
+      const payload = { station_callsign: call };
+      if (qrzKey) payload.api_key = qrzKey;
+      const response = await post("/api/v1/qrz/config", payload);
+      apiKeyInput.value = "";
+      applyQrzStatus(response.qrz || response, { resultMessage: "QRZ configuration saved. Ready to log QSOs." });
+    } catch (error) {
+      qrzError = error.message;
+    } finally {
+      saveButton.disabled = false;
+    }
+
+    const backendStatus = byId("status-backend");
+    if (backendStatus) backendStatus.textContent = backendDisplayName();
+    if (qrzError) {
+      setStatus(`Settings saved locally. QRZ config was not saved on ESP32: ${qrzError}`, true);
+      showToast("Settings saved locally; QRZ config failed", true);
+    } else {
+      setStatus(backendChanged ? "Settings saved. Reloading for the new backend…" : "Settings saved.");
+      showToast("Settings saved");
+      if (!backendChanged) window.setTimeout(closeDialog, 350);
+    }
+    if (backendChanged) window.setTimeout(() => window.location.reload(), 450);
+  });
+
+  syncFields();
+}
+
 function formatFrequency(hz) {
   if (!Number.isFinite(Number(hz))) return "--.---.---";
   return String(Math.round(Number(hz))).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
@@ -2044,11 +2171,18 @@ function initLocalUiPreferences() {
 }
 
 function initBackendConfig() {
+  const status = byId("status-backend");
+  const help = byId("backend-help");
+  if (status) status.textContent = backendDisplayName();
+  if (help) {
+    help.textContent = IS_LOCAL_GUI
+      ? "Managed in Settings. Local mode defaults to ft710.local via mDNS/Bonjour."
+      : "Managed in Settings. Reverse-proxy mode uses the current HTTPS origin.";
+  }
+
   const form = byId("backend-config-form");
   const input = byId("backend-host");
   const save = byId("backend-save");
-  const help = byId("backend-help");
-  const status = byId("status-backend");
   if (!form || !input || !save || !help || !status) return;
 
   status.textContent = backendDisplayName();
@@ -2862,6 +2996,7 @@ function initAudio() {
 initPanelOrdering();
 initCollapsiblePanels();
 initLocalUiPreferences();
+initStationSettings();
 initBackendConfig();
 initStationControls();
 bindControls();

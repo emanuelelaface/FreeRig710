@@ -126,6 +126,25 @@
     txReport: "+00",
     qso: { state: "IDLE", dxCall: "", dxGrid: "", df: null, rxSlotParity: null, txSlotParity: 0, lastHeard: "", lastHeardUnixMs: 0, startedUnixMs: 0, nextMessage: "" },
 
+    applySharedStationSettings() {
+      const settings = window.FreeRig710Settings?.get?.() || {};
+      let grid = normalizeGrid(settings.grid || "");
+      if (!grid) {
+        try { grid = normalizeGrid(localStorage.getItem("freerig710-ft8-my-grid-v1") || ""); } catch (_) {}
+      }
+      const call = normalizeCall(settings.call || "");
+      if (call) this.myCall = call;
+      this.myGrid = grid;
+      const gridInput = id("ft8-my-grid");
+      if (gridInput) {
+        gridInput.value = this.myGrid;
+        gridInput.readOnly = true;
+        gridInput.title = "Set this in the main Settings panel";
+      }
+      if (id("ft8-my-call")) id("ft8-my-call").textContent = this.myCall || "not configured in Settings";
+      if (this.qsoMachine) this.qsoMachine.identity({ myCall: this.myCall, myGrid: this.myGrid, txReport: this.txReport });
+    },
+
     init() {
       this.initQsoMachine();
       if (this.initialized) return;
@@ -151,11 +170,12 @@
       this.initQsoLogging();
       this.initDecodeRules();
       id("ft8-reset-qso")?.addEventListener("click", () => this.resetQso());
-      id("ft8-my-grid")?.addEventListener("input", (event) => {
-        event.target.value = event.target.value.toUpperCase().replace(/[^A-R0-9]/g, "").slice(0, 6);
-        this.myGrid = event.target.value;
-        try { localStorage.setItem("freerig710-ft8-my-grid-v1", this.myGrid); } catch (_) {}
+      this.applySharedStationSettings();
+      window.addEventListener("freerig710-settings-changed", () => {
+        this.applySharedStationSettings();
         this.recomputeQsoNext();
+        this.renderDecodeRows();
+        this.renderQso();
       });
       id("ft8-tx-report")?.addEventListener("change", (event) => {
         let value = Number(event.target.value);
@@ -165,11 +185,9 @@
         event.target.value = String(value);
         this.recomputeQsoNext();
       });
-      try { this.myGrid = localStorage.getItem("freerig710-ft8-my-grid-v1") || ""; } catch (_) {}
       // Reports are measurements, not preferences. Do not restore the old
       // persisted -10 placeholder; a selected DX decode supplies the report.
       try { localStorage.removeItem("freerig710-ft8-tx-report-v1"); } catch (_) {}
-      if (id("ft8-my-grid")) id("ft8-my-grid").value = this.myGrid;
       if (id("ft8-tx-report")) id("ft8-tx-report").value = String(Number(this.txReport));
       void this.refreshStationIdentity();
       this.renderQso();
@@ -1030,7 +1048,10 @@
       if (typeof window.FreeRig710API?.api !== "function") return;
       try {
         const result = await window.FreeRig710API.api("/api/v1/qrz/status");
-        this.myCall = normalizeCall(result?.qrz?.station_callsign || result?.station_callsign);
+        const call = normalizeCall(result?.qrz?.station_callsign || result?.station_callsign);
+        if (call && window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ call });
+        else if (call && !this.myCall) this.myCall = call;
+        this.applySharedStationSettings();
         this.renderQso();
       } catch (_) {}
     },

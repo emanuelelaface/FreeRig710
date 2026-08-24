@@ -85,6 +85,7 @@
 .js8-qso-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin-top:7px; }
 .js8-qso-grid label,.js8-qrz-grid label { display:grid; gap:3px; min-width:0; }
 .js8-qso-grid input,.js8-qrz-grid input { min-height:30px; padding:5px 7px; border-radius:7px; font-size:.71rem; }
+.js8-qso-grid input[readonly] { color:var(--muted); background:#071017; cursor:default; }
 .js8-command-row { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:5px; margin-top:7px; }
 .js8-command-row button { min-height:29px; padding:.15rem .35rem; border-radius:7px; font-size:.66rem; }
 .js8-tx-actions { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin-top:7px; }

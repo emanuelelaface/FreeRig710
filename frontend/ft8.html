@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FreeRig710 · FT8</title>
-  <link rel="stylesheet" href="styles.css?v=1.0">
+  <link rel="stylesheet" href="styles.css?v=1.0-settings1">
   <link rel="stylesheet" href="ft8-page.css?v=1.0-ft8ui3">
 </head>
 <body class="ft8-page-body">
@@ -115,7 +115,7 @@
       <div class="ft8-qso-workbench">
         <div class="ft8-qso-station-column">
           <div class="ft8-qso-grid">
-            <label><span>My Call</span><strong id="ft8-my-call">loading…</strong></label><label><span>My Grid</span><input id="ft8-my-grid" type="text" maxlength="6" placeholder="JO89" autocomplete="off" spellcheck="false"></label>
+            <label><span>My Call</span><strong id="ft8-my-call">loading…</strong></label><label><span>My Grid</span><input id="ft8-my-grid" type="text" maxlength="8" placeholder="Set in Settings" autocomplete="off" spellcheck="false" readonly title="Set this in the main Settings panel"></label>
             <label><span>DX Call</span><input id="ft8-dx-call" type="text" readonly placeholder="click a decode"></label><label><span>DX Grid</span><input id="ft8-dx-grid" type="text" readonly placeholder="--"></label>
             <label><span>Report</span><input id="ft8-tx-report" type="number" min="-30" max="30" step="1" value="0"></label><label><span>RX / TX slot</span><strong id="ft8-qso-slot">--</strong></label>
           </div>
@@ -217,12 +217,13 @@
   </main>
 
   <script src="config.js?v=1.0"></script>
+  <script src="settings.js?v=1.0-settings1"></script>
   <script src="ft8-cty.js?v=1.0-cty2"></script>
   <script src="ft8-logbook.js?v=1.0-country8"></script>
   <script src="ft8-geo.js?v=1.0"></script>
   <script src="ft8-decode-rules.js?v=1.0-filters4"></script>
   <script src="ft8-qso-machine.js?v=1.0-ft8r2"></script>
-  <script src="ft8.js?v=1.0-cty1-ft8r2-ui3-filters4-cqauto1"></script>
+  <script src="ft8.js?v=1.0-settings1"></script>
   <script src="ft8-page.js?v=1.0-ft8r3"></script>
 </body>
 </html>

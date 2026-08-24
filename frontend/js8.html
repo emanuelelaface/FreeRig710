@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FreeRig710 · JS8</title>
-  <link rel="stylesheet" href="styles.css?v=1.0">
-  <link rel="stylesheet" href="js8-page.css?v=1.0-js8">
+  <link rel="stylesheet" href="styles.css?v=1.0-settings1">
+  <link rel="stylesheet" href="js8-page.css?v=1.0-settings1">
 </head>
 <body class="js8-page-body">
   <main class="js8-page-shell">
@@ -87,8 +87,8 @@
         <div class="js8-section-title"><strong>QSO</strong><span id="js8-frame-count">0 messages · 0 queued</span></div>
         <div class="js8-chat-log" id="js8-chat-log" aria-live="polite"><p class="js8-empty-chat">Decoded messages and your transmissions appear here.</p></div>
         <div class="js8-qso-grid">
-          <label><span>My Call</span><input id="js8-my-call" type="text" maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="SA7CHI"></label>
-          <label><span>My Grid</span><input id="js8-my-grid" type="text" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="JO65"></label>
+          <label><span>My Call</span><input id="js8-my-call" type="text" maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Set in Settings" readonly title="Set this in the main Settings panel"></label>
+          <label><span>My Grid</span><input id="js8-my-grid" type="text" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Set in Settings" readonly title="Set this in the main Settings panel"></label>
           <label><span>To</span><input id="js8-to-call" type="text" maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="@ALLCALL or CALL"></label>
           <label><span>Message</span><input id="js8-message" type="text" maxlength="280" autocomplete="off" spellcheck="true" placeholder="Message text"></label>
         </div>
@@ -140,6 +140,7 @@
   </main>
 
   <script src="config.js?v=1.0"></script>
-  <script type="module" src="js8-page.js?v=1.0-js8-qrz2"></script>
+  <script src="settings.js?v=1.0-settings1"></script>
+  <script type="module" src="js8-page.js?v=1.0-settings1"></script>
 </body>
 </html>
