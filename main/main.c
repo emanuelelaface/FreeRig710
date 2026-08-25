@@ -18,6 +18,7 @@
 #include "web_api.h"
 #include "freerig_config.h"
 #include "freerig_memories.h"
+#include "freerig_wireguard.h"
 
 static const char *TAG = "freerig710";
 
@@ -229,6 +230,16 @@ void app_main(void)
     esp_err_t eth_err = network_eth_start();
     if (eth_err != ESP_OK) {
         ESP_LOGE(TAG, "Ethernet initialization failed: %s", esp_err_to_name(eth_err));
+    }
+
+    esp_err_t wg_err = freerig_wireguard_init();
+    if (wg_err != ESP_OK) {
+        ESP_LOGW(TAG, "WireGuard configuration initialization failed: %s", esp_err_to_name(wg_err));
+    } else {
+        wg_err = freerig_wireguard_apply_boot_config();
+        if (wg_err != ESP_OK) {
+            ESP_LOGW(TAG, "WireGuard boot apply failed: %s", esp_err_to_name(wg_err));
+        }
     }
 
     esp_err_t http_err = web_api_start();

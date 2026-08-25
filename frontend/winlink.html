@@ -3537,8 +3537,8 @@ mit BegrÃ¼ndung kommentieren. Hier nur die Liste zur Ãœbersicht.)
       <div class="card">
         <div class="card-title" data-i18n="diag.wlAccount">Winlink Account (Secure Login)</div>
         <div class="row">
-          <div class="fld" style="flex:1;min-width:120px;"><label data-i18n="radio.mycall">My Callsign</label><input id="callInput" maxlength="10" data-i18n-ph="radio.mycall.ph" placeholder="Set in Settings" autocomplete="off" readonly title="Set this in the main Settings panel"></div>
-          <div class="fld" style="flex:1;min-width:140px;"><label data-i18n="diag.wlPass" data-i18n-title="title.wlPass" title="Winlink account password for Secure Login (;PQ→;PR). Used only locally for the login hash, never sent in clear text.">Winlink Password</label><input type="password" id="wlPassword" autocomplete="off"></div>
+          <div class="fld" style="flex:1;min-width:120px;"><label data-i18n="radio.mycall">My Callsign</label><input id="callInput" maxlength="16" data-i18n-ph="radio.mycall.ph" placeholder="Set in Settings" autocomplete="off" readonly title="Set this in the main Settings panel"></div>
+          <div class="fld" style="flex:1;min-width:140px;"><label data-i18n="diag.wlPass" data-i18n-title="title.wlPass" title="Winlink account password for Secure Login (;PQ→;PR). Used only locally for the login hash, never sent in clear text.">Winlink Password</label><input type="password" id="wlPassword" autocomplete="current-password" placeholder="Set in Settings" readonly title="Set this in the main Settings panel"></div>
         </div>
       </div>
       <div class="card">
@@ -3605,7 +3605,7 @@ mit BegrÃ¼ndung kommentieren. Hier nur die Liste zur Ãœbersicht.)
   </div>
 
 <script src="config.js?v=1.0"></script>
-<script src="settings.js?v=1.0-settings1"></script>
+<script src="settings.js?v=1.0-settings2"></script>
 <script>
 'use strict';
 
@@ -3741,7 +3741,16 @@ window.FreeRig710API = Object.freeze({
 });
 
 function sharedSettings() {
-  return window.FreeRig710Settings?.get?.() || { call: '', grid: '', backend: '' };
+  return window.FreeRig710Settings?.get?.() || {
+    call: '',
+    grid: '',
+    backend: '',
+    winlinkCall: '',
+    winlinkGrid: '',
+    winlinkPassword: '',
+    effectiveWinlinkCall: '',
+    effectiveWinlinkGrid: '',
+  };
 }
 
 function normalizeSharedCall(value) {
@@ -3756,16 +3765,35 @@ function normalizeSharedGrid(value) {
 
 function saveSharedGrid(grid) {
   const value = normalizeSharedGrid(grid);
-  if (window.FreeRig710Settings?.set) window.FreeRig710Settings.set({ grid: value });
+  if (window.FreeRig710Settings?.set) window.FreeRig710Settings.set({ winlinkGrid: value });
+  else {
+    try {
+      if (value) localStorage.setItem('freerig710-settings-winlink-grid', value);
+      else localStorage.removeItem('freerig710-settings-winlink-grid');
+    } catch (_) {}
+  }
   try { if (value) localStorage.setItem('ardop_v02_locator', value); } catch (_) {}
   return value;
+}
+
+function winlinkCallFromSettings(settings = sharedSettings()) {
+  return normalizeSharedCall(settings.winlinkCall || settings.effectiveWinlinkCall || settings.call);
+}
+
+function winlinkGridFromSettings(settings = sharedSettings()) {
+  return normalizeSharedGrid(settings.winlinkGrid || settings.effectiveWinlinkGrid || settings.grid);
+}
+
+function winlinkPasswordFromSettings(settings = sharedSettings()) {
+  return String(settings.winlinkPassword || '').trim();
 }
 
 function syncWinlinkStationFields(options = {}) {
   const shouldRender = options.render !== false;
   const settings = sharedSettings();
-  let call = normalizeSharedCall(settings.call);
-  let grid = normalizeSharedGrid(settings.grid);
+  let call = winlinkCallFromSettings(settings);
+  let grid = winlinkGridFromSettings(settings);
+  let password = winlinkPasswordFromSettings(settings);
   if (!call) {
     try { call = normalizeSharedCall(localStorage.getItem('ardop_v02_call') || ''); } catch (_) {}
     if (call && window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ call });
@@ -3773,6 +3801,9 @@ function syncWinlinkStationFields(options = {}) {
   if (!grid) {
     try { grid = normalizeSharedGrid(localStorage.getItem('ardop_v02_locator') || ''); } catch (_) {}
     if (grid && window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ grid });
+  }
+  if (!password) {
+    try { password = String(localStorage.getItem('ardop_v02_wlpass') || '').trim(); } catch (_) {}
   }
   const callEl = document.getElementById('callInput');
   if (callEl) {
@@ -3786,11 +3817,17 @@ function syncWinlinkStationFields(options = {}) {
     locEl.readOnly = true;
     locEl.title = 'Set this in the main Settings panel';
   }
+  const passwordEl = document.getElementById('wlPassword');
+  if (passwordEl) {
+    passwordEl.value = password;
+    passwordEl.readOnly = true;
+    passwordEl.title = 'Set this in the main Settings panel';
+  }
   if (typeof GwUI !== 'undefined') {
     GwUI.myGrid = grid;
     if (shouldRender && typeof GwUI.render === 'function') GwUI.render();
   }
-  return { call, grid };
+  return { call, grid, password };
 }
 
 window.addEventListener('freerig710-settings-changed', () => syncWinlinkStationFields({ render: true }));
@@ -10310,6 +10347,8 @@ const B2F = {
   },
 
   _getPassword() {
+    const configured = winlinkPasswordFromSettings();
+    if (configured) return configured;
     const el = document.getElementById('wlPassword');
     return el ? el.value.trim() : '';
   },
@@ -10759,7 +10798,7 @@ const B2F = {
     // noch die Kommentarzeile "; <Gateway> DE <Mycall> (<Locator>)". Das CMS ignoriert sie,
     // aber wl2k_test.go verankert sie wörtlich als Soll-Zeile → für Konformität ergänzt.
     const _tgt = (localStorage.getItem('ardop_v02_target') || '').trim() || 'CMS';
-    const _loc = normalizeSharedGrid(sharedSettings().grid);
+    const _loc = winlinkGridFromSettings();
     resp += `; ${_tgt} DE ${this._mycall} (${_loc})\r`;
     // Haben wir etwas zu senden? Dann Proposal-Block statt FF (max. 5 = MaxBlockSize).
     if (this.outbox && this.outbox.length > 0) {
@@ -13807,14 +13846,8 @@ window.addEventListener('DOMContentLoaded', () => {
     localStorage.setItem('ardop_v02_arqbw', e.target.value);
     log(tfn('log.arqsessionbw_hz_erster_dataframe', [e.target.value, e.target.value==='200'||e.target.value==='500'?'0x48 = 4FSK.200.50S, robust':'0x4C = 4FSK.500.100S']), 'log-ardop');
   });
-  // Winlink-Passwort: aus localStorage laden + bei Änderung speichern (nur lokal, für Secure-Login-Hash)
-  const wlPwStored = localStorage.getItem('ardop_v02_wlpass');
-  if (wlPwStored) document.getElementById('wlPassword').value = wlPwStored;
-  document.getElementById('wlPassword').addEventListener('change', (e) => {
-    localStorage.setItem('ardop_v02_wlpass', e.target.value);
-  });
   // V0.3: B2F-Identifier (Software-SID) fest in B2F.SID_DEFAULT, kein UI/localStorage mehr.
-  // Eigenes Rufzeichen kommt aus dem zentralen Settings-Panel der Hauptseite.
+  // Winlink call, locator and password come from the shared Settings panel.
   syncWinlinkStationFields({ render: true });
   // Ziel-Gateway: aus localStorage laden + bei Änderung speichern.
   const targetStored = localStorage.getItem('ardop_v02_target');

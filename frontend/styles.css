@@ -339,6 +339,32 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
 .settings-form input {
   min-height: 42px;
 }
+.settings-form input:disabled {
+  opacity: .58;
+  cursor: not-allowed;
+}
+.settings-form textarea {
+  min-height: 170px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  line-height: 1.35;
+}
+.settings-check-row {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 42px;
+}
+.settings-check-row input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--accent);
+}
+.settings-same-row {
+  margin-top: 2px;
+  min-height: 30px;
+}
 .settings-form .help.error {
   color: #ff9ba6;
 }
@@ -889,10 +915,14 @@ body.panel-reorder-active {
 
 /* FT8.3.1 dedicated-window launcher. */
 a.station-button { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
-.station-button.ft8-launch-button { border-color: #36789e; color: #c9efff; background: rgba(66,184,255,.09); }
-.station-button.ft8-launch-button:hover { border-color: var(--accent); background: rgba(66,184,255,.16); }
-.station-button.js8-launch-button { border-color: #36789e; color: #c9efff; background: rgba(66,184,255,.09); }
-.station-button.js8-launch-button:hover { border-color: var(--accent); background: rgba(66,184,255,.16); }
+.station-button.ft8-launch-button,
+.station-button.js8-launch-button,
+.station-button.winlink-launch-button,
+.station-button.settings-button { border-color: #36789e; color: #c9efff; background: rgba(66,184,255,.09); }
+.station-button.ft8-launch-button:hover,
+.station-button.js8-launch-button:hover,
+.station-button.winlink-launch-button:hover,
+.station-button.settings-button:hover { border-color: var(--accent); background: rgba(66,184,255,.16); }
 
 
 /* Main display states and compact mobile workstation layout. */

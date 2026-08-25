@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FreeRig710 · Yaesu FT-710</title>
-  <link rel="stylesheet" href="styles.css?v=1.0-settings2">
+  <link rel="stylesheet" href="styles.css?v=1.0-settings4">
 </head>
 <body>
   <main class="shell">
@@ -43,6 +43,26 @@
             <span class="control-label">Grid</span>
             <input id="settings-grid" type="text" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="JO65">
           </label>
+          <label class="settings-check-row settings-same-row">
+            <span>Same as CALL</span>
+            <input id="settings-winlink-call-same" type="checkbox" checked>
+          </label>
+          <label>
+            <span class="control-label">Winlink Callsign</span>
+            <input id="settings-winlink-call" type="text" maxlength="16" pattern="[A-Za-z0-9/]*" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Use main Call">
+          </label>
+          <label class="settings-check-row settings-same-row">
+            <span>Same as GRID</span>
+            <input id="settings-winlink-grid-same" type="checkbox" checked>
+          </label>
+          <label>
+            <span class="control-label">Winlink Maidenhead Locator</span>
+            <input id="settings-winlink-grid" type="text" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Use main Grid">
+          </label>
+          <label>
+            <span class="control-label">Winlink Password</span>
+            <input id="settings-winlink-password" type="password" maxlength="128" autocomplete="new-password" placeholder="Leave blank to keep saved password">
+          </label>
           <label>
             <span class="control-label">QRZ Logbook API key</span>
             <input id="settings-qrz-api-key" type="password" maxlength="128" autocomplete="new-password" placeholder="Leave blank to keep saved key">
@@ -51,6 +71,15 @@
             <span class="control-label">ESP32 backend</span>
             <input id="settings-backend" type="text" autocomplete="off" spellcheck="false" placeholder="http://ft710.local">
           </label>
+          <label>
+            <span class="control-label">WireGuard config</span>
+            <textarea id="settings-wireguard-config" rows="9" spellcheck="false" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.7.0.2/32&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = vpn.example.net:51820&#10;AllowedIPs = 10.7.0.0/24&#10;PersistentKeepalive = 25"></textarea>
+          </label>
+          <label class="settings-check-row">
+            <span>Enable WireGuard on boot</span>
+            <input id="settings-wireguard-enable" type="checkbox">
+          </label>
+          <p id="settings-wireguard-status" class="help" aria-live="polite">WireGuard settings are stored on the ESP32.</p>
           <p id="settings-status" class="help" aria-live="polite">Settings are shared by Radio, FT8, JS8 and Winlink.</p>
           <div class="settings-actions">
             <button id="settings-save" type="submit">Save Settings</button>
@@ -612,9 +641,9 @@
   </main>
 
   <script src="config.js?v=1.0"></script>
-  <script src="settings.js?v=1.0-settings1"></script>
+  <script src="settings.js?v=1.0-settings3"></script>
   <script src="cw.js?v=1.0"></script>
   <script src="sstv.js?v=1.0"></script>
-  <script src="app.js?v=1.0-settings1"></script>
+  <script src="app.js?v=1.0-settings3"></script>
 </body>
 </html>

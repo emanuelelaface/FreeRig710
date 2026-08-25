@@ -25,6 +25,7 @@
 #include "ft710_cat.h"
 #include "freerig_config.h"
 #include "freerig_memories.h"
+#include "freerig_wireguard.h"
 #include "network_eth.h"
 #include "video_jpeg.h"
 
@@ -1013,6 +1014,76 @@ static esp_err_t video_settings_post(httpd_req_t*req){video_jpeg_status_t v;vide
 
 static esp_err_t qrz_status_handler(httpd_req_t*req){freerig_qrz_config_t q;esp_err_t e=freerig_config_get_qrz(&q);if(e!=ESP_OK)return send_error(req,"500 Internal Server Error",esp_err_to_name(e));cJSON*o=cJSON_CreateObject();cJSON_AddTrueToObject(o,"ok");cJSON*x=cJSON_AddObjectToObject(o,"qrz");cJSON_AddBoolToObject(x,"configured",q.station_callsign[0]&&q.api_key_set);if(q.station_callsign[0])cJSON_AddStringToObject(x,"station_callsign",q.station_callsign);else cJSON_AddNullToObject(x,"station_callsign");cJSON_AddBoolToObject(x,"api_key_set",q.api_key_set);cJSON_AddStringToObject(x,"endpoint","https://logbook.qrz.com/api");return send_json(req,o);}
 static esp_err_t qrz_config_handler(httpd_req_t*req){cJSON*j=read_json(req);if(!j)return send_error(req,"422 Unprocessable Entity","invalid JSON");const char*call=json_string(j,"station_callsign",NULL);cJSON*kv=cJSON_GetObjectItemCaseSensitive(j,"api_key");const char*key=cJSON_IsString(kv)?kv->valuestring:NULL;esp_err_t e=freerig_config_set_qrz(call,key);cJSON_Delete(j);if(e!=ESP_OK)return send_error(req,"422 Unprocessable Entity","invalid QRZ callsign or API key");return qrz_status_handler(req);}
+
+static void wireguard_status_to_json(cJSON *x, const freerig_wireguard_config_t *cfg, const freerig_wireguard_status_t *st)
+{
+    cJSON_AddBoolToObject(x, "configured", cfg && cfg->config_set);
+    cJSON_AddBoolToObject(x, "enable_on_boot", cfg && cfg->enable_on_boot);
+    cJSON_AddBoolToObject(x, "starting", st && st->starting);
+    cJSON_AddBoolToObject(x, "active", st && st->active);
+    cJSON_AddBoolToObject(x, "peer_up", st && st->peer_up);
+    cJSON_AddStringToObject(x, "config_text", cfg ? cfg->config_text : "");
+    cJSON_AddStringToObject(x, "interface_ip", st ? st->interface_ip : "");
+    cJSON_AddStringToObject(x, "netmask", st ? st->netmask : "");
+    cJSON_AddStringToObject(x, "allowed_ip", st ? st->allowed_ip : "");
+    cJSON_AddStringToObject(x, "allowed_mask", st ? st->allowed_mask : "");
+    cJSON_AddStringToObject(x, "endpoint_host", st ? st->endpoint_host : "");
+    cJSON_AddStringToObject(x, "endpoint_ip", st ? st->endpoint_ip : "");
+    cJSON_AddNumberToObject(x, "endpoint_port", st ? st->endpoint_port : 0);
+    cJSON_AddNumberToObject(x, "listen_port", st ? st->listen_port : 0);
+    cJSON_AddNumberToObject(x, "keepalive_s", st ? st->keepalive_s : 0);
+    cJSON_AddNumberToObject(x, "starts", st ? st->starts : 0);
+    cJSON_AddNumberToObject(x, "stops", st ? st->stops : 0);
+    cJSON_AddStringToObject(x, "last_error", st ? esp_err_to_name(st->last_error) : "ESP_OK");
+    cJSON_AddStringToObject(x, "last_error_text", st ? st->last_error_text : "");
+}
+
+static esp_err_t wireguard_status_handler(httpd_req_t *req)
+{
+    freerig_wireguard_config_t *cfg = calloc(1, sizeof(*cfg));
+    if (!cfg) return send_error(req, "500 Internal Server Error", "WireGuard config allocation failed");
+    esp_err_t e = freerig_config_get_wireguard(cfg);
+    if (e != ESP_OK) {
+        free(cfg);
+        return send_error(req, "500 Internal Server Error", esp_err_to_name(e));
+    }
+    freerig_wireguard_status_t st;
+    freerig_wireguard_get_status(&st);
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddTrueToObject(o, "ok");
+    cJSON *x = cJSON_AddObjectToObject(o, "wireguard");
+    wireguard_status_to_json(x, cfg, &st);
+    free(cfg);
+    return send_json(req, o);
+}
+
+static esp_err_t wireguard_config_handler(httpd_req_t *req)
+{
+    cJSON *j = read_json(req);
+    if (!j) return send_error(req, "422 Unprocessable Entity", "invalid JSON");
+    const char *text = json_string(j, "config_text", "");
+    bool boot_present = false;
+    bool enable_on_boot = json_bool(j, "enable_on_boot", false, &boot_present);
+    if (!boot_present) enable_on_boot = false;
+    bool has_nonspace = false;
+    for (const char *p = text; p && *p; ++p) {
+        if (!isspace((unsigned char)*p)) {
+            has_nonspace = true;
+            break;
+        }
+    }
+    if (enable_on_boot && !has_nonspace) {
+        cJSON_Delete(j);
+        return send_error(req, "422 Unprocessable Entity", "WireGuard config is required when enable on boot is active");
+    }
+    esp_err_t e = freerig_config_set_wireguard(text, enable_on_boot);
+    cJSON_Delete(j);
+    if (e == ESP_ERR_INVALID_SIZE) return send_error(req, "422 Unprocessable Entity", "WireGuard config text is too long");
+    if (e != ESP_OK) return send_error(req, "500 Internal Server Error", esp_err_to_name(e));
+    e = enable_on_boot ? freerig_wireguard_apply_saved_config_async() : freerig_wireguard_stop();
+    if (e != ESP_OK) return send_error(req, "500 Internal Server Error", esp_err_to_name(e));
+    return wireguard_status_handler(req);
+}
 
 static const char *band_for(uint32_t hz)
 {
@@ -4016,6 +4087,7 @@ esp_err_t control_api_register(httpd_handle_t server)
     R("/api/v1/memories",HTTP_GET,memories_list_handler);R("/api/v1/memories",HTTP_POST,memory_save_handler);R("/api/v1/memories/sync",HTTP_POST,memories_sync_handler);R("/api/v1/memories/*",HTTP_POST,memory_wild_handler);R("/api/v1/memories/*",HTTP_PUT,memory_wild_handler);
     R("/api/v1/ft8/status",HTTP_GET,ft8_status_handler);R("/api/v1/ft8/tx/arm",HTTP_POST,ft8_tx_arm_handler);R("/api/v1/ft8/tx/keepalive",HTTP_POST,ft8_tx_keepalive_handler);R("/api/v1/ft8/tx/stop",HTTP_POST,ft8_tx_stop_handler);R("/api/v1/ft8/tune/start",HTTP_POST,ft8_tune_start_handler);R("/api/v1/ft8/tune/level",HTTP_POST,ft8_tune_level_handler);R("/api/v1/ft8/tune/keepalive",HTTP_POST,ft8_tune_keepalive_handler);R("/api/v1/ft8/tune/stop",HTTP_POST,ft8_tune_stop_handler);R("/api/v1/cw/status",HTTP_GET,cw_status_handler);R("/api/v1/cw/send",HTTP_POST,cw_send_handler);R("/api/v1/cw/stop",HTTP_POST,cw_stop_handler);
     R("/api/v1/video/settings",HTTP_GET,video_settings_get);R("/api/v1/video/settings",HTTP_POST,video_settings_post);
+    R("/api/v1/wireguard/status",HTTP_GET,wireguard_status_handler);R("/api/v1/wireguard/config",HTTP_POST,wireguard_config_handler);
     R("/api/v1/qrz/status",HTTP_GET,qrz_status_handler);R("/api/v1/qrz/config",HTTP_POST,qrz_config_handler);R("/api/v1/qrz/log",HTTP_POST,qrz_log_handler);R("/api/v1/qrz/log/status",HTTP_GET,qrz_log_status_handler);R("/api/v1/qrz/fetch",HTTP_POST,qrz_fetch_handler);R("/api/v1/qrz/fetch/status",HTTP_GET,qrz_fetch_status_handler);R("/api/v1/qrz/fetch/page",HTTP_GET,qrz_fetch_page_handler);R("/api/v1/qrz/fetch/cancel",HTTP_POST,qrz_fetch_cancel_handler);
     R("/api/v1/cw/status",HTTP_OPTIONS,options_handler);
     R("/api/v1/radio/jog",HTTP_OPTIONS,options_handler);

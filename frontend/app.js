@@ -40,7 +40,16 @@ function backendDisplayName() {
 }
 
 function stationSettings() {
-  return window.FreeRig710Settings?.get?.() || { call: "", grid: "", backend: "" };
+  return window.FreeRig710Settings?.get?.() || {
+    call: "",
+    grid: "",
+    backend: "",
+    winlinkCall: "",
+    winlinkGrid: "",
+    winlinkPassword: "",
+    effectiveWinlinkCall: "",
+    effectiveWinlinkGrid: "",
+  };
 }
 
 function normalizeStationCall(value) {
@@ -59,6 +68,9 @@ function saveStationSettings(values) {
     if (Object.prototype.hasOwnProperty.call(values, "call")) localStorage.setItem("freerig710-settings-call", normalizeStationCall(values.call));
     if (Object.prototype.hasOwnProperty.call(values, "grid")) localStorage.setItem("freerig710-settings-grid", normalizeGridSquare(values.grid));
     if (Object.prototype.hasOwnProperty.call(values, "backend")) localStorage.setItem("freerig710-backend", normalizeBackend(values.backend));
+    if (Object.prototype.hasOwnProperty.call(values, "winlinkCall")) localStorage.setItem("freerig710-settings-winlink-call", normalizeStationCall(values.winlinkCall));
+    if (Object.prototype.hasOwnProperty.call(values, "winlinkGrid")) localStorage.setItem("freerig710-settings-winlink-grid", normalizeGridSquare(values.winlinkGrid));
+    if (Object.prototype.hasOwnProperty.call(values, "winlinkPassword")) localStorage.setItem("freerig710-settings-winlink-password", String(values.winlinkPassword || ""));
   } catch (_) { /* optional */ }
   return stationSettings();
 }
@@ -521,31 +533,104 @@ function initStationSettings() {
   const cancelButton = byId("settings-cancel");
   const callInput = byId("settings-call");
   const gridInput = byId("settings-grid");
+  const winlinkCallSameInput = byId("settings-winlink-call-same");
+  const winlinkGridSameInput = byId("settings-winlink-grid-same");
+  const winlinkCallInput = byId("settings-winlink-call");
+  const winlinkGridInput = byId("settings-winlink-grid");
+  const winlinkPasswordInput = byId("settings-winlink-password");
   const apiKeyInput = byId("settings-qrz-api-key");
   const backendInput = byId("settings-backend");
+  const wireguardConfigInput = byId("settings-wireguard-config");
+  const wireguardEnableInput = byId("settings-wireguard-enable");
+  const wireguardStatus = byId("settings-wireguard-status");
   const saveButton = byId("settings-save");
   const status = byId("settings-status");
-  if (!button || !dialog || !form || !callInput || !gridInput || !apiKeyInput || !backendInput || !saveButton || !status) return;
+  if (!button || !dialog || !form || !callInput || !gridInput || !winlinkCallSameInput || !winlinkGridSameInput || !winlinkCallInput || !winlinkGridInput || !winlinkPasswordInput || !apiKeyInput || !backendInput || !saveButton || !status) return;
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
     status.classList.toggle("error", isError);
   };
 
+  const setWireGuardStatus = (message, isError = false) => {
+    if (!wireguardStatus) return;
+    wireguardStatus.textContent = message;
+    wireguardStatus.classList.toggle("error", isError);
+  };
+
+  const describeWireGuard = (wg) => {
+    if (!wg) return "WireGuard status unavailable.";
+    if (wg.starting) return "WireGuard starting…";
+    if (wg.active) {
+      const peer = wg.peer_up ? "peer up" : "handshaking";
+      return `WireGuard active${wg.interface_ip ? ` · ${wg.interface_ip}` : ""} · ${peer}`;
+    }
+    if (wg.configured && wg.enable_on_boot) return `WireGuard enabled on boot${wg.last_error_text ? ` · ${wg.last_error_text}` : ""}`;
+    if (wg.configured) return "WireGuard config saved · disabled on boot";
+    return "WireGuard not configured.";
+  };
+
+  const applyWireGuardStatus = (wg) => {
+    if (wireguardConfigInput && typeof wg?.config_text === "string") wireguardConfigInput.value = wg.config_text;
+    if (wireguardEnableInput) wireguardEnableInput.checked = Boolean(wg?.enable_on_boot);
+    const isError = Boolean(wg?.last_error && wg.last_error !== "ESP_OK" && wg.configured && wg.enable_on_boot);
+    setWireGuardStatus(describeWireGuard(wg), isError);
+    if (wg?.starting) window.setTimeout(loadWireGuardSettings, 2500);
+  };
+
+  const loadWireGuardSettings = async () => {
+    if (!wireguardConfigInput || !wireguardEnableInput) return;
+    setWireGuardStatus("Loading WireGuard settings…");
+    try {
+      const response = await api("/api/v1/wireguard/status");
+      applyWireGuardStatus(response.wireguard || response);
+    } catch (error) {
+      setWireGuardStatus(`WireGuard status unavailable: ${error.message}`, true);
+    }
+  };
+
+  const applyWinlinkSameState = () => {
+    const mainCall = normalizeStationCall(callInput.value || qrzState.station_callsign || "");
+    const mainGrid = normalizeGridSquare(gridInput.value || "");
+    const sameCall = winlinkCallSameInput.checked;
+    const sameGrid = winlinkGridSameInput.checked;
+    if (sameCall) winlinkCallInput.value = mainCall;
+    if (sameGrid) winlinkGridInput.value = mainGrid;
+    winlinkCallInput.disabled = sameCall;
+    winlinkGridInput.disabled = sameGrid;
+    winlinkCallInput.placeholder = mainCall ? `Same as CALL (${mainCall})` : "Same as CALL";
+    winlinkGridInput.placeholder = mainGrid ? `Same as GRID (${mainGrid})` : "Same as GRID";
+  };
+
   const syncFields = () => {
     const settings = stationSettings();
-    callInput.value = settings.call || normalizeStationCall(qrzState.station_callsign || "");
-    gridInput.value = settings.grid || "";
+    const mainCall = settings.call || normalizeStationCall(qrzState.station_callsign || "");
+    const mainGrid = settings.grid || "";
+    const winlinkCallOverride = normalizeStationCall(settings.winlinkCall || "");
+    const winlinkGridOverride = normalizeGridSquare(settings.winlinkGrid || "");
+    callInput.value = mainCall;
+    gridInput.value = mainGrid;
+    winlinkCallSameInput.checked = !winlinkCallOverride;
+    winlinkGridSameInput.checked = !winlinkGridOverride;
+    winlinkCallInput.value = winlinkCallOverride || mainCall;
+    winlinkGridInput.value = winlinkGridOverride || mainGrid;
+    applyWinlinkSameState();
+    winlinkPasswordInput.value = "";
+    winlinkPasswordInput.placeholder = settings.winlinkPassword ? "Saved locally; leave blank to keep it" : "Winlink Secure Login password";
     backendInput.value = IS_LOCAL_GUI ? (settings.backend || API_BASE || DEFAULT_LOCAL_BACKEND) : window.location.origin;
     backendInput.disabled = !IS_LOCAL_GUI;
     apiKeyInput.value = "";
     apiKeyInput.placeholder = qrzState.api_key_set ? "Saved on ESP32; leave blank to keep it" : "Paste QRZ Logbook API key";
     setStatus("Settings are shared by Radio, FT8, JS8 and Winlink.");
+    if (wireguardConfigInput) wireguardConfigInput.value = "";
+    if (wireguardEnableInput) wireguardEnableInput.checked = false;
+    setWireGuardStatus("WireGuard settings are stored on the ESP32.");
   };
 
   const openDialog = () => {
     syncFields();
     dialog.hidden = false;
+    loadWireGuardSettings();
     window.setTimeout(() => callInput.focus(), 0);
   };
 
@@ -564,9 +649,25 @@ function initStationSettings() {
   });
   callInput.addEventListener("input", () => {
     callInput.value = normalizeStationCall(callInput.value);
+    applyWinlinkSameState();
   });
   gridInput.addEventListener("input", () => {
     gridInput.value = normalizeGridSquare(gridInput.value);
+    applyWinlinkSameState();
+  });
+  winlinkCallSameInput.addEventListener("change", () => {
+    applyWinlinkSameState();
+    if (!winlinkCallSameInput.checked) winlinkCallInput.focus();
+  });
+  winlinkGridSameInput.addEventListener("change", () => {
+    applyWinlinkSameState();
+    if (!winlinkGridSameInput.checked) winlinkGridInput.focus();
+  });
+  winlinkCallInput.addEventListener("input", () => {
+    winlinkCallInput.value = normalizeStationCall(winlinkCallInput.value);
+  });
+  winlinkGridInput.addEventListener("input", () => {
+    winlinkGridInput.value = normalizeGridSquare(winlinkGridInput.value);
   });
   window.addEventListener("freerig710-settings-changed", () => {
     const settings = stationSettings();
@@ -580,16 +681,30 @@ function initStationSettings() {
     event.preventDefault();
     const call = normalizeStationCall(callInput.value);
     const grid = normalizeGridSquare(gridInput.value);
+    const sameWinlinkCall = winlinkCallSameInput.checked;
+    const sameWinlinkGrid = winlinkGridSameInput.checked;
+    const winlinkCall = sameWinlinkCall ? call : normalizeStationCall(winlinkCallInput.value);
+    const winlinkGrid = sameWinlinkGrid ? grid : normalizeGridSquare(winlinkGridInput.value);
+    const winlinkPassword = winlinkPasswordInput.value;
     const backend = IS_LOCAL_GUI ? normalizeBackend(backendInput.value || DEFAULT_LOCAL_BACKEND) : "";
     const qrzKey = apiKeyInput.value.trim();
     const gridOk = !grid || /^[A-R]{2}\d{2}(?:[A-X]{2}(?:\d{2})?)?$/.test(grid);
+    const winlinkGridOk = !winlinkGrid || /^[A-R]{2}\d{2}(?:[A-X]{2}(?:\d{2})?)?$/.test(winlinkGrid);
 
     if (!call) {
       setStatus("Call is required.", true);
       return;
     }
+    if (!sameWinlinkCall && !winlinkCall) {
+      setStatus("Winlink Callsign is required or enable Same as CALL.", true);
+      return;
+    }
     if (!gridOk) {
       setStatus("Grid must be a valid Maidenhead locator, for example JO65 or JO65MO.", true);
+      return;
+    }
+    if (!winlinkGridOk) {
+      setStatus("Winlink locator must be a valid Maidenhead locator, for example JO65 or JO65MO.", true);
       return;
     }
     if (IS_LOCAL_GUI && !backend) {
@@ -601,10 +716,19 @@ function initStationSettings() {
     const backendChanged = IS_LOCAL_GUI && backend && backend !== previousBackend;
     saveButton.disabled = true;
     setStatus("Saving settings…");
-    saveStationSettings({ call, grid, backend: IS_LOCAL_GUI ? backend : stationSettings().backend });
+    const settingsPayload = {
+      call,
+      grid,
+      backend: IS_LOCAL_GUI ? backend : stationSettings().backend,
+      winlinkCall: sameWinlinkCall ? "" : winlinkCall,
+      winlinkGrid: sameWinlinkGrid ? "" : winlinkGrid,
+    };
+    if (winlinkPassword) settingsPayload.winlinkPassword = winlinkPassword;
+    saveStationSettings(settingsPayload);
     if (backendChanged) API_BASE = backend;
 
     let qrzError = "";
+    let wireguardError = "";
     try {
       const payload = { station_callsign: call };
       if (qrzKey) payload.api_key = qrzKey;
@@ -617,11 +741,27 @@ function initStationSettings() {
       saveButton.disabled = false;
     }
 
+    if (wireguardConfigInput && wireguardEnableInput) {
+      try {
+        const response = await post("/api/v1/wireguard/config", {
+          config_text: wireguardConfigInput.value,
+          enable_on_boot: wireguardEnableInput.checked,
+        });
+        applyWireGuardStatus(response.wireguard || response);
+      } catch (error) {
+        wireguardError = error.message;
+        setWireGuardStatus(error.message, true);
+      }
+    }
+
     const backendStatus = byId("status-backend");
     if (backendStatus) backendStatus.textContent = backendDisplayName();
-    if (qrzError) {
-      setStatus(`Settings saved locally. QRZ config was not saved on ESP32: ${qrzError}`, true);
-      showToast("Settings saved locally; QRZ config failed", true);
+    const remoteErrors = [];
+    if (qrzError) remoteErrors.push(`QRZ: ${qrzError}`);
+    if (wireguardError) remoteErrors.push(`WireGuard: ${wireguardError}`);
+    if (remoteErrors.length) {
+      setStatus(`Settings saved locally. ${remoteErrors.join(" · ")}`, true);
+      showToast("Settings saved locally; ESP32 config failed", true);
     } else {
       setStatus(backendChanged ? "Settings saved. Reloading for the new backend…" : "Settings saved.");
       showToast("Settings saved");

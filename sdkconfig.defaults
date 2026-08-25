@@ -35,3 +35,6 @@ CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 # M12.1: GUI uses MJPEG + bidirectional audio WS + REST concurrently.
 CONFIG_LWIP_MAX_SOCKETS=24
 CONFIG_LWIP_MAX_ACTIVE_TCP=24
+
+# WireGuard's lwIP netif owns netif->state; force ESP-NETIF bookkeeping into lwIP client_data.
+CONFIG_ESP_NETIF_BRIDGE_EN=y

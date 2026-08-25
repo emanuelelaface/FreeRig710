@@ -94,6 +94,49 @@ esp_err_t freerig_config_set_qrz(const char *station_callsign, const char *api_k
     return err;
 }
 
+esp_err_t freerig_config_get_wireguard(freerig_wireguard_config_t *out)
+{
+    if (out == NULL) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    esp_err_t err = freerig_config_init();
+    if (err != ESP_OK) return err;
+    nvs_handle_t h;
+    err = nvs_open("freerig", NVS_READONLY, &h);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (err != ESP_OK) return err;
+    size_t size = sizeof(out->config_text);
+    if (nvs_get_str(h, "wg_config", out->config_text, &size) != ESP_OK) out->config_text[0] = '\0';
+    uint8_t boot = 0;
+    if (nvs_get_u8(h, "wg_boot", &boot) != ESP_OK) boot = 0;
+    out->config_set = out->config_text[0] != '\0';
+    out->enable_on_boot = boot != 0;
+    nvs_close(h);
+    return ESP_OK;
+}
+
+esp_err_t freerig_config_set_wireguard(const char *config_text_or_null, bool enable_on_boot)
+{
+    if (config_text_or_null != NULL && strlen(config_text_or_null) >= FREERIG_WIREGUARD_CONFIG_TEXT_MAX) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    esp_err_t err = freerig_config_init();
+    if (err != ESP_OK) return err;
+    nvs_handle_t h;
+    err = nvs_open("freerig", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    const char *text = config_text_or_null ? config_text_or_null : "";
+    if (text[0]) {
+        err = nvs_set_str(h, "wg_config", text);
+    } else {
+        err = nvs_erase_key(h, "wg_config");
+        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    }
+    if (err == ESP_OK) err = nvs_set_u8(h, "wg_boot", enable_on_boot ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
 static bool metadata_key(char *out, size_t out_size, int slot, const char *suffix)
 {
     if (out == NULL || suffix == NULL || slot < 1 || slot > 99) return false;
