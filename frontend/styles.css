@@ -940,6 +940,25 @@ a.station-button { text-decoration: none; display: inline-flex; align-items: cen
   letter-spacing: .01em;
   text-align: center;
 }
+.video-power-message.is-starting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+.video-power-message.is-starting::before {
+  content: "";
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 4px solid rgba(238, 245, 251, .24);
+  border-top-color: #c9efff;
+  animation: video-starting-spin .85s linear infinite;
+}
+@keyframes video-starting-spin {
+  to { transform: rotate(360deg); }
+}
 .video-power-message[hidden] { display: none; }
 
 @media (max-width: 959px) {

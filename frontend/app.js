@@ -1212,8 +1212,11 @@ function initVideo() {
   const VIDEO_FIRST_FRAME_TIMEOUT_MS = 1800;
   const VIDEO_ERROR_RETRY_MS = 400;
   const VIDEO_STALL_RETRY_MS = 250;
+  const VIDEO_STARTUP_GRACE_MS = 8000;
+  let startupOverlayUntilMs = 0;
 
-  const setMessage = (text = "") => {
+  const setMessage = (text = "", variant = "") => {
+    message.classList.toggle("is-starting", variant === "starting");
     if (!text) {
       message.hidden = true;
       message.textContent = "";
@@ -1229,7 +1232,9 @@ function initVideo() {
     } else if (radioPower === "OFF") {
       setMessage("Radio powered off");
     } else if (radioPower === "STARTING") {
-      setMessage("Radio starting…");
+      setMessage("Radio is starting...", "starting");
+    } else if (!streamLive && Date.now() < startupOverlayUntilMs) {
+      setMessage("Radio is starting...", "starting");
     } else if (streamLive) {
       setMessage();
     } else {
@@ -1280,7 +1285,8 @@ function initVideo() {
       clearTimeout(firstFrameTimer);
       firstFrameTimer = null;
       streamLive = false;
-      refreshVisualState("Video unavailable");
+      if (Date.now() < startupOverlayUntilMs) refreshVisualState();
+      else refreshVisualState("Video unavailable");
       retryTimer = setTimeout(load, VIDEO_ERROR_RETRY_MS);
     };
 
@@ -1296,7 +1302,8 @@ function initVideo() {
       image.onload = null;
       image.onerror = null;
       image.removeAttribute("src");
-      refreshVisualState("Reconnecting radio display…");
+      if (Date.now() < startupOverlayUntilMs) refreshVisualState();
+      else refreshVisualState("Reconnecting radio display…");
       retryTimer = setTimeout(load, VIDEO_STALL_RETRY_MS);
     }, VIDEO_FIRST_FRAME_TIMEOUT_MS);
   };
@@ -1342,11 +1349,13 @@ function initVideo() {
     radioPower = nextPower;
 
     if (nextPower === "OFF" || nextPower === "STARTING") {
+      if (nextPower === "STARTING") startupOverlayUntilMs = Date.now() + VIDEO_STARTUP_GRACE_MS;
       stop();
       return;
     }
 
     if (nextPower === "ON" && previousPower !== "ON" && !document.hidden) {
+      startupOverlayUntilMs = Date.now() + VIDEO_STARTUP_GRACE_MS;
       stop();
       retryTimer = setTimeout(load, 500);
     } else {
