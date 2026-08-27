@@ -2360,6 +2360,105 @@ function initBackendConfig() {
   });
 }
 
+function initRadioAudioLevels() {
+  const controls = [
+    {
+      input: byId("radio-speaker-volume"),
+      value: byId("radio-speaker-volume-value"),
+      label: "Radio speaker",
+      key: "ft710-radio-speaker-volume-v1",
+      min: 0,
+      max: 255,
+      fallback: 128,
+      readCommand: "AG0;",
+      readPattern: /^AG0(\d{3});$/,
+      setCommand: (value) => `AG0${String(value).padStart(3, "0")};`,
+      display: (value) => `${value}/255`,
+      pending: null,
+      sequence: 0,
+    },
+    {
+      input: byId("radio-aess-volume"),
+      value: byId("radio-aess-volume-value"),
+      label: "AESS",
+      key: "ft710-radio-aess-volume-v1",
+      min: 0,
+      max: 100,
+      fallback: 50,
+      readCommand: "AS1;",
+      readPattern: /^AS1(\d{3});$/,
+      setCommand: (value) => `AS1${String(value).padStart(3, "0")};`,
+      display: (value) => `${value}%`,
+      pending: null,
+      sequence: 0,
+    },
+  ].filter((control) => control.input && control.value);
+
+  if (!controls.length) return;
+
+  const clamp = (control, value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return control.fallback;
+    return Math.max(control.min, Math.min(control.max, Math.round(numeric)));
+  };
+
+  const setValue = (control, value) => {
+    const next = clamp(control, value);
+    control.input.value = String(next);
+    control.value.textContent = control.display(next);
+    try { localStorage.setItem(control.key, String(next)); } catch (_) { /* optional */ }
+    return next;
+  };
+
+  const loadSavedValue = (control) => {
+    let stored = "";
+    try { stored = localStorage.getItem(control.key) || ""; } catch (_) { /* optional */ }
+    setValue(control, stored === "" ? control.fallback : stored);
+  };
+
+  const readControl = async (control) => {
+    try {
+      const result = await post("/api/v1/cat", { command: control.readCommand, expect_reply: true });
+      const match = String(result?.response || "").match(control.readPattern);
+      if (match) setValue(control, Number(match[1]));
+    } catch (_) {
+      /* Radio may be off or CAT may still be connecting; keep the local value. */
+    }
+  };
+
+  const sendControl = async (control, { quiet = true } = {}) => {
+    const sequence = ++control.sequence;
+    const value = setValue(control, control.input.value);
+    try {
+      await post("/api/v1/cat", { command: control.setCommand(value), expect_reply: false });
+      if (!quiet) showToast(`${control.label}: ${control.display(value)}`);
+    } catch (error) {
+      if (sequence === control.sequence) showToast(`${control.label}: ${error.message}`, true);
+    }
+  };
+
+  for (const control of controls) {
+    loadSavedValue(control);
+    control.input.addEventListener("input", () => {
+      setValue(control, control.input.value);
+      clearTimeout(control.pending);
+      control.pending = setTimeout(() => {
+        control.pending = null;
+        void sendControl(control, { quiet: true });
+      }, 180);
+    });
+    control.input.addEventListener("change", () => {
+      clearTimeout(control.pending);
+      control.pending = null;
+      void sendControl(control, { quiet: false });
+    });
+  }
+
+  setTimeout(() => {
+    for (const control of controls) void readControl(control);
+  }, 700);
+}
+
 function initAudio() {
   const toggle = byId("audio-toggle");
   const status = byId("audio-status");
@@ -3157,4 +3256,5 @@ void initQrzLog();
 window.FT710_CW?.init();
 window.FT710_SSTV?.init();
 window.FT710_FT8?.init();
+initRadioAudioLevels();
 initAudio();

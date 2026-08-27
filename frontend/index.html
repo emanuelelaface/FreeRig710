@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FreeRig710 · Yaesu FT-710</title>
-  <link rel="stylesheet" href="styles.css?v=1.0-video-starting1">
+  <link rel="stylesheet" href="styles.css?v=1.0-radio-audio-levels1">
 </head>
 <body>
   <main class="shell">
@@ -429,6 +429,16 @@
           <span id="audio-status" class="audio-status">OFF</span>
         </div>
         <p class="help audio-help">Audio devices remain closed until you enable them manually. Use a headset to prevent acoustic feedback.</p>
+        <div class="radio-audio-levels" aria-label="Radio audio level controls">
+          <div class="radio-audio-level">
+            <label class="control-label" for="radio-speaker-volume">Radio speaker: <strong id="radio-speaker-volume-value">--</strong></label>
+            <input id="radio-speaker-volume" type="range" min="0" max="255" step="1" value="128">
+          </div>
+          <div class="radio-audio-level">
+            <label class="control-label" for="radio-aess-volume">AESS: <strong id="radio-aess-volume-value">--</strong></label>
+            <input id="radio-aess-volume" type="range" min="0" max="100" step="1" value="50">
+          </div>
+        </div>
         <button id="audio-toggle" class="wide" type="button">Enable audio</button>
         <div class="audio-file-actions" aria-label="Audio record and playback controls">
           <button id="record-audio-button" type="button" disabled>Record Audio</button>

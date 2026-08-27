@@ -136,6 +136,7 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
   .vfo-row { grid-template-columns: 1fr 1fr; }
   .vfo-row > div, .vfo-row input, .vfo-row .vfo-select { grid-column: 1 / -1; }
   .three-buttons, .tuner-buttons { grid-template-columns: 1fr; }
+  .radio-audio-levels { grid-template-columns: 1fr; }
   .cat-form { grid-template-columns: 1fr; }
   .jog-track-wrap { grid-template-columns: 1fr; }
   .jog-track-wrap span { display: none; }
@@ -162,6 +163,23 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
 .audio-status.live { border-color: #397759; color: #aaf2c1; background: rgba(95,224,139,.09); }
 .audio-status.error { border-color: #8f3b48; color: #ffc1c8; background: rgba(255,100,116,.12); }
 .audio-card input[type="range"]:disabled { opacity: .4; }
+.radio-audio-levels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+  margin: 0 0 12px;
+}
+.radio-audio-level {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(6, 20, 32, .42);
+}
+.radio-audio-level .control-label {
+  margin: 0 0 7px;
+  font-size: .76rem;
+}
 .audio-file-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
