@@ -13,7 +13,7 @@
   // They are useful for display/contest geography but must not be treated as
   // separate ARRL DXCC entities by FreeRig710 worked/new-DXCC logic.
   // European Turkey (*TA1) is DXCC Turkey (TA).
-  const DXCC_ENTITY_ALIASES=Object.freeze({"TA1":"TA"});
+  const DXCC_ENTITY_ALIASES=Object.freeze({"IT9":"I","TA1":"TA"});
 
   function parseHeader(text){
     const p=String(text||"").split(":");
