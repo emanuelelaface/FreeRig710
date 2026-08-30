@@ -55,7 +55,7 @@ Synchronizes real FT-710 memory channels. Name/frequency/mode live in the radio;
 
 ## CW and SSTV
 
-CW decoder/keyer and SSTV decoder share the normal browser receive-audio path. They do not require a second USB audio consumer.
+CW decoder/keyer and SSTV receive decoding share the normal browser receive-audio path. SSTV image TX first runs the bounded 5 W ALC tune used by digital audio TX, then generates a 48 kHz staged digital waveform in the browser and sends it through the shared ESP32 digital TX path; the current UI exposes the modes that fit the firmware's 12 MiB staged waveform buffer.
 
 ## Transmitter and tuner
 

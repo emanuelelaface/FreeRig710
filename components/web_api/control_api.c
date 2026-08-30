@@ -139,7 +139,7 @@ static void ft8_tune_request_stop(const char *reason);
 #define FT8_TX_WAVEFORM_QUEUE_LOW          8000U   /* ~83 ms at 48 kHz mono */
 #define FT8_TX_WAVEFORM_QUEUE_HIGH        18000U   /* ~188 ms; below stream capacity */
 
-#define DIGITAL_TX_WAVEFORM_MAX_BYTES   6000000U
+#define DIGITAL_TX_WAVEFORM_MAX_BYTES   (12U * 1024U * 1024U)
 #define DIGITAL_TX_STAGE_RATE_HZ           48000U
 #define DIGITAL_TX_WAVEFORM_FEED_CHUNK      3840U
 #define DIGITAL_TX_WAVEFORM_QUEUE_LOW        8000U
@@ -148,7 +148,7 @@ static void ft8_tune_request_stop(const char *reason);
 #define DIGITAL_TX_MAX_PTT_DELAY_MS         1500U
 #define DIGITAL_TX_MAX_TAIL_MS              1200U
 #define DIGITAL_TX_MIN_LEASE_MS             2500U
-#define DIGITAL_TX_MAX_LEASE_MS           90000U
+#define DIGITAL_TX_MAX_LEASE_MS          135000U
 
 typedef struct {
     bool task_running;
@@ -3474,6 +3474,7 @@ static esp_err_t ft8_tune_start_handler(httpd_req_t *req)
         }
     }
     if (ft8_tx_is_running()) return send_error(req, "409 Conflict", "FT8 automatic TX is armed/running");
+    if (digital_tx_is_running()) return send_error(req, "409 Conflict", "staged digital TX is running");
     ft8_tune_snapshot_t tune;
     ft8_tune_get_snapshot(&tune);
     if (tune.task_running) return send_error(req, "409 Conflict", "FT8 ALC tune is already running");

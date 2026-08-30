@@ -509,7 +509,7 @@
 
       <article class="card panel-card sstv-card" data-panel-id="sstv-decoder">
         <div class="panel-heading-row">
-          <h2>SSTV decoder</h2>
+          <h2>SSTV</h2>
           <span id="sstv-status" class="sstv-status">OFF</span>
         </div>
 
@@ -556,7 +556,24 @@
           <button id="sstv-freeze" type="button">Freeze image</button>
           <button id="sstv-save" type="button" disabled>Save visible PNG</button>
         </div>
-        <p class="help">The decoder keeps the last six minutes of RX audio. Every mode change automatically clears the decoded view and re-decodes the complete audio buffer with the selected mode. Scroll the decoded buffer vertically to find and align a complete image; Save visible PNG exports exactly one image-height viewport. VIS is only a suggestion and never blocks decoding.</p>
+        <form id="sstv-send-form" class="sstv-send-form">
+          <div class="sstv-send-title">Send SSTV image</div>
+          <label class="control-label" for="sstv-tx-mode">TX mode</label>
+          <select id="sstv-tx-mode"></select>
+
+          <div id="sstv-tx-preview-wrap" class="sstv-tx-preview-wrap" aria-label="SSTV TX image preview">
+            <canvas id="sstv-tx-preview" width="320" height="240"></canvas>
+          </div>
+
+          <div class="sstv-send-actions">
+            <button id="sstv-image-choose" type="button">Choose Image</button>
+            <button id="sstv-send" type="submit" disabled>Send SSTV</button>
+            <button id="sstv-stop" class="danger" type="button" disabled>STOP</button>
+          </div>
+          <input id="sstv-image-file" class="visually-hidden" type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.gif,.bmp">
+          <div id="sstv-tx-detail" class="sstv-detail sstv-tx-detail">Choose image · Robot 36 · 00:36 · 3.3 MiB</div>
+        </form>
+        <p class="help">The decoder keeps the last six minutes of RX audio. Mode changes re-decode the complete audio buffer. SSTV TX runs an automatic 5 W ALC tune before staged ESP32 digital waveform playback.</p>
       </article>
 
       <article class="card panel-card" data-panel-id="transmitter-and-tuner">

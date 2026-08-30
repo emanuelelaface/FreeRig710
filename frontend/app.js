@@ -2504,10 +2504,15 @@ function initAudio() {
   let pttKeepalive = null;
   let failureInProgress = false;
   let connectTimeout = null;
+  let digitalStagedTx = false;
+  let ft8TuneAvailable = false;
+  let digitalAlcTuneActive = false;
+  const audioControlWaiters = [];
   const txPacketMs = 20;
   const maxWebSocketBacklogBytes = 128 * 1024;
   const audioOwnerId = `main-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const audioOwnerChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("freerig710-audio-owner-v1") : null;
+  const clampNumber = (value, low, high) => Math.max(low, Math.min(high, value));
 
   const readSavedGain = (key, fallback, maximum) => {
     try {
@@ -2794,6 +2799,291 @@ function initAudio() {
     return true;
   };
 
+  const sendBinary = (payload) => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(payload);
+    return true;
+  };
+
+  const resolveAudioControlWaiters = (message) => {
+    for (let index = audioControlWaiters.length - 1; index >= 0; index -= 1) {
+      const waiter = audioControlWaiters[index];
+      if (message.type !== waiter.type || !waiter.predicate(message)) continue;
+      clearTimeout(waiter.timer);
+      audioControlWaiters.splice(index, 1);
+      waiter.resolve(message);
+    }
+  };
+
+  const rejectAudioControlWaiters = (reason) => {
+    while (audioControlWaiters.length) {
+      const waiter = audioControlWaiters.pop();
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error(reason || "Audio connection closed"));
+    }
+  };
+
+  const waitForAudioControl = (type, predicate = () => true, timeoutMs = 3000) => (
+    new Promise((resolve, reject) => {
+      const waiter = {
+        type,
+        predicate,
+        resolve,
+        reject,
+        timer: window.setTimeout(() => {
+          const index = audioControlWaiters.indexOf(waiter);
+          if (index >= 0) audioControlWaiters.splice(index, 1);
+          reject(new Error(`Timed out waiting for ${type}`));
+        }, Math.max(1, timeoutMs)),
+      };
+      audioControlWaiters.push(waiter);
+    })
+  );
+
+  const nextDigitalWaveformId = () => {
+    const id = ((Date.now() & 0xfffffff) ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+    return id || 1;
+  };
+
+  const stageDigitalPcm = async (pcm, options = {}) => {
+    if (!audioReady || !socket || socket.readyState !== WebSocket.OPEN) throw new Error("Enable audio first");
+    if (filePlaybackActive || pttActive || pttPending) throw new Error("Stop the current audio TX before staged digital TX");
+    if (!digitalStagedTx) throw new Error("ESP32 firmware does not advertise staged digital TX");
+    if (!(pcm instanceof Int16Array) || pcm.length === 0) throw new Error("No PCM audio to stage");
+    const sampleRate = transmitPcmSampleRate || 48000;
+    const id = nextDigitalWaveformId();
+    const label = String(options.label || "SSTV").slice(0, 48);
+    const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+    const beginWait = waitForAudioControl("digital_waveform_begin", (message) => Number(message.id) === id || message.ok === false, 5000);
+    sendControl({ type: "digital_waveform_begin", id, bytes: bytes.byteLength, sample_rate: sampleRate, label });
+    const begin = await beginWait;
+    if (begin.ok === false) throw new Error(begin.error || "Staged digital upload rejected");
+    if (options.shouldAbort?.()) {
+      sendControl({ type: "digital_waveform_clear" });
+      throw new Error("Staged digital upload stopped");
+    }
+
+    const uploadTimeoutMs = Math.max(20000, Math.min(90000, 10000 + Math.ceil(bytes.byteLength / 160000) * 1000));
+    const readyWait = waitForAudioControl("digital_waveform_ready", (message) => Number(message.id) === id, uploadTimeoutMs);
+    const errorWait = waitForAudioControl("digital_waveform_error", () => true, uploadTimeoutMs).then(
+      (message) => Promise.reject(new Error(message.error || "Staged digital upload failed")),
+      () => new Promise(() => {})
+    );
+    const consumeUploadWaits = () => {
+      readyWait.catch(() => {});
+      errorWait.catch(() => {});
+    };
+    const chunkBytes = 16000;
+    for (let offset = 0; offset < bytes.byteLength; offset += chunkBytes) {
+      if (options.shouldAbort?.()) {
+        consumeUploadWaits();
+        sendControl({ type: "digital_waveform_clear" });
+        throw new Error("Staged digital upload stopped");
+      }
+      if (!audioReady || !socket || socket.readyState !== WebSocket.OPEN) {
+        consumeUploadWaits();
+        throw new Error("Audio connection closed during waveform upload");
+      }
+      while (socket.bufferedAmount > 65536) {
+        if (options.shouldAbort?.()) {
+          consumeUploadWaits();
+          sendControl({ type: "digital_waveform_clear" });
+          throw new Error("Staged digital upload stopped");
+        }
+        if (!audioReady || !socket || socket.readyState !== WebSocket.OPEN) {
+          consumeUploadWaits();
+          throw new Error("Audio connection closed during waveform upload");
+        }
+        await sleep(2);
+      }
+      const end = Math.min(offset + chunkBytes, bytes.byteLength);
+      sendBinary(bytes.subarray(offset, end));
+      options.onProgress?.({ id, sentBytes: end, totalBytes: bytes.byteLength });
+    }
+    const ready = await Promise.race([readyWait, errorWait]);
+    if (Number(ready?.bytes) !== bytes.byteLength) throw new Error("ESP32 staged waveform ACK mismatch");
+    return { id, bytes: bytes.byteLength, sampleRate };
+  };
+
+  const playStagedDigitalPcm = async (staged, sampleCount, options = {}) => {
+    if (!audioReady || !socket || socket.readyState !== WebSocket.OPEN) throw new Error("Enable audio first");
+    const sampleRate = transmitPcmSampleRate || 48000;
+    const pttDelayMs = Math.max(0, Math.round(Number(options.pttDelayMs) || 350));
+    const tailMs = Math.max(0, Math.round(Number(options.tailMs) || 300));
+    const durationMs = Math.ceil(sampleCount * 1000 / sampleRate);
+    const leaseMs = durationMs + pttDelayMs + tailMs + 4000;
+    const playWait = waitForAudioControl("digital_tx_play", (message) => Number(message.id) === Number(staged.id), 3000);
+    sendControl({
+      type: "digital_tx_play",
+      id: staged.id,
+      label: String(options.label || "SSTV").slice(0, 48),
+      ptt_delay_ms: pttDelayMs,
+      tail_ms: tailMs,
+      lease_ms: leaseMs,
+    });
+    const play = await playWait;
+    if (play.ok === false) throw new Error(play.error || "Staged digital TX rejected");
+    const completeWait = waitForAudioControl("digital_tx_complete", (message) => Number(message.id) === Number(staged.id), leaseMs + 5000);
+    const complete = await completeWait;
+    if (complete.ok === false) throw new Error(complete.reason || "Staged digital TX failed");
+    return complete;
+  };
+
+  const stopStagedDigitalTx = () => sendControl({ type: "digital_tx_stop" });
+
+  const readFt8TuneStatus = async () => {
+    const payload = await api("/api/v1/ft8/status");
+    return payload?.ft8?.tune || {};
+  };
+
+  const assertDigitalAlcTuneLive = (options = {}) => {
+    if (options.shouldAbort?.()) throw new Error("ALC tune stopped");
+    if (!audioReady || !socket || socket.readyState !== WebSocket.OPEN) {
+      throw new Error("Audio connection closed during ALC tune");
+    }
+  };
+
+  const waitForDigitalAlcTuneActive = async (options = {}, timeoutMs = 4200) => {
+    const deadline = performance.now() + timeoutMs;
+    while (performance.now() < deadline) {
+      assertDigitalAlcTuneLive(options);
+      const tune = await readFt8TuneStatus();
+      if (tune?.active) return tune;
+      if (tune && !tune.running && tune.last_reason) throw new Error(tune.last_reason);
+      await sleep(120);
+    }
+    throw new Error("ESP32 did not enter bounded ALC tune state");
+  };
+
+  const collectDigitalAlcReadings = async (count, lastReadCount, options = {}, timeoutMs = 1300) => {
+    const values = [];
+    let seen = Number(lastReadCount) || 0;
+    let lastTune = null;
+    const deadline = performance.now() + timeoutMs;
+    while (values.length < count && performance.now() < deadline) {
+      assertDigitalAlcTuneLive(options);
+      const tune = await readFt8TuneStatus();
+      lastTune = tune;
+      if (!tune.running) throw new Error(tune.last_reason || "ESP32 ended ALC tune");
+      const reads = Number(tune.meter_reads) || 0;
+      if (reads > seen) {
+        values.push(Number(tune.alc_raw) || 0);
+        seen = reads;
+      }
+      if (values.length < count) await sleep(90);
+    }
+    if (!values.length) throw new Error("No ALC meter readings from CAT RM4");
+    return { values, readCount: seen, tune: lastTune };
+  };
+
+  const stopDigitalAlcTune = async () => {
+    try { await api("/api/v1/ft8/tune/stop", { method: "POST" }); } catch (_) { /* already stopped */ }
+  };
+
+  const calibrateDigitalAlc = async (options = {}) => {
+    if (!audioReady || !socket || socket.readyState !== WebSocket.OPEN) throw new Error("Enable audio first");
+    if (filePlaybackActive || pttActive || pttPending) throw new Error("Stop the current audio TX before ALC tune");
+    if (!ft8TuneAvailable) throw new Error("ESP32 firmware does not advertise bounded ALC tune");
+    if (digitalAlcTuneActive) throw new Error("ALC tune is already running");
+
+    const report = (text, details = {}) => options.onStatus?.(text, details);
+    let keepaliveTimer = null;
+    digitalAlcTuneActive = true;
+    try {
+      sendControl({ type: "digital_waveform_clear" });
+      report("Calibrating SSTV ALC · 5 W 1500 Hz tone");
+      await post("/api/v1/ft8/tune/start", {
+        dbfs: -40,
+        frequency_hz: 1500,
+        metering: true,
+      });
+      keepaliveTimer = window.setInterval(() => {
+        if (digitalAlcTuneActive && audioReady && socket?.readyState === WebSocket.OPEN) {
+          sendControl({ type: "ft8_tune_keepalive" });
+        }
+      }, 400);
+      sendControl({ type: "ft8_tune_keepalive" });
+
+      const tune = await waitForDigitalAlcTuneActive(options);
+      let sample = await collectDigitalAlcReadings(3, Number(tune.meter_reads) || 0, options, 1800);
+      let readCount = sample.readCount;
+      const sorted = [...sample.values].sort((a, b) => a - b);
+      const baseline = sorted[Math.floor(sorted.length / 2)];
+      const baselineHigh = Math.max(...sample.values);
+      if (baselineHigh >= 12) {
+        throw new Error(`ALC already ${baselineHigh} at -40 dBFS; reduce FT-710 USB DATA input level`);
+      }
+      const threshold = Math.max(3, baseline + 2);
+      report(`Calibrating SSTV ALC · baseline ${baseline}, threshold ${threshold}`, { baseline, threshold });
+
+      let onsetLevel = null;
+      let onsetAlc = 0;
+      let lastPo = Number(sample.tune?.po_raw) || 0;
+      const levels = [-38, -35, -32, -29, -26, -23, -20, -17, -14, -12];
+      for (const level of levels) {
+        assertDigitalAlcTuneLive(options);
+        await post("/api/v1/ft8/tune/level", { dbfs: level });
+        report(`Calibrating SSTV ALC · tone ${level.toFixed(0)} dBFS`, { levelDbfs: level });
+        await sleep(260);
+        sample = await collectDigitalAlcReadings(2, readCount, options, 1100);
+        readCount = sample.readCount;
+        lastPo = Number(sample.tune?.po_raw) || lastPo;
+        const high = Math.max(...sample.values);
+        const hits = sample.values.filter((value) => value >= threshold).length;
+        report(`Calibrating SSTV ALC · ALC ${sample.values.join("/")}`, {
+          levelDbfs: level,
+          alcValues: sample.values,
+          threshold,
+        });
+        if (hits >= 2 || high >= baseline + 5) {
+          onsetLevel = level;
+          onsetAlc = high;
+          break;
+        }
+      }
+
+      const limited = onsetLevel == null;
+      const operatingLevel = limited ? -18 : clampNumber(onsetLevel - 6, -40, -18);
+      report(
+        limited
+          ? `No ALC onset by -12 dBFS · using ${operatingLevel.toFixed(1)} dBFS`
+          : `ALC onset ${onsetLevel.toFixed(1)} dBFS · using ${operatingLevel.toFixed(1)} dBFS`,
+        { levelDbfs: operatingLevel, onsetLevelDbfs: onsetLevel, onsetAlc, baseline, threshold, limited }
+      );
+      return {
+        levelDbfs: operatingLevel,
+        onsetLevelDbfs: onsetLevel,
+        onsetAlc,
+        baselineAlc: baseline,
+        thresholdAlc: threshold,
+        poRaw: lastPo,
+        limited,
+      };
+    } finally {
+      clearInterval(keepaliveTimer);
+      await stopDigitalAlcTune();
+      const deadline = performance.now() + 3500;
+      while (performance.now() < deadline) {
+        let tune = null;
+        try { tune = await readFt8TuneStatus(); } catch (_) { break; }
+        if (!tune?.running) break;
+        await sleep(100);
+      }
+      digitalAlcTuneActive = false;
+    }
+  };
+
+  window.FT710_AUDIO_BRIDGE = {
+    isReady: () => Boolean(audioReady && socket && socket.readyState === WebSocket.OPEN),
+    supportsStagedDigitalTx: () => Boolean(digitalStagedTx),
+    supportsDigitalAlcTune: () => Boolean(ft8TuneAvailable),
+    calibrateDigitalAlc,
+    stopDigitalAlcTune,
+    stageDigitalPcm,
+    playStagedDigitalPcm,
+    stopStagedDigitalTx,
+  };
+
   window.FT710_FT8?.setControlSender(sendControl);
 
   const stopPttKeepalive = () => {
@@ -2886,6 +3176,10 @@ function initAudio() {
     }
     releasePtt();
     audioReady = false;
+    digitalStagedTx = false;
+    ft8TuneAvailable = false;
+    digitalAlcTuneActive = false;
+    rejectAudioControlWaiters("Audio disabled");
     setControlsEnabled(false);
 
     if (microphoneStream) {
@@ -2918,6 +3212,10 @@ function initAudio() {
       stopConnectTimeout();
       const oldSocket = socket;
       socket = null;
+      digitalStagedTx = false;
+      ft8TuneAvailable = false;
+      digitalAlcTuneActive = false;
+      rejectAudioControlWaiters("Audio disabled");
       if (oldSocket && oldSocket.readyState < WebSocket.CLOSING) oldSocket.close(1000, "Audio disabled by user");
       await cleanupGraph();
       toggle.textContent = "Enable audio";
@@ -2946,6 +3244,10 @@ function initAudio() {
       stopConnectTimeout();
       const oldSocket = socket;
       socket = null;
+      digitalStagedTx = false;
+      ft8TuneAvailable = false;
+      digitalAlcTuneActive = false;
+      rejectAudioControlWaiters(message);
       if (oldSocket && oldSocket.readyState < WebSocket.CLOSING) oldSocket.close();
       await cleanupGraph();
       toggle.textContent = "Enable audio";
@@ -3094,19 +3396,22 @@ function initAudio() {
           let message;
           try { message = JSON.parse(event.data); }
           catch (_) { return; }
+          resolveAudioControlWaiters(message);
           if (message.type === "ready") {
             stopConnectTimeout();
             audioReady = true;
             starting = false;
             toggle.disabled = false;
             toggle.textContent = "Disable audio";
-            setControlsEnabled(true);
-            setAudioStatus("LIVE", "live");
-            applyPttState(false);
             const serverRate = Number(message.sample_rate);
             receivePcmSampleRate = Number.isFinite(serverRate) && serverRate > 0 ? serverRate : 48000;
             const txServerRate = Number(message.tx_sample_rate);
             transmitPcmSampleRate = Number.isFinite(txServerRate) && txServerRate > 0 ? txServerRate : 48000;
+            digitalStagedTx = Boolean(message.digital_staged_tx);
+            ft8TuneAvailable = Boolean(message.ft8_tune);
+            setControlsEnabled(true);
+            setAudioStatus("LIVE", "live");
+            applyPttState(false);
             audioFileStatus.textContent = "RX recorder idle · TX file player idle";
             detail.textContent = `FreeRig710 WebSocket audio · RX ${receivePcmSampleRate} Hz · TX ${transmitPcmSampleRate} Hz · latching PTT · watchdog ${message.ptt_watchdog_ms || 1500} ms`;
             showToast("Audio enabled");
@@ -3144,6 +3449,10 @@ function initAudio() {
 
       socket.onclose = (event) => {
         if (stopping) return;
+        digitalStagedTx = false;
+        ft8TuneAvailable = false;
+        digitalAlcTuneActive = false;
+        rejectAudioControlWaiters("Audio connection closed");
         socket = null;
         if (lastState?.radio_power === "OFF" || lastState?.radio_power === "STARTING") {
           void disableAudio(true);
@@ -3232,6 +3541,7 @@ function initAudio() {
   window.addEventListener("pagehide", () => {
     stopConnectTimeout();
     releasePtt();
+    rejectAudioControlWaiters("Page closed");
     if (socket && socket.readyState === WebSocket.OPEN) socket.close(1000, "Page closed");
     audioOwnerChannel?.close();
   });

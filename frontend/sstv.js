@@ -80,6 +80,305 @@
   });
 
   const VIS_TO_MODE = new Map(Object.values(MODES).map((mode) => [mode.vis, mode.key]));
+  const SSTV_TX_SAMPLE_RATE = 48000;
+  const SSTV_TX_MAX_BYTES = 12 * 1024 * 1024;
+  const SSTV_TX_DEFAULT_LEVEL_DBFS = -30;
+  const SSTV_TX_MIN_LEVEL_DBFS = -40;
+  const SSTV_TX_MAX_LEVEL_DBFS = -1;
+  const SSTV_TX_MODE_KEYS = Object.freeze([
+    "robot36", "pd50", "martin2", "scottie2", "robot72", "pd90",
+    "scottie1", "martin1", "pd120",
+  ]);
+  const SSTV_TX_SUPPORTED = new Set(SSTV_TX_MODE_KEYS);
+  const SSTV_VIDEO_LOW_HZ = 1500;
+  const SSTV_VIDEO_SPAN_HZ = 800;
+  const SSTV_VIS_HEADER_MS = 300 + 10 + 300 + 30 * 10;
+
+  function sstvLineDurationMs(mode) {
+    if (!mode) return 0;
+    if (mode.family === "martin") {
+      return mode.syncMs + mode.porchMs + 3 * mode.channelMs + 3 * mode.separatorMs;
+    }
+    if (mode.family === "scottie") {
+      return mode.syncMs + mode.porchMs + 3 * mode.channelMs + 2 * mode.separatorMs;
+    }
+    if (mode.family === "robot36") {
+      return mode.syncMs + mode.porchMs + mode.yMs + mode.separatorMs + mode.separatorPorchMs + mode.chromaMs;
+    }
+    if (mode.family === "robot72") {
+      return mode.syncMs + mode.porchMs + mode.yMs
+        + mode.separatorMs + mode.separatorPorchMs + mode.crMs
+        + mode.separatorMs + mode.separatorPorchMs + mode.cbMs;
+    }
+    if (mode.family === "pd") {
+      return mode.syncMs + mode.porchMs + 4 * mode.channelMs;
+    }
+    return 0;
+  }
+
+  function sstvTxLineCount(mode) {
+    if (!mode) return 0;
+    return mode.family === "pd" ? Math.ceil(mode.height / 2) : mode.height;
+  }
+
+  function sstvTxDurationSeconds(mode) {
+    if (!mode) return 0;
+    return (SSTV_VIS_HEADER_MS + sstvLineDurationMs(mode) * sstvTxLineCount(mode)) / 1000;
+  }
+
+  function sstvTxByteEstimate(mode) {
+    return Math.ceil(sstvTxDurationSeconds(mode) * SSTV_TX_SAMPLE_RATE) * 2;
+  }
+
+  class SSTVEncoder {
+    constructor(options = {}) {
+      this.sampleRate = SSTV_TX_SAMPLE_RATE;
+      const requestedDbfs = Number(options.levelDbfs);
+      let levelDbfs = SSTV_TX_DEFAULT_LEVEL_DBFS;
+      if (Number.isFinite(requestedDbfs)) {
+        levelDbfs = clamp(requestedDbfs, SSTV_TX_MIN_LEVEL_DBFS, SSTV_TX_MAX_LEVEL_DBFS);
+      } else if (Number.isFinite(Number(options.levelPercent))) {
+        const levelPercent = clamp(Number(options.levelPercent), 1, 100);
+        levelDbfs = 20 * Math.log10(levelPercent / 100);
+      }
+      this.levelDbfs = levelDbfs;
+      this.amplitude = clamp(
+        Math.round(32767 * Math.pow(10, levelDbfs / 20)),
+        1,
+        32767
+      );
+      this.phase = 0;
+      this.twoPi = 2 * Math.PI;
+      this.pcm = new Int16Array(0);
+      this.offset = 0;
+    }
+
+    build(modeKey, imageData, callbacks = {}) {
+      const mode = MODES[modeKey];
+      if (!mode) throw new Error("Unsupported SSTV mode");
+      if (!imageData || imageData.width !== mode.width || imageData.height !== mode.height) {
+        throw new Error("SSTV image buffer does not match selected mode");
+      }
+      this.phase = 0;
+      this.offset = 0;
+      this.pcm = new Int16Array(this.estimateSamples(mode) + this.sampleRate);
+      this.appendVisHeader(mode.vis);
+
+      if (mode.family === "martin") this.appendMartin(mode, imageData, callbacks);
+      else if (mode.family === "scottie") this.appendScottie(mode, imageData, callbacks);
+      else if (mode.family === "robot36") this.appendRobot36(mode, imageData, callbacks);
+      else if (mode.family === "robot72") this.appendRobot72(mode, imageData, callbacks);
+      else if (mode.family === "pd") this.appendPd(mode, imageData, callbacks);
+      else throw new Error("Unsupported SSTV mode family");
+
+      this.applyEdgeRamp();
+      return this.pcm.slice(0, this.offset);
+    }
+
+    sampleCount(milliseconds) {
+      return Math.max(1, Math.round(this.sampleRate * milliseconds / 1000));
+    }
+
+    estimateSamples(mode) {
+      const tone = (milliseconds) => this.sampleCount(milliseconds);
+      let total = tone(300) + tone(10) + tone(300) + tone(30) * 10;
+      if (mode.family === "martin") {
+        total += mode.height * (
+          tone(mode.syncMs) + tone(mode.porchMs)
+          + tone(mode.channelMs) * 3 + tone(mode.separatorMs) * 3
+        );
+      } else if (mode.family === "scottie") {
+        total += mode.height * (
+          tone(mode.separatorMs) + tone(mode.channelMs)
+          + tone(mode.separatorMs) + tone(mode.channelMs)
+          + tone(mode.syncMs) + tone(mode.porchMs) + tone(mode.channelMs)
+        );
+      } else if (mode.family === "robot36") {
+        total += mode.height * (
+          tone(mode.syncMs) + tone(mode.porchMs) + tone(mode.yMs)
+          + tone(mode.separatorMs) + tone(mode.separatorPorchMs) + tone(mode.chromaMs)
+        );
+      } else if (mode.family === "robot72") {
+        total += mode.height * (
+          tone(mode.syncMs) + tone(mode.porchMs) + tone(mode.yMs)
+          + tone(mode.separatorMs) + tone(mode.separatorPorchMs) + tone(mode.crMs)
+          + tone(mode.separatorMs) + tone(mode.separatorPorchMs) + tone(mode.cbMs)
+        );
+      } else if (mode.family === "pd") {
+        total += Math.ceil(mode.height / 2) * (
+          tone(mode.syncMs) + tone(mode.porchMs) + tone(mode.channelMs) * 4
+        );
+      }
+      return total;
+    }
+
+    ensureRoom(count) {
+      if (this.offset + count <= this.pcm.length) return;
+      const next = new Int16Array(Math.max(this.pcm.length * 2, this.offset + count + this.sampleRate));
+      next.set(this.pcm);
+      this.pcm = next;
+    }
+
+    writeSample(frequency) {
+      this.pcm[this.offset] = clamp(Math.round(Math.sin(this.phase) * this.amplitude), -32768, 32767);
+      this.offset += 1;
+      this.phase += this.twoPi * frequency / this.sampleRate;
+      if (this.phase >= this.twoPi) this.phase -= this.twoPi;
+    }
+
+    appendTone(frequency, milliseconds) {
+      const count = this.sampleCount(milliseconds);
+      this.ensureRoom(count);
+      for (let index = 0; index < count; index += 1) this.writeSample(frequency);
+    }
+
+    appendVideo(values, milliseconds) {
+      const count = this.sampleCount(milliseconds);
+      const length = values.length;
+      this.ensureRoom(count);
+      for (let index = 0; index < count; index += 1) {
+        const pixel = Math.min(length - 1, Math.floor(index * length / count));
+        const frequency = SSTV_VIDEO_LOW_HZ + values[pixel] * SSTV_VIDEO_SPAN_HZ / 255;
+        this.writeSample(frequency);
+      }
+    }
+
+    appendVisHeader(code) {
+      this.appendTone(1900, 300);
+      this.appendTone(1200, 10);
+      this.appendTone(1900, 300);
+      this.appendTone(1200, 30);
+      let ones = 0;
+      for (let bit = 0; bit < 7; bit += 1) {
+        const set = (code >> bit) & 1;
+        if (set) ones += 1;
+        this.appendTone(set ? 1100 : 1300, 30);
+      }
+      this.appendTone((ones & 1) ? 1100 : 1300, 30);
+      this.appendTone(1200, 30);
+    }
+
+    applyEdgeRamp() {
+      const ramp = Math.min(this.offset, Math.round(this.sampleRate * 0.006));
+      if (ramp <= 1) return;
+      for (let index = 0; index < ramp; index += 1) {
+        const fadeIn = index / ramp;
+        const fadeOut = index / ramp;
+        this.pcm[index] = Math.round(this.pcm[index] * fadeIn);
+        const tail = this.offset - 1 - index;
+        this.pcm[tail] = Math.round(this.pcm[tail] * fadeOut);
+      }
+    }
+
+    rowChannel(imageData, row, channel) {
+      const width = imageData.width;
+      const values = new Uint8ClampedArray(width);
+      const data = imageData.data;
+      for (let x = 0; x < width; x += 1) {
+        const offset = (row * width + x) * 4;
+        values[x] = this.pixelChannel(data[offset], data[offset + 1], data[offset + 2], channel);
+      }
+      return values;
+    }
+
+    averagedChroma(imageData, firstRow, secondRow, channel) {
+      const width = imageData.width;
+      const values = new Uint8ClampedArray(width);
+      const data = imageData.data;
+      const rowB = Math.min(imageData.height - 1, secondRow);
+      for (let x = 0; x < width; x += 1) {
+        const a = (firstRow * width + x) * 4;
+        const b = (rowB * width + x) * 4;
+        values[x] = Math.round((
+          this.pixelChannel(data[a], data[a + 1], data[a + 2], channel)
+          + this.pixelChannel(data[b], data[b + 1], data[b + 2], channel)
+        ) / 2);
+      }
+      return values;
+    }
+
+    pixelChannel(red, green, blue, channel) {
+      if (channel === "red") return red;
+      if (channel === "green") return green;
+      if (channel === "blue") return blue;
+      if (channel === "y") return clamp(Math.round(0.299 * red + 0.587 * green + 0.114 * blue), 0, 255);
+      if (channel === "cb") return clamp(Math.round(128 - 0.168736 * red - 0.331264 * green + 0.5 * blue), 0, 255);
+      if (channel === "cr") return clamp(Math.round(128 + 0.5 * red - 0.418688 * green - 0.081312 * blue), 0, 255);
+      return 0;
+    }
+
+    report(callbacks, line, total) {
+      callbacks.progress?.({ line, total });
+    }
+
+    appendMartin(mode, imageData, callbacks) {
+      for (let row = 0; row < mode.height; row += 1) {
+        this.appendTone(1200, mode.syncMs);
+        this.appendTone(1500, mode.porchMs);
+        this.appendVideo(this.rowChannel(imageData, row, "green"), mode.channelMs);
+        this.appendTone(1500, mode.separatorMs);
+        this.appendVideo(this.rowChannel(imageData, row, "blue"), mode.channelMs);
+        this.appendTone(1500, mode.separatorMs);
+        this.appendVideo(this.rowChannel(imageData, row, "red"), mode.channelMs);
+        this.appendTone(1500, mode.separatorMs);
+        if ((row & 15) === 0 || row + 1 >= mode.height) this.report(callbacks, row + 1, mode.height);
+      }
+    }
+
+    appendScottie(mode, imageData, callbacks) {
+      for (let row = 0; row < mode.height; row += 1) {
+        this.appendTone(1500, mode.separatorMs);
+        this.appendVideo(this.rowChannel(imageData, row, "green"), mode.channelMs);
+        this.appendTone(1500, mode.separatorMs);
+        this.appendVideo(this.rowChannel(imageData, row, "blue"), mode.channelMs);
+        this.appendTone(1200, mode.syncMs);
+        this.appendTone(1500, mode.porchMs);
+        this.appendVideo(this.rowChannel(imageData, row, "red"), mode.channelMs);
+        if ((row & 15) === 0 || row + 1 >= mode.height) this.report(callbacks, row + 1, mode.height);
+      }
+    }
+
+    appendRobot36(mode, imageData, callbacks) {
+      for (let row = 0; row < mode.height; row += 1) {
+        this.appendTone(1200, mode.syncMs);
+        this.appendTone(1500, mode.porchMs);
+        this.appendVideo(this.rowChannel(imageData, row, "y"), mode.yMs);
+        this.appendTone(1500, mode.separatorMs);
+        this.appendTone(1900, mode.separatorPorchMs);
+        this.appendVideo(this.rowChannel(imageData, row, (row & 1) ? "cb" : "cr"), mode.chromaMs);
+        if ((row & 15) === 0 || row + 1 >= mode.height) this.report(callbacks, row + 1, mode.height);
+      }
+    }
+
+    appendRobot72(mode, imageData, callbacks) {
+      for (let row = 0; row < mode.height; row += 1) {
+        this.appendTone(1200, mode.syncMs);
+        this.appendTone(1500, mode.porchMs);
+        this.appendVideo(this.rowChannel(imageData, row, "y"), mode.yMs);
+        this.appendTone(1500, mode.separatorMs);
+        this.appendTone(1900, mode.separatorPorchMs);
+        this.appendVideo(this.rowChannel(imageData, row, "cr"), mode.crMs);
+        this.appendTone(1500, mode.separatorMs);
+        this.appendTone(1900, mode.separatorPorchMs);
+        this.appendVideo(this.rowChannel(imageData, row, "cb"), mode.cbMs);
+        if ((row & 15) === 0 || row + 1 >= mode.height) this.report(callbacks, row + 1, mode.height);
+      }
+    }
+
+    appendPd(mode, imageData, callbacks) {
+      const totalRows = mode.height;
+      for (let row = 0; row < totalRows; row += 2) {
+        const secondRow = Math.min(totalRows - 1, row + 1);
+        this.appendTone(1200, mode.syncMs);
+        this.appendTone(1500, mode.porchMs);
+        this.appendVideo(this.rowChannel(imageData, row, "y"), mode.channelMs);
+        this.appendVideo(this.averagedChroma(imageData, row, secondRow, "cr"), mode.channelMs);
+        this.appendVideo(this.averagedChroma(imageData, row, secondRow, "cb"), mode.channelMs);
+        this.appendVideo(this.rowChannel(imageData, secondRow, "y"), mode.channelMs);
+        if ((row & 15) === 0 || row + 2 >= totalRows) this.report(callbacks, Math.min(totalRows, row + 2), totalRows);
+      }
+    }
+  }
 
   class SSTVDecoder {
     constructor(callbacks = {}) {
@@ -1121,8 +1420,10 @@
 
   const controller = {
     DecoderClass: SSTVDecoder,
+    EncoderClass: SSTVEncoder,
     HistoryClass: AudioHistory,
     Modes: MODES,
+    TxModeKeys: SSTV_TX_MODE_KEYS,
     initialized: false,
     audioReady: false,
     decoder: null,
@@ -1148,6 +1449,11 @@
     replayScheduled: false,
     suggestedModeKey: null,
     enabledWanted: false,
+    txImageSource: null,
+    txImageUrl: "",
+    txImageName: "",
+    txBusy: false,
+    txAbortRequested: false,
 
     init() {
       if (this.initialized) return;
@@ -1163,13 +1469,27 @@
       this.frameContexts = [this.context];
       const modeSelect = byId("sstv-mode");
       const enabled = byId("sstv-enabled");
+      const txMode = byId("sstv-tx-mode");
+
+      if (txMode && txMode.options.length === 0) {
+        for (const key of SSTV_TX_MODE_KEYS) {
+          const mode = MODES[key];
+          const option = document.createElement("option");
+          option.value = key;
+          option.textContent = `${mode.label} · ${this.formatDuration(sstvTxDurationSeconds(mode))}`;
+          txMode.appendChild(option);
+        }
+      }
 
       try {
         const savedMode = localStorage.getItem("ft710-sstv-mode-v1");
         if (savedMode && MODES[savedMode]) modeSelect.value = savedMode;
+        const savedTxMode = localStorage.getItem("ft710-sstv-tx-mode-v1");
+        if (savedTxMode && SSTV_TX_SUPPORTED.has(savedTxMode) && txMode) txMode.value = savedTxMode;
         this.enabledWanted = localStorage.getItem("ft710-sstv-enabled-v1") === "1";
       } catch (_) { /* Local storage is optional. */ }
       if (!MODES[modeSelect.value]) modeSelect.value = "scottie1";
+      if (txMode && !SSTV_TX_SUPPORTED.has(txMode.value)) txMode.value = "robot36";
 
       this.canvasWrap.addEventListener("scroll", () => {
         if (this.programmaticScroll) return;
@@ -1253,13 +1573,259 @@
 
       byId("sstv-freeze").addEventListener("click", () => this.toggleFreeze());
       byId("sstv-save").addEventListener("click", () => this.saveVisiblePng());
+      byId("sstv-image-choose")?.addEventListener("click", () => byId("sstv-image-file")?.click());
+      byId("sstv-image-file")?.addEventListener("change", (event) => {
+        const file = event.target.files?.[0];
+        if (file) void this.loadTxImage(file);
+      });
+      txMode?.addEventListener("change", () => {
+        if (!SSTV_TX_SUPPORTED.has(txMode.value)) txMode.value = "robot36";
+        try { localStorage.setItem("ft710-sstv-tx-mode-v1", txMode.value); } catch (_) { /* optional */ }
+        this.drawTxPreview();
+        this.renderTxUi();
+      });
+      byId("sstv-send-form")?.addEventListener("submit", (event) => {
+        event.preventDefault();
+        void this.transmitSelectedImage();
+      });
+      byId("sstv-stop")?.addEventListener("click", () => this.stopTransmit());
 
       modeSelect.disabled = true;
       enabled.disabled = true;
       byId("sstv-freeze").disabled = true;
       this.prepareCanvas(this.frameWidth, this.frameHeight);
       this.updateBufferUi();
+      this.drawTxPreview();
+      this.renderTxUi();
       this.render();
+    },
+
+    selectedTxMode() {
+      const key = byId("sstv-tx-mode")?.value || "robot36";
+      return MODES[key] && SSTV_TX_SUPPORTED.has(key) ? MODES[key] : MODES.robot36;
+    },
+
+    releaseTxImage() {
+      if (this.txImageSource?.close) {
+        try { this.txImageSource.close(); } catch (_) { /* already closed */ }
+      }
+      if (this.txImageUrl) URL.revokeObjectURL(this.txImageUrl);
+      this.txImageSource = null;
+      this.txImageUrl = "";
+      this.txImageName = "";
+    },
+
+    async loadImageSource(file) {
+      const imageLike = file && (/^image\//i.test(file.type || "") || /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || ""));
+      if (!imageLike) throw new Error("Select an image file");
+      if (window.createImageBitmap) {
+        try {
+          return { source: await window.createImageBitmap(file), url: "" };
+        } catch (_) {
+          // Some browsers refuse createImageBitmap for formats they can still
+          // decode through an HTMLImageElement.
+        }
+      }
+      const url = URL.createObjectURL(file);
+      try {
+        const image = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error("Unable to decode image"));
+          img.src = url;
+        });
+        return { source: image, url };
+      } catch (error) {
+        URL.revokeObjectURL(url);
+        throw error;
+      }
+    },
+
+    async loadTxImage(file) {
+      this.txStatus(`Loading ${file.name}...`);
+      try {
+        const loaded = await this.loadImageSource(file);
+        this.releaseTxImage();
+        this.txImageSource = loaded.source;
+        this.txImageUrl = loaded.url;
+        this.txImageName = file.name || "image";
+        this.drawTxPreview();
+        this.renderTxUi();
+      } catch (error) {
+        this.renderTxUi();
+        this.txStatus(error?.message || "Image load failed", true);
+      }
+    },
+
+    drawImageCover(context, source, width, height) {
+      context.fillStyle = "#05080c";
+      context.fillRect(0, 0, width, height);
+      if (!source) return;
+      const sourceWidth = source.width || source.naturalWidth || 1;
+      const sourceHeight = source.height || source.naturalHeight || 1;
+      const scale = Math.max(width / sourceWidth, height / sourceHeight);
+      const drawWidth = sourceWidth * scale;
+      const drawHeight = sourceHeight * scale;
+      const dx = (width - drawWidth) / 2;
+      const dy = (height - drawHeight) / 2;
+      context.drawImage(source, dx, dy, drawWidth, drawHeight);
+    },
+
+    drawTxPreview() {
+      const canvas = byId("sstv-tx-preview");
+      if (!canvas) return;
+      const mode = this.selectedTxMode();
+      canvas.width = mode.width;
+      canvas.height = mode.height;
+      const wrap = byId("sstv-tx-preview-wrap");
+      wrap?.style.setProperty("--sstv-frame-width", String(mode.width));
+      wrap?.style.setProperty("--sstv-frame-height", String(mode.height));
+      const ctx = canvas.getContext("2d", { alpha: false });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      this.drawImageCover(ctx, this.txImageSource, mode.width, mode.height);
+      if (!this.txImageSource) {
+        ctx.fillStyle = "#8fa2b5";
+        ctx.font = "16px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("No image selected", mode.width / 2, mode.height / 2);
+      }
+    },
+
+    txImageData(mode) {
+      if (!this.txImageSource) throw new Error("Choose an image first");
+      const canvas = document.createElement("canvas");
+      canvas.width = mode.width;
+      canvas.height = mode.height;
+      const ctx = canvas.getContext("2d", { alpha: false });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      this.drawImageCover(ctx, this.txImageSource, mode.width, mode.height);
+      return ctx.getImageData(0, 0, mode.width, mode.height);
+    },
+
+    txStatus(text, isError = false) {
+      const detail = byId("sstv-tx-detail");
+      if (!detail) return;
+      detail.textContent = text;
+      detail.classList.toggle("error", Boolean(isError));
+    },
+
+    renderTxUi() {
+      const choose = byId("sstv-image-choose");
+      const send = byId("sstv-send");
+      const stop = byId("sstv-stop");
+      const modeSelect = byId("sstv-tx-mode");
+      const bridge = window.FT710_AUDIO_BRIDGE;
+      const bridgeReady = Boolean(bridge?.isReady?.());
+      const stagedReady = Boolean(bridge?.supportsStagedDigitalTx?.());
+      const tuneReady = Boolean(bridge?.supportsDigitalAlcTune?.());
+      const mode = this.selectedTxMode();
+      const bytes = sstvTxByteEstimate(mode);
+      const byteLabel = `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+      const durationLabel = this.formatDuration(sstvTxDurationSeconds(mode));
+      if (choose) choose.disabled = this.txBusy;
+      if (modeSelect) modeSelect.disabled = this.txBusy;
+      if (send) send.disabled = this.txBusy || !this.txImageSource || !bridgeReady || !stagedReady || !tuneReady || bytes > SSTV_TX_MAX_BYTES;
+      if (stop) stop.disabled = !this.txBusy;
+      if (this.txBusy) return;
+      if (!this.txImageSource) {
+        this.txStatus(`Choose image · ${mode.label} · ${durationLabel} · ${byteLabel}`);
+      } else if (bytes > SSTV_TX_MAX_BYTES) {
+        this.txStatus(`${mode.label} exceeds staged TX limit · ${byteLabel}`, true);
+      } else if (!bridgeReady) {
+        this.txStatus(`${this.txImageName} · enable audio before SSTV TX`);
+      } else if (!stagedReady) {
+        this.txStatus("ESP32 firmware does not advertise staged digital TX", true);
+      } else if (!tuneReady) {
+        this.txStatus("ESP32 firmware does not advertise bounded ALC tune", true);
+      } else {
+        this.txStatus(`${this.txImageName} · ${mode.label} · ${durationLabel} · ${byteLabel} · auto ALC`);
+      }
+    },
+
+    async transmitSelectedImage() {
+      if (this.txBusy) return;
+      const bridge = window.FT710_AUDIO_BRIDGE;
+      const mode = this.selectedTxMode();
+      const label = `SSTV ${mode.label}`;
+      let finalStatus = "";
+      let finalError = false;
+
+      try {
+        if (!this.txImageSource) throw new Error("Choose an image first");
+        if (!bridge?.isReady?.()) throw new Error("Enable audio first");
+        if (!bridge?.supportsStagedDigitalTx?.()) throw new Error("ESP32 firmware does not advertise staged digital TX");
+        if (!bridge?.supportsDigitalAlcTune?.()) throw new Error("ESP32 firmware does not advertise bounded ALC tune");
+        if (sstvTxByteEstimate(mode) > SSTV_TX_MAX_BYTES) throw new Error(`${mode.label} exceeds staged TX limit`);
+
+        this.txBusy = true;
+        this.txAbortRequested = false;
+        this.renderTxUi();
+
+        const calibration = await bridge.calibrateDigitalAlc({
+          shouldAbort: () => this.txAbortRequested,
+          onStatus: (text) => this.txStatus(text),
+        });
+        if (this.txAbortRequested) throw new Error("SSTV TX stopped");
+        const levelDbfs = Number.isFinite(Number(calibration?.levelDbfs))
+          ? Number(calibration.levelDbfs)
+          : SSTV_TX_DEFAULT_LEVEL_DBFS;
+        this.txStatus(`Encoding ${label} · TX audio ${levelDbfs.toFixed(1)} dBFS`);
+        await new Promise((resolve) => window.setTimeout(resolve, 20));
+
+        const imageData = this.txImageData(mode);
+        const encoder = new SSTVEncoder({ levelDbfs });
+        const pcm = encoder.build(mode.key, imageData, {
+          progress: ({ line, total }) => {
+            if ((line & 31) === 1 || line >= total) this.txStatus(`Encoding ${label} · ${line}/${total} rows`);
+          },
+        });
+        if (this.txAbortRequested) throw new Error("SSTV TX stopped");
+        if (pcm.byteLength > SSTV_TX_MAX_BYTES) throw new Error(`${mode.label} exceeds staged TX limit`);
+
+        this.txStatus(`Uploading ${label} · ${(pcm.byteLength / 1024 / 1024).toFixed(1)} MiB`);
+        const staged = await bridge.stageDigitalPcm(pcm, {
+          label,
+          shouldAbort: () => this.txAbortRequested,
+          onProgress: ({ sentBytes, totalBytes }) => {
+            const percent = Math.round(sentBytes * 100 / Math.max(1, totalBytes));
+            this.txStatus(`Uploading ${label} · ${percent}%`);
+          },
+        });
+        if (this.txAbortRequested) throw new Error("SSTV TX stopped");
+
+        this.txStatus(`Transmitting ${label} · ${this.formatDuration(pcm.length / SSTV_TX_SAMPLE_RATE)}`);
+        await bridge.playStagedDigitalPcm(staged, pcm.length, {
+          label,
+          pttDelayMs: 350,
+          tailMs: 300,
+        });
+        finalStatus = `SSTV TX complete · ${mode.label}`;
+      } catch (error) {
+        if (this.txAbortRequested) {
+          finalStatus = `SSTV TX stopped · ${mode.label}`;
+        } else {
+          finalStatus = error?.message || "SSTV TX failed";
+          finalError = true;
+          window.showToast?.(finalStatus, true);
+        }
+      } finally {
+        this.txBusy = false;
+        this.txAbortRequested = false;
+        this.renderTxUi();
+        if (finalStatus) this.txStatus(finalStatus, finalError);
+      }
+    },
+
+    stopTransmit() {
+      if (!this.txBusy) return;
+      this.txAbortRequested = true;
+      byId("sstv-stop").disabled = true;
+      this.txStatus("Stopping SSTV TX...");
+      window.FT710_AUDIO_BRIDGE?.stopDigitalAlcTune?.();
+      window.FT710_AUDIO_BRIDGE?.stopStagedDigitalTx?.();
     },
 
     setAudioReady(ready) {
@@ -1284,6 +1850,7 @@
         byId("sstv-signal").textContent = "Tone -- Hz · waiting for audio";
       }
       this.updateBufferUi();
+      this.renderTxUi();
       this.render();
     },
 
