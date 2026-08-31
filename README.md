@@ -1,6 +1,6 @@
 # FreeRig710
 
-**FreeRig710** is a self-hosted browser station for the **Yaesu FT-710**, built around a **Waveshare ESP32-P4-NANO**. The ESP32-P4 handles CAT, USB audio, the FT-710 external-display capture, the HTTP/WebSocket API and the guarded transmit path; the browser provides the radio UI plus FT8, JS8 and Winlink/ARDOP operating consoles.
+**FreeRig710** is a self-hosted browser station for the **Yaesu FT-710**, built around a **Waveshare ESP32-P4-NANO**. The ESP32-P4 handles CAT, USB audio, the FT-710 external-display capture, the HTTP/WebSocket API and the guarded transmit path; the browser provides the radio UI plus FT8, JS8, RTTY and Winlink/ARDOP operating consoles.
 
 > **RF safety:** this software can key a real transmitter. Start at low power or into a dummy load, verify CAT/PTT/audio behavior locally, and do not expose the ESP32 HTTP port directly to the public Internet.
 
@@ -32,6 +32,7 @@ FreeRig710 is not affiliated with or endorsed by Yaesu. "Yaesu" and "FT-710" ide
 - [Main interface](docs/MAIN_INTERFACE.md) - radio display, VFOs, receiver controls, audio/PTT, memories, CW/SSTV and settings.
 - [FT8](docs/FT8.md) - integrated browser FT8 operation, waterfall, QSO automation and local/QRZ logging.
 - [JS8](docs/JS8.md) - native browser JS8 operation, heartbeat replies, directed messages and QRZ ADIF mapping.
+- [RTTY](docs/RTTY.md) - browser Baudot/ITA2 AFSK decode and staged digital audio transmit.
 - [Winlink / ARDOP](docs/WINLINK.md) - browser Winlink client, gateway CSV import, dial/center frequency handling and DL2MAN credits.
 - [QRZ Logbook](docs/QRZ_LOGBOOK.md) - QRZ API key storage, QSO upload, import and sync.
 - [Apache deployment](docs/APACHE.md) - HTTPS reverse proxy and form-login protection.

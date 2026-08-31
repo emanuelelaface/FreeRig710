@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FreeRig710 · Yaesu FT-710</title>
-  <link rel="stylesheet" href="styles.css?v=1.0-radio-audio-levels1">
+  <link rel="stylesheet" href="styles.css?v=1.0-rtty2">
 </head>
 <body>
   <main class="shell">
@@ -17,6 +17,7 @@
         <div class="station-actions" aria-label="Station power controls">
           <a id="ft8-open-button" class="station-button ft8-launch-button" href="ft8.html" target="freerig710-ft8">FT8</a>
           <a id="js8-open-button" class="station-button js8-launch-button" href="js8.html" target="freerig710-js8">JS8</a>
+          <a id="rtty-open-button" class="station-button rtty-launch-button" href="rtty.html" target="freerig710-rtty">RTTY</a>
           <a id="winlink-open-button" class="station-button winlink-launch-button" href="winlink.html" target="freerig710-winlink">Winlink</a>
           <button id="settings-button" class="station-button settings-button" type="button" aria-label="Settings" title="Settings"><span class="settings-button-icon" aria-hidden="true">⚙</span></button>
           <button id="radio-power-button" class="station-button power-button" type="button" disabled>POWER…</button>
@@ -80,7 +81,7 @@
             <input id="settings-wireguard-enable" type="checkbox">
           </label>
           <p id="settings-wireguard-status" class="help" aria-live="polite">WireGuard settings are stored on the ESP32.</p>
-          <p id="settings-status" class="help" aria-live="polite">Settings are shared by Radio, FT8, JS8 and Winlink.</p>
+          <p id="settings-status" class="help" aria-live="polite">Settings are shared by Radio, FT8, JS8, RTTY and Winlink.</p>
           <div class="settings-actions">
             <button id="settings-save" type="submit">Save Settings</button>
             <button id="settings-cancel" type="button">Cancel</button>

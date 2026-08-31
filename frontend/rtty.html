@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FreeRig710 · RTTY</title>
+  <link rel="stylesheet" href="styles.css?v=1.0-rtty3">
+  <link rel="stylesheet" href="rtty-page.css?v=1.0-rtty3">
+</head>
+<body class="rtty-page-body">
+  <main class="rtty-page-shell">
+    <header class="rtty-page-header">
+      <div class="rtty-title-block">
+        <p class="eyebrow">FREERIG710 · YAESU FT-710</p>
+        <h1>RTTY Operating Console</h1>
+      </div>
+      <div class="rtty-header-status" aria-label="RTTY operating status">
+        <span id="rtty-radio-state" class="rtty-page-pill">RADIO --</span>
+        <span id="rtty-audio-state" class="rtty-page-pill">AUDIO OFF</span>
+        <span id="rtty-rx-state" class="rtty-page-pill">RX OFF</span>
+        <span id="rtty-tx-state" class="rtty-page-pill">TX IDLE</span>
+        <span id="rtty-clock-state" class="rtty-page-pill">CLOCK --</span>
+        <a class="station-button rtty-back-button" href="index.html">Main radio</a>
+      </div>
+    </header>
+
+    <section class="card rtty-waterfall-card" aria-label="RTTY waterfall">
+      <div class="rtty-section-title rtty-waterfall-title">
+        <strong>Waterfall · 200-3000 Hz</strong>
+        <span id="rtty-tone-label">Mark 2125 Hz · Space 2295 Hz</span>
+      </div>
+      <div class="rtty-axis rtty-axis-top" aria-hidden="true">
+        <span style="--rtty-axis-left:0%">200</span><span style="--rtty-axis-left:14.29%">600</span><span style="--rtty-axis-left:28.57%">1000</span><span style="--rtty-axis-left:42.86%">1400</span><span style="--rtty-axis-left:57.14%">1800</span><span style="--rtty-axis-left:71.43%">2200</span><span style="--rtty-axis-left:85.71%">2600</span><span style="--rtty-axis-left:100%">3000 Hz</span>
+      </div>
+      <div class="rtty-waterfall-wrap" id="rtty-waterfall-hitbox">
+        <canvas id="rtty-waterfall" width="1200" height="210" aria-label="RTTY waterfall from 200 to 3000 Hz"></canvas>
+        <div id="rtty-mark-cursor" class="rtty-tone-cursor rtty-mark-cursor" aria-hidden="true"><span>MARK</span></div>
+        <div id="rtty-space-cursor" class="rtty-tone-cursor rtty-space-cursor" aria-hidden="true"><span>SPACE</span></div>
+      </div>
+      <div class="rtty-strip">
+        <div><span>UTC</span><strong id="rtty-utc">--:--:-- UTC</strong></div>
+        <div><span>Dial</span><strong id="rtty-rx-dial">--.---.---</strong></div>
+        <div><span>RX Level</span><strong id="rtty-audio-level">-- dBFS</strong></div>
+        <div><span>Mark/Space</span><strong id="rtty-mark-space">2125/2295</strong></div>
+        <div><span>Baud</span><strong id="rtty-baud-readout">45.45</strong></div>
+      </div>
+    </section>
+
+    <section class="card rtty-control-strip" aria-label="RTTY radio and modem controls">
+      <div class="rtty-band-button-row" id="rtty-band-buttons" aria-label="RTTY band selection">
+        <button type="button" data-band="160m">160</button><button type="button" data-band="80m">80</button><button type="button" data-band="40m">40</button><button type="button" data-band="30m">30</button><button type="button" data-band="20m">20</button><button type="button" data-band="17m">17</button><button type="button" data-band="15m">15</button><button type="button" data-band="12m">12</button><button type="button" data-band="10m">10</button><button type="button" data-band="6m">6</button>
+      </div>
+      <label class="rtty-native-band-select"><span>Band</span>
+        <select id="rtty-band-select">
+          <option value="">Select band...</option>
+        </select>
+      </label>
+      <div class="rtty-tune-row">
+        <label class="rtty-readout-box rtty-control-cell"><span>Dial MHz</span><input id="rtty-dial-mhz" type="number" min="0.1" max="75" step="0.000001" inputmode="decimal"></label>
+        <button id="rtty-tune-dial" type="button">Tune</button>
+        <button id="rtty-tune-preset" type="button">Preset</button>
+        <button id="rtty-auto-mark" type="button">Auto Mark</button>
+        <button id="rtty-auto-rx" type="button">Auto RX</button>
+      </div>
+      <div class="rtty-readouts">
+        <label class="rtty-readout-box rtty-control-cell"><span>Monitor</span><span class="rtty-switch-line"><input id="rtty-enabled" type="checkbox"><strong>RX</strong></span></label>
+        <label class="rtty-readout-box rtty-control-cell"><span>Radio Mode</span><select id="rtty-radio-mode"><option value="RTTY-U" selected>RTTY-U</option><option value="RTTY-L">RTTY-L</option><option value="DATA-U">DATA-U</option></select></label>
+        <label class="rtty-readout-box rtty-control-cell"><span>Audio Mark</span><input id="rtty-mark" type="number" min="200" max="2960" step="5" value="2125"></label>
+        <label class="rtty-readout-box rtty-control-cell"><span>Audio Shift</span><input id="rtty-shift" type="number" min="40" max="1200" step="5" value="170"></label>
+        <label class="rtty-readout-box rtty-control-cell"><span>Baud</span><select id="rtty-baud"><option value="45.45" selected>45.45</option><option value="50">50</option><option value="75">75</option><option value="100">100</option></select></label>
+        <label class="rtty-readout-box rtty-control-cell"><span>RX Reverse</span><span class="rtty-switch-line"><input id="rtty-rx-reverse" type="checkbox"><strong>INV</strong></span></label>
+        <label class="rtty-readout-box rtty-control-cell"><span>TX Reverse</span><span class="rtty-switch-line"><input id="rtty-tx-reverse" type="checkbox"><strong>INV</strong></span></label>
+        <label class="rtty-readout-box rtty-control-cell"><span>Unshift</span><span class="rtty-switch-line"><input id="rtty-unshift-space" type="checkbox" checked><strong>SPACE</strong></span></label>
+        <label class="rtty-readout-box rtty-control-cell"><span>Squelch</span><div class="rtty-inline-input"><input id="rtty-squelch" type="number" min="3" max="24" step="1" value="9"><strong>dB</strong></div></label>
+        <label class="rtty-readout-box rtty-control-cell"><span>TX Level</span><div class="rtty-inline-input"><input id="rtty-tx-level" type="number" min="-40" max="-12" step="1" value="-28"><strong>dBFS</strong></div></label>
+      </div>
+      <p id="rtty-radio-config-state" class="help rtty-operating-note">Select a band to configure RTTY mode. Tune changes the VFO.</p>
+    </section>
+
+    <section class="rtty-operating-layout">
+      <article class="card rtty-terminal-card">
+        <div class="rtty-section-title">
+          <strong>RX Text</strong>
+          <button id="rtty-clear-rx" class="secondary small" type="button">Clear</button>
+        </div>
+        <pre id="rtty-rx-text" class="rtty-terminal" aria-live="polite"></pre>
+        <dl class="status-list rtty-status-grid">
+          <div><dt>Decoder</dt><dd id="rtty-decoder-state">idle</dd></div>
+          <div><dt>Framing</dt><dd id="rtty-framing">0 errors</dd></div>
+          <div><dt>Signal</dt><dd id="rtty-signal">--</dd></div>
+        </dl>
+      </article>
+
+      <article class="card rtty-tx-card">
+        <div class="rtty-section-title"><strong>Transmit</strong><span id="rtty-last-tx">idle</span></div>
+        <div class="rtty-station-grid">
+          <label><span>My Call</span><input id="rtty-my-call" type="text" maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Set in Settings" readonly></label>
+          <label><span>Preset</span><select id="rtty-preset"><option value="">Blank</option><option value="cq">CQ</option><option value="de">DE</option><option value="ry">RY Test</option><option value="599">599</option></select></label>
+        </div>
+        <textarea id="rtty-message" rows="9" maxlength="650" spellcheck="true" placeholder="CQ CQ CQ DE MYCALL MYCALL K"></textarea>
+        <div class="rtty-tx-actions">
+          <button id="rtty-send" type="button" class="rtty-primary">Send RTTY</button>
+          <button id="rtty-send-cq" type="button">CQ</button>
+          <button id="rtty-send-ry" type="button">RY</button>
+          <button id="rtty-halt" type="button" class="danger" disabled>Halt TX</button>
+        </div>
+        <dl class="status-list rtty-tx-status">
+          <div><dt>TX status</dt><dd id="rtty-tx-detail">idle</dd></div>
+          <div><dt>Duration</dt><dd id="rtty-tx-duration">--</dd></div>
+          <div><dt>Staged</dt><dd id="rtty-staged-bytes">--</dd></div>
+        </dl>
+      </article>
+    </section>
+
+    <details class="card rtty-diagnostics-card">
+      <summary>Developer diagnostics</summary>
+      <pre id="rtty-log" class="rtty-log">RTTY page loading...</pre>
+    </details>
+
+    <p class="help rtty-page-footer-status">FreeRig710 · browser RTTY AFSK over the existing FT-710 CAT and staged digital audio path.</p>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <script src="config.js?v=1.0"></script>
+  <script src="settings.js?v=1.0-settings2"></script>
+  <script src="rtty-page.js?v=1.0-rtty3"></script>
+</body>
+</html>
