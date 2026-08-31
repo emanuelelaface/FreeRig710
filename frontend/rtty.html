@@ -26,10 +26,10 @@
 
     <section class="card rtty-waterfall-card" aria-label="RTTY waterfall">
       <div class="rtty-section-title rtty-waterfall-title">
-        <strong>Waterfall · 200-3000 Hz</strong>
+        <strong id="rtty-waterfall-range">Waterfall 2800 Hz · 200-3000</strong>
         <span id="rtty-tone-label">Mark 2125 Hz · Space 2295 Hz</span>
       </div>
-      <div class="rtty-axis rtty-axis-top" aria-hidden="true">
+      <div id="rtty-axis-top" class="rtty-axis rtty-axis-top" aria-hidden="true">
         <span style="--rtty-axis-left:0%">200</span><span style="--rtty-axis-left:14.29%">600</span><span style="--rtty-axis-left:28.57%">1000</span><span style="--rtty-axis-left:42.86%">1400</span><span style="--rtty-axis-left:57.14%">1800</span><span style="--rtty-axis-left:71.43%">2200</span><span style="--rtty-axis-left:85.71%">2600</span><span style="--rtty-axis-left:100%">3000 Hz</span>
       </div>
       <div class="rtty-waterfall-wrap" id="rtty-waterfall-hitbox">
@@ -64,7 +64,7 @@
       </div>
       <div class="rtty-readouts">
         <label class="rtty-readout-box rtty-control-cell"><span>Monitor</span><span class="rtty-switch-line"><input id="rtty-enabled" type="checkbox"><strong>RX</strong></span></label>
-        <label class="rtty-readout-box rtty-control-cell"><span>Radio Mode</span><select id="rtty-radio-mode"><option value="RTTY-U" selected>RTTY-U</option><option value="RTTY-L">RTTY-L</option><option value="DATA-U">DATA-U</option></select></label>
+        <label class="rtty-readout-box rtty-control-cell"><span>Radio Mode</span><select id="rtty-radio-mode"><option value="DATA-U" selected>DATA-U AFSK</option><option value="RTTY-U">RTTY-U FSK</option><option value="RTTY-L">RTTY-L FSK</option></select></label>
         <label class="rtty-readout-box rtty-control-cell"><span>Audio Mark</span><input id="rtty-mark" type="number" min="200" max="2960" step="5" value="2125"></label>
         <label class="rtty-readout-box rtty-control-cell"><span>Audio Shift</span><input id="rtty-shift" type="number" min="40" max="1200" step="5" value="170"></label>
         <label class="rtty-readout-box rtty-control-cell"><span>Baud</span><select id="rtty-baud"><option value="45.45" selected>45.45</option><option value="50">50</option><option value="75">75</option><option value="100">100</option></select></label>

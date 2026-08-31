@@ -6,10 +6,14 @@
   const DF_HIGH = 3000;
   const DEFAULT_MARK_HZ = 2125;
   const DEFAULT_SHIFT_HZ = 170;
+  const RTTY_FILTER_WIDTH_CODE = 0;
+  const RTTY_WATERFALL_SPAN_HZ = DF_HIGH - DF_LOW;
+  const RTTY_TX_TONE_RAMP_MS = 2;
   const DEFAULT_BAUD = 45.45;
   const DEFAULT_TX_LEVEL_DBFS = -28;
   const DEFAULT_SQUELCH_DB = 9;
-  const DEFAULT_RADIO_MODE = "RTTY-U";
+  const DEFAULT_RADIO_MODE = "DATA-U";
+  const RADIO_MODE_STORAGE_KEY = "freerig710-rtty-radio-mode-v2";
   const MAX_STAGED_BYTES = 12 * 1024 * 1024;
   const AUDIO_OWNER_CHANNEL = "freerig710-audio-owner-v1";
   const OWNER_ID = `rtty-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -263,6 +267,7 @@
       this.levelDbfs = clamp(Number(options.levelDbfs) || DEFAULT_TX_LEVEL_DBFS, -50, -1);
       this.amplitude = clamp(Math.round(32767 * Math.pow(10, this.levelDbfs / 20)), 1, 32767);
       this.phase = 0;
+      this.currentFrequency = NaN;
       this.symbolUnits = 0;
       this.offset = 0;
       this.pcm = new Int16Array(0);
@@ -276,6 +281,7 @@
       const totalSamples = Math.ceil(this.sampleRate * (preMs + postMs) / 1000 + this.sampleRate * symbolSeconds + this.sampleRate);
       this.pcm = new Int16Array(totalSamples);
       this.phase = 0;
+      this.currentFrequency = NaN;
       this.symbolUnits = 0;
       this.offset = 0;
       this.appendIdle(preMs);
@@ -308,7 +314,25 @@
     appendTone(frequency, count) {
       const samples = Math.max(0, Math.round(count));
       this.ensureRoom(samples);
-      for (let i = 0; i < samples; i += 1) this.writeSample(frequency);
+      const previous = Number.isFinite(this.currentFrequency) ? this.currentFrequency : frequency;
+      const bitSamples = Math.max(1, Math.round(this.sampleRate / this.baud));
+      const rampSamples = previous === frequency
+        ? 0
+        : Math.min(
+          samples,
+          Math.round(this.sampleRate * RTTY_TX_TONE_RAMP_MS / 1000),
+          Math.round(bitSamples * 0.18),
+        );
+      for (let i = 0; i < samples; i += 1) {
+        if (i < rampSamples) {
+          const t = (i + 1) / rampSamples;
+          const eased = 0.5 - 0.5 * Math.cos(Math.PI * t);
+          this.writeSample(previous + (frequency - previous) * eased);
+        } else {
+          this.writeSample(frequency);
+        }
+      }
+      this.currentFrequency = frequency;
     }
 
     appendIdle(milliseconds) {
@@ -719,6 +743,8 @@
     wfFloorDb: null,
     wfCeilDb: null,
     wfAfcDb: null,
+    wfDisplayLow: NaN,
+    wfDisplayHigh: NaN,
     wfWriteAccumulator: [],
     recentPcm: null,
     recentSampleRate: SAMPLE_RATE,
@@ -733,7 +759,7 @@
     [
       "rtty-radio-state", "rtty-audio-state", "rtty-rx-state", "rtty-tx-state",
       "rtty-clock-state", "rtty-waterfall", "rtty-waterfall-hitbox",
-      "rtty-mark-cursor", "rtty-space-cursor", "rtty-tone-label", "rtty-auto-mark",
+      "rtty-waterfall-range", "rtty-axis-top", "rtty-mark-cursor", "rtty-space-cursor", "rtty-tone-label", "rtty-auto-mark",
       "rtty-auto-rx", "rtty-utc",
       "rtty-rx-dial", "rtty-audio-level", "rtty-mark-space", "rtty-baud-readout",
       "rtty-band-buttons", "rtty-band-select", "rtty-dial-mhz", "rtty-tune-dial",
@@ -771,7 +797,7 @@
 
   function selectedRadioMode() {
     const mode = String(elements["rtty-radio-mode"]?.value || DEFAULT_RADIO_MODE).toUpperCase();
-    return mode === "RTTY-L" || mode === "DATA-U" ? mode : DEFAULT_RADIO_MODE;
+    return mode === "RTTY-L" || mode === "DATA-U" || mode === "RTTY-U" ? mode : DEFAULT_RADIO_MODE;
   }
 
   function selectedRadioModeForValue(value) {
@@ -791,7 +817,8 @@
       localStorage.setItem("freerig710-rtty-tx-reverse-v1", options.txReverse ? "1" : "0");
       localStorage.setItem("freerig710-rtty-unshift-space-v1", options.unshiftOnSpace ? "1" : "0");
       localStorage.setItem("freerig710-rtty-tx-level-v1", String(options.levelDbfs));
-      localStorage.setItem("freerig710-rtty-radio-mode-v1", selectedRadioMode());
+      localStorage.setItem(RADIO_MODE_STORAGE_KEY, selectedRadioMode());
+      localStorage.removeItem("freerig710-rtty-radio-mode-v1");
     } catch {
       // localStorage is optional.
     }
@@ -805,7 +832,7 @@
       const baud = Number(localStorage.getItem("freerig710-rtty-baud-v1"));
       const squelch = Number(localStorage.getItem("freerig710-rtty-squelch-db-v1"));
       const level = Number(localStorage.getItem("freerig710-rtty-tx-level-v1"));
-      const radioMode = String(localStorage.getItem("freerig710-rtty-radio-mode-v1") || "").toUpperCase();
+      const radioMode = String(localStorage.getItem(RADIO_MODE_STORAGE_KEY) || "").toUpperCase();
       if (radioMode && elements["rtty-radio-mode"]) elements["rtty-radio-mode"].value = selectedRadioModeForValue(radioMode);
       if (Number.isFinite(mark) && elements["rtty-mark"]) elements["rtty-mark"].value = String(clamp(mark, DF_LOW, DF_HIGH - 40));
       if (Number.isFinite(shift) && elements["rtty-shift"]) elements["rtty-shift"].value = String(clamp(shift, 40, 1200));
@@ -832,6 +859,12 @@
 
   function updateToneUi() {
     const options = modemOptions();
+    const range = waterfallRangeForOptions(options);
+    const low = Math.round(range.low);
+    const high = Math.round(range.high);
+    const rangeChanged = state.wfDisplayLow !== low || state.wfDisplayHigh !== high;
+    state.wfDisplayLow = low;
+    state.wfDisplayHigh = high;
     if (elements["rtty-mark"]) elements["rtty-mark"].value = String(Math.round(options.markHz));
     if (elements["rtty-shift"]) elements["rtty-shift"].value = String(Math.round(options.shiftHz));
     if (elements["rtty-baud"]) elements["rtty-baud"].value = String(options.baud);
@@ -840,10 +873,12 @@
     if (elements["rtty-tone-label"]) elements["rtty-tone-label"].textContent = `Mark ${Math.round(options.markHz)} Hz - Space ${Math.round(options.markHz + options.shiftHz)} Hz`;
     if (elements["rtty-mark-space"]) elements["rtty-mark-space"].textContent = `${Math.round(options.markHz)}/${Math.round(options.markHz + options.shiftHz)}`;
     if (elements["rtty-baud-readout"]) elements["rtty-baud-readout"].textContent = String(options.baud);
-    const markLeft = (options.markHz - DF_LOW) * 100 / (DF_HIGH - DF_LOW);
-    const spaceLeft = (options.markHz + options.shiftHz - DF_LOW) * 100 / (DF_HIGH - DF_LOW);
+    renderWaterfallAxis(range);
+    const markLeft = (options.markHz - range.low) * 100 / range.span;
+    const spaceLeft = (options.markHz + options.shiftHz - range.low) * 100 / range.span;
     if (elements["rtty-mark-cursor"]) elements["rtty-mark-cursor"].style.left = `${clamp(markLeft, 0, 100)}%`;
     if (elements["rtty-space-cursor"]) elements["rtty-space-cursor"].style.left = `${clamp(spaceLeft, 0, 100)}%`;
+    if (rangeChanged && state.wfCtx) buildWaterfall();
     if (state.decoder) state.decoder.configure(options);
   }
 
@@ -938,6 +973,40 @@
     }
   }
 
+  function waterfallRangeForOptions(options = modemOptions()) {
+    const span = Math.min(RTTY_WATERFALL_SPAN_HZ, DF_HIGH - DF_LOW);
+    const center = Number(options.markHz) + Number(options.shiftHz) / 2;
+    const low = clamp(Math.round((center - span / 2) / 5) * 5, DF_LOW, DF_HIGH - span);
+    return { low, high: low + span, span };
+  }
+
+  function currentWaterfallRange() {
+    const low = Number(state.wfDisplayLow);
+    const high = Number(state.wfDisplayHigh);
+    if (Number.isFinite(low) && Number.isFinite(high) && high > low) {
+      return { low, high, span: high - low };
+    }
+    return waterfallRangeForOptions();
+  }
+
+  function renderWaterfallAxis(range) {
+    const title = elements["rtty-waterfall-range"];
+    const axis = elements["rtty-axis-top"];
+    const low = Math.round(range.low);
+    const high = Math.round(range.high);
+    if (title) title.textContent = `Waterfall ${range.span} Hz - ${low}-${high}`;
+    if (elements["rtty-waterfall"]) {
+      elements["rtty-waterfall"].setAttribute("aria-label", `RTTY waterfall from ${low} to ${high} Hz`);
+    }
+    if (!axis) return;
+    const ticks = range.span >= 2000 ? 7 : 5;
+    axis.innerHTML = Array.from({ length: ticks + 1 }, (_, index) => {
+      const left = index * 100 / ticks;
+      const hz = Math.round(range.low + range.span * index / ticks);
+      return `<span style="--rtty-axis-left:${left}%">${hz}${index === ticks ? " Hz" : ""}</span>`;
+    }).join("");
+  }
+
   async function configureRadioForRtty(options = {}) {
     const band = RTTY_BANDS.find((item) => item.label === state.activeBand);
     if (!band || state.configuring) return;
@@ -966,7 +1035,7 @@
       await post("/api/v1/radio/noise-blanker", { enabled: false }).catch(() => null);
       await post("/api/v1/radio/auto-notch", { enabled: false }).catch(() => null);
       await post("/api/v1/radio/filter", {
-        width_code: 19,
+        width_code: RTTY_FILTER_WIDTH_CODE,
         shift_hz: 0,
         manual_notch_enabled: false,
         contour_enabled: false,
@@ -1337,6 +1406,13 @@
       showToast("Select an RTTY band before TX", true);
       return;
     }
+    const radioMode = selectedRadioMode();
+    if (radioMode !== "DATA-U") {
+      const message = "RTTY TX uses AFSK audio: select DATA-U for transmit. RTTY-U/RTTY-L need native FSK keying.";
+      showToast(message, true);
+      log(message, "warn");
+      return;
+    }
     state.txBusy = true;
     state.txAbort = false;
     const resumeRx = state.rxEnabled;
@@ -1547,12 +1623,13 @@
     }
     const width = canvas.width;
     const height = canvas.height;
+    const range = currentWaterfallRange();
     const image = ctx.getImageData(0, 0, width, Math.max(1, height - 1));
     ctx.putImageData(image, 0, 1);
     const row = ctx.createImageData(width, 1);
     const rowDb = new Float32Array(width);
     for (let x = 0; x < width; x += 1) {
-      const freq = DF_LOW + x * (DF_HIGH - DF_LOW) / Math.max(1, width - 1);
+      const freq = range.low + x * range.span / Math.max(1, width - 1);
       const bin = freq * WATERFALL_FFT_SIZE / RX_WF_RATE;
       const lower = clamp(Math.floor(bin), 0, state.wfSpectrumDb.length - 2);
       const frac = bin - lower;
@@ -1563,9 +1640,9 @@
     if (targetCeil - targetFloor < 18) targetCeil = targetFloor + 18;
     state.wfFloorDb = state.wfFloorDb === null ? targetFloor : state.wfFloorDb * 0.86 + targetFloor * 0.14;
     state.wfCeilDb = state.wfCeilDb === null ? targetCeil : state.wfCeilDb * 0.8 + targetCeil * 0.2;
-    const range = Math.max(12, state.wfCeilDb - state.wfFloorDb);
+    const contrastRange = Math.max(12, state.wfCeilDb - state.wfFloorDb);
     for (let x = 0; x < width; x += 1) {
-      const hot = clamp((rowDb[x] - state.wfFloorDb) / range, 0, 1);
+      const hot = clamp((rowDb[x] - state.wfFloorDb) / contrastRange, 0, 1);
       const [r, g, b] = waterfallColor(hot);
       const idx = x * 4;
       row.data[idx] = r;
@@ -1586,9 +1663,10 @@
 
   function waterfallBandFloorDb(spectrum = state.wfAfcDb || state.wfSpectrumDb) {
     if (!spectrum?.length) return NaN;
+    const range = currentWaterfallRange();
     const values = [];
-    const first = Math.max(1, Math.floor(DF_LOW * WATERFALL_FFT_SIZE / RX_WF_RATE));
-    const last = Math.min(spectrum.length - 1, Math.ceil(DF_HIGH * WATERFALL_FFT_SIZE / RX_WF_RATE));
+    const first = Math.max(1, Math.floor(range.low * WATERFALL_FFT_SIZE / RX_WF_RATE));
+    const last = Math.min(spectrum.length - 1, Math.ceil(range.high * WATERFALL_FFT_SIZE / RX_WF_RATE));
     for (let i = first; i <= last; i += 1) values.push(spectrum[i]);
     return sampledPercentile(values, 0.45);
   }
@@ -1599,8 +1677,9 @@
     if (!spectrum?.length) return null;
     const floor = waterfallBandFloorDb(spectrum);
     if (!Number.isFinite(floor)) return null;
+    const range = currentWaterfallRange();
     let best = null;
-    for (let markHz = DF_LOW; markHz <= DF_HIGH - shift; markHz += 5) {
+    for (let markHz = Math.ceil(range.low / 5) * 5; markHz <= range.high - shift; markHz += 5) {
       const markDb = spectrumDbAt(markHz, spectrum);
       const spaceDb = spectrumDbAt(markHz + shift, spectrum);
       if (!Number.isFinite(markDb) || !Number.isFinite(spaceDb)) continue;
@@ -1678,7 +1757,8 @@
     const rect = hitbox.getBoundingClientRect();
     const ratio = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
     const shift = modemOptions().shiftHz;
-    return clamp(Math.round((DF_LOW + ratio * (DF_HIGH - DF_LOW)) / 5) * 5, DF_LOW, DF_HIGH - shift);
+    const range = currentWaterfallRange();
+    return clamp(Math.round((range.low + ratio * range.span) / 5) * 5, range.low, range.high - shift);
   }
 
   function bindEvents() {
@@ -1795,6 +1875,9 @@
       FIGURES_SHIFT,
       DEFAULT_MARK_HZ,
       DEFAULT_SHIFT_HZ,
+      RTTY_FILTER_WIDTH_CODE,
+      RTTY_WATERFALL_SPAN_HZ,
+      RTTY_TX_TONE_RAMP_MS,
       DEFAULT_BAUD,
       DEFAULT_SQUELCH_DB,
       DEFAULT_RADIO_MODE,
