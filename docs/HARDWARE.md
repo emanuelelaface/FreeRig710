@@ -5,7 +5,7 @@ FreeRig710 is an ESP32-P4 implementation. It does not require a Raspberry Pi for
 ## Reference hardware
 
 - Yaesu FT-710.
-- Waveshare ESP32-P4-NANO — <https://amzn.eu/d/071WkV44>
+- Waveshare ESP32-P4-NANO — <https://amzn.eu/d/05luB5tQ>
 - TC358743-based HDMI-to-CSI-2 adapter — <https://amzn.eu/d/0g5nXgCs>
 - DVI-D-to-HDMI adapter.
 - HDMI cable.
