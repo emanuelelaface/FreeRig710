@@ -107,7 +107,7 @@ const state = {
   logLines: [],
   decodeCount: 0,
   lastLevelDb: null,
-  qrzState: { configured: false, station_callsign: null },
+  qrzState: { configured: false, log_configured: false, station_callsign: null, qrz_enabled: true, gridtracker_enabled: false },
   qrzLogging: false,
   digitalStagedTx: false,
   wfCanvas: null,
@@ -694,6 +694,35 @@ function qrzContext() {
   };
 }
 
+function isLogConfigured(status = state.qrzState) {
+  if (Object.prototype.hasOwnProperty.call(status || {}, "log_configured")) return Boolean(status.log_configured);
+  return Boolean(status?.configured);
+}
+
+function logDestinationLabel(status = state.qrzState) {
+  const destinations = [];
+  if (status?.qrz_enabled) destinations.push("QRZ");
+  if (status?.gridtracker_enabled) destinations.push("GridTracker");
+  return destinations.length ? destinations.join(" + ") : "no destination";
+}
+
+function logQsoResultText(qso = {}, fallbackCall = "", context = {}) {
+  const modeText = qso.submode || qso.mode || "JS8";
+  const qrzLogId = qso.destinations?.qrz?.logid || qso.logid || "";
+  const logIdText = qrzLogId ? ` · QRZ ${qrzLogId}` : "";
+  const qsoRxFrequency = Number(qso.rx_frequency_hz);
+  const qsoTxFrequency = Number(qso.frequency_hz || context.txFrequency);
+  const rxText = Number.isFinite(qsoRxFrequency) && qsoRxFrequency !== qsoTxFrequency
+    ? ` · RX ${formatFrequencyDigits(qso.rx_frequency_hz)} Hz`
+    : "";
+  const powerText = Number(qso.tx_power_w) > 0 ? ` · ${qso.tx_power_w} W` : "";
+  const destinations = qso.destinations
+    ? Object.entries(qso.destinations).filter(([, value]) => value?.enabled && value?.sent).map(([key]) => key === "qrz" ? "QRZ" : "GridTracker")
+    : [];
+  const destinationText = destinations.length ? ` · ${destinations.join(" + ")}` : "";
+  return `${qso.call || fallbackCall} logged on ${qso.band || context.band || "--"} · ${modeText} · TX ${formatFrequencyDigits(qsoTxFrequency)} Hz${rxText}${powerText}${logIdText}${destinationText}`;
+}
+
 function normalizeJs8Report(value) {
   const text = String(value || "").trim().replace(/^0-/, "-");
   const match = /^([+-]?)(\d{1,2})$/.exec(text);
@@ -775,21 +804,21 @@ function updateQrzLogButton() {
     && context.band !== "--"
     && context.band !== "OUT OF BAND";
   button.classList.toggle("busy", state.qrzLogging);
-  button.textContent = state.qrzLogging ? "Logging..." : "Log QSO to QRZ";
-  button.disabled = state.qrzLogging || !state.qrzState?.configured || !radioReady || !call;
+  button.textContent = state.qrzLogging ? "Logging..." : "Log QSO";
+  button.disabled = state.qrzLogging || !isLogConfigured(state.qrzState) || !radioReady || !call;
 }
 
 function applyQrzStatus(status) {
   state.qrzState = status || state.qrzState;
-  if (state.qrzState?.configured) {
+  if (isLogConfigured(state.qrzState)) {
     setQrzStatus("READY", "is-ok");
     if (elements["js8-qrz-result"] && /checking/i.test(elements["js8-qrz-result"].textContent || "")) {
-      elements["js8-qrz-result"].textContent = "Ready. QSO time is captured when you press Log QSO to QRZ.";
+      elements["js8-qrz-result"].textContent = `Ready for ${logDestinationLabel(state.qrzState)}.`;
     }
   } else {
     setQrzStatus("NOT CONFIGURED", "is-bad");
     if (elements["js8-qrz-result"] && /checking/i.test(elements["js8-qrz-result"].textContent || "")) {
-      elements["js8-qrz-result"].textContent = "Configure QRZ Logbook in the main Settings panel, then return here.";
+      elements["js8-qrz-result"].textContent = "Configure QRZ and/or GridTracker in the main Settings panel, then return here.";
     }
   }
   renderQrzPreview();
@@ -797,7 +826,7 @@ function applyQrzStatus(status) {
 
 async function loadStationIdentity() {
   try {
-    const response = await api("/api/v1/qrz/status");
+    const response = await api("/api/v1/log/status");
     const status = response?.qrz || response;
     applyQrzStatus(status);
     const call = sanitizeCall(status?.station_callsign || status?.callsign || "");
@@ -807,7 +836,7 @@ async function loadStationIdentity() {
   } catch (error) {
     setQrzStatus("ERROR", "is-bad");
     if (elements["js8-qrz-result"]) elements["js8-qrz-result"].textContent = error.message;
-    log(`QRZ identity not available: ${error.message}`, "warn");
+    log(`Log identity not available: ${error.message}`, "warn");
   }
 }
 
@@ -835,7 +864,7 @@ async function submitQrzLog(event) {
   }
   const context = qrzContext();
   if (!state.activeBand || !Number.isFinite(context.txFrequency) || !Number.isFinite(context.rxFrequency)) {
-    if (elements["js8-qrz-result"]) elements["js8-qrz-result"].textContent = "Select a JS8 band before logging to QRZ.";
+    if (elements["js8-qrz-result"]) elements["js8-qrz-result"].textContent = "Select a JS8 band before logging.";
     updateQrzLogButton();
     return;
   }
@@ -847,7 +876,7 @@ async function submitQrzLog(event) {
 
   state.qrzLogging = true;
   setQrzStatus("LOGGING", "is-warn");
-  if (elements["js8-qrz-result"]) elements["js8-qrz-result"].textContent = `Sending ${call} to QRZ...`;
+  if (elements["js8-qrz-result"]) elements["js8-qrz-result"].textContent = `Logging ${call} to ${logDestinationLabel(state.qrzState)}...`;
   updateQrzLogButton();
   try {
     const txPower = Number(context.txPower);
@@ -867,46 +896,37 @@ async function submitQrzLog(event) {
       my_rig: "Yaesu FT-710",
     };
     if (Number.isFinite(txPower) && txPower > 0) payload.tx_power_w = Math.round(txPower);
-    const response = await post("/api/v1/qrz/log", payload);
+    const response = await post("/api/v1/log/qso", payload);
     const jobId = Number(response?.job?.job_id || 0);
-    if (!jobId) throw new Error("QRZ worker did not return a job id");
+    if (!jobId) throw new Error("Log worker did not return a job id");
 
     let job = response.job;
     const deadline = Date.now() + 15000;
     while (job && (job.state === "queued" || job.state === "running")) {
-      if (Date.now() >= deadline) throw new Error("QRZ log request timed out");
+      if (Date.now() >= deadline) throw new Error("Log request timed out");
       if (elements["js8-qrz-result"]) {
         elements["js8-qrz-result"].textContent = job.state === "queued"
-          ? `Queued ${call} for QRZ...`
-          : `Sending ${call} to QRZ...`;
+          ? `Queued ${call} for log...`
+          : `Logging ${call}...`;
       }
       await sleep(300);
-      const status = await api("/api/v1/qrz/log/status");
+      const status = await api("/api/v1/log/qso/status");
       if (Number(status?.job?.job_id) !== jobId) continue;
       job = status.job;
     }
-    if (!job || job.state !== "ok") throw new Error(job?.detail || "QRZ rejected QSO");
+    if (!job || job.state !== "ok") throw new Error(job?.detail || "Log rejected QSO");
     const qso = job.qso || {};
-    const modeText = qso.submode || qso.mode || "JS8";
-    const logIdText = qso.logid ? ` · Log ID ${qso.logid}` : "";
-    const qsoRxFrequency = Number(qso.rx_frequency_hz);
-    const qsoTxFrequency = Number(qso.frequency_hz || context.txFrequency);
-    const rxText = Number.isFinite(qsoRxFrequency) && qsoRxFrequency !== qsoTxFrequency
-      ? ` · RX ${formatFrequencyDigits(qso.rx_frequency_hz)} Hz`
-      : "";
-    const powerText = Number(qso.tx_power_w) > 0 ? ` · ${qso.tx_power_w} W` : "";
-    if (qso.adif) console.info("QRZ ADIF sent:", qso.adif);
+    if (qso.adif) console.info("Log ADIF sent:", qso.adif);
     setQrzStatus("LOGGED", "is-ok");
     if (elements["js8-qrz-result"]) {
-      elements["js8-qrz-result"].textContent =
-        `${qso.call || call} logged on ${qso.band || context.band} · ${modeText} · TX ${formatFrequencyDigits(qsoTxFrequency)} Hz${rxText}${powerText}${logIdText}`;
+      elements["js8-qrz-result"].textContent = logQsoResultText(qso, call, context);
     }
     if (elements["js8-qrz-call"]) elements["js8-qrz-call"].value = "";
-    log(`QRZ logged JS8 QSO with ${qso.call || call}`);
+    log(`Logged JS8 QSO with ${qso.call || call}`);
   } catch (error) {
     setQrzStatus("ERROR", "is-bad");
     if (elements["js8-qrz-result"]) elements["js8-qrz-result"].textContent = error.message;
-    log(`QRZ log failed: ${error.message}`, "bad");
+    log(`Log failed: ${error.message}`, "bad");
   } finally {
     state.qrzLogging = false;
     updateQrzLogButton();
@@ -2229,7 +2249,10 @@ function bindEvents() {
       state.waterfallDragging = false;
     });
   }
-  window.addEventListener("freerig710-settings-changed", () => applySharedStationSettings());
+  window.addEventListener("freerig710-settings-changed", () => {
+    applySharedStationSettings();
+    void loadStationIdentity();
+  });
   if (elements["js8-qrz-call"]) {
     elements["js8-qrz-call"].addEventListener("input", () => {
       const input = elements["js8-qrz-call"];

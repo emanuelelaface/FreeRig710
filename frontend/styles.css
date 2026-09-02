@@ -319,7 +319,7 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
   backdrop-filter: blur(6px);
 }
 .settings-dialog-panel {
-  width: min(560px, 100%);
+  width: min(720px, 100%);
   max-height: min(86vh, 680px);
   overflow: auto;
   border: 1px solid var(--line);
@@ -349,6 +349,22 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
 .settings-form {
   display: grid;
   gap: 12px;
+}
+.settings-section {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.settings-section legend {
+  padding: 0 6px;
+  font-size: .78rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--accent);
 }
 .settings-form label {
   display: grid;
@@ -383,6 +399,30 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
   margin-top: 2px;
   min-height: 30px;
 }
+.settings-two-column {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, .45fr);
+  gap: 10px;
+}
+.settings-log-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.settings-log-progress {
+  display: grid;
+  grid-template-columns: minmax(120px, .5fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+.settings-log-progress progress {
+  width: 100%;
+}
+.settings-log-progress strong {
+  font-size: .72rem;
+  overflow-wrap: anywhere;
+}
 .settings-form .help.error {
   color: #ff9ba6;
 }
@@ -391,6 +431,13 @@ pre { white-space: pre-wrap; background: #070b10; border: 1px solid var(--line);
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+@media (max-width: 620px) {
+  .settings-two-column,
+  .settings-log-tools,
+  .settings-log-progress {
+    grid-template-columns: 1fr;
+  }
 }
 input[readonly] {
   color: var(--muted);

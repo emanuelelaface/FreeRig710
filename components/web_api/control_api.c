@@ -1,6 +1,7 @@
 #include "control_api.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
@@ -9,6 +10,7 @@
 #include <strings.h>
 #include <time.h>
 #include <sys/time.h>
+#include <unistd.h>
 #include <stdarg.h>
 
 #include "cJSON.h"
@@ -26,6 +28,8 @@
 #include "freerig_config.h"
 #include "freerig_memories.h"
 #include "freerig_wireguard.h"
+#include "lwip/netdb.h"
+#include "lwip/sockets.h"
 #include "network_eth.h"
 #include "video_jpeg.h"
 
@@ -1012,8 +1016,75 @@ static esp_err_t cw_stop_handler(httpd_req_t*req){esp_err_t e=ft710_cat_set("KY0
 static esp_err_t video_settings_get(httpd_req_t*req){video_jpeg_status_t v;video_jpeg_get_status(&v);cJSON*o=cJSON_CreateObject();cJSON_AddTrueToObject(o,"ok");cJSON*x=cJSON_AddObjectToObject(o,"settings");cJSON_AddNumberToObject(x,"fps",v.fps_limit);cJSON_AddNumberToObject(x,"jpeg_quality",v.quality);return send_json(req,o);}
 static esp_err_t video_settings_post(httpd_req_t*req){video_jpeg_status_t v;video_jpeg_get_status(&v);cJSON*j=read_json(req);if(!j)return send_error(req,"422 Unprocessable Entity","invalid JSON");int fps=json_int(j,"fps",v.fps_limit),q=json_int(j,"jpeg_quality",v.quality);cJSON_Delete(j);esp_err_t e=video_jpeg_set_settings((uint8_t)q,(uint8_t)fps);if(e!=ESP_OK)return send_error(req,"422 Unprocessable Entity","fps 1..30, jpeg_quality 20..95");return video_settings_get(req);}
 
-static esp_err_t qrz_status_handler(httpd_req_t*req){freerig_qrz_config_t q;esp_err_t e=freerig_config_get_qrz(&q);if(e!=ESP_OK)return send_error(req,"500 Internal Server Error",esp_err_to_name(e));cJSON*o=cJSON_CreateObject();cJSON_AddTrueToObject(o,"ok");cJSON*x=cJSON_AddObjectToObject(o,"qrz");cJSON_AddBoolToObject(x,"configured",q.station_callsign[0]&&q.api_key_set);if(q.station_callsign[0])cJSON_AddStringToObject(x,"station_callsign",q.station_callsign);else cJSON_AddNullToObject(x,"station_callsign");cJSON_AddBoolToObject(x,"api_key_set",q.api_key_set);cJSON_AddStringToObject(x,"endpoint","https://logbook.qrz.com/api");return send_json(req,o);}
-static esp_err_t qrz_config_handler(httpd_req_t*req){cJSON*j=read_json(req);if(!j)return send_error(req,"422 Unprocessable Entity","invalid JSON");const char*call=json_string(j,"station_callsign",NULL);cJSON*kv=cJSON_GetObjectItemCaseSensitive(j,"api_key");const char*key=cJSON_IsString(kv)?kv->valuestring:NULL;esp_err_t e=freerig_config_set_qrz(call,key);cJSON_Delete(j);if(e!=ESP_OK)return send_error(req,"422 Unprocessable Entity","invalid QRZ callsign or API key");return qrz_status_handler(req);}
+static void log_config_json(cJSON *x, const freerig_qrz_config_t *q)
+{
+    const bool has_call = q && q->station_callsign[0];
+    const bool qrz_ready = has_call && q->api_key_set;
+    const bool gt_ready = q && q->gridtracker_host[0] && q->gridtracker_port > 0;
+    const bool any_destination = q && (q->qrz_enabled || q->gridtracker_enabled);
+    const bool selected_ready = q &&
+        (!q->qrz_enabled || q->api_key_set) &&
+        (!q->gridtracker_enabled || gt_ready);
+    const bool log_ready = has_call && any_destination && selected_ready;
+    cJSON_AddBoolToObject(x, "configured", qrz_ready);
+    cJSON_AddBoolToObject(x, "log_configured", log_ready);
+    if (has_call) cJSON_AddStringToObject(x, "station_callsign", q->station_callsign);
+    else cJSON_AddNullToObject(x, "station_callsign");
+    cJSON_AddBoolToObject(x, "api_key_set", q && q->api_key_set);
+    cJSON_AddBoolToObject(x, "qrz_enabled", q ? q->qrz_enabled : true);
+    cJSON_AddBoolToObject(x, "qrz_configured", qrz_ready);
+    cJSON_AddBoolToObject(x, "gridtracker_enabled", q && q->gridtracker_enabled);
+    cJSON_AddBoolToObject(x, "gridtracker_configured", gt_ready);
+    cJSON_AddStringToObject(x, "gridtracker_host", q ? q->gridtracker_host : "");
+    cJSON_AddNumberToObject(x, "gridtracker_port", q && q->gridtracker_port ? q->gridtracker_port : FREERIG_GRIDTRACKER_DEFAULT_PORT);
+    cJSON_AddStringToObject(x, "endpoint", "https://logbook.qrz.com/api");
+}
+
+static esp_err_t qrz_status_handler(httpd_req_t *req)
+{
+    freerig_qrz_config_t q;
+    esp_err_t e = freerig_config_get_qrz(&q);
+    if (e != ESP_OK) return send_error(req, "500 Internal Server Error", esp_err_to_name(e));
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddTrueToObject(o, "ok");
+    cJSON *x = cJSON_AddObjectToObject(o, "qrz");
+    log_config_json(x, &q);
+    cJSON *log = cJSON_Duplicate(x, true);
+    if (log) cJSON_AddItemToObject(o, "log", log);
+    return send_json(req, o);
+}
+
+static esp_err_t qrz_config_handler(httpd_req_t *req)
+{
+    freerig_qrz_config_t current;
+    memset(&current, 0, sizeof(current));
+    current.qrz_enabled = true;
+    current.gridtracker_port = FREERIG_GRIDTRACKER_DEFAULT_PORT;
+    (void)freerig_config_get_qrz(&current);
+
+    cJSON *j = read_json(req);
+    if (!j) return send_error(req, "422 Unprocessable Entity", "invalid JSON");
+    const char *call = json_string(j, "station_callsign", NULL);
+    cJSON *kv = cJSON_GetObjectItemCaseSensitive(j, "api_key");
+    const char *key = cJSON_IsString(kv) ? kv->valuestring : NULL;
+    bool qrz_present = false;
+    bool gt_present = false;
+    bool qrz_enabled = json_bool(j, "qrz_enabled", current.qrz_enabled, &qrz_present);
+    bool gridtracker_enabled = json_bool(j, "gridtracker_enabled", current.gridtracker_enabled, &gt_present);
+    const char *gridtracker_host = json_string(j, "gridtracker_host", current.gridtracker_host);
+    int gridtracker_port_in = json_int(j, "gridtracker_port", current.gridtracker_port ? current.gridtracker_port : FREERIG_GRIDTRACKER_DEFAULT_PORT);
+    if (!qrz_present) qrz_enabled = current.qrz_enabled;
+    if (!gt_present) gridtracker_enabled = current.gridtracker_enabled;
+    if (gridtracker_port_in <= 0 || gridtracker_port_in > 65535) {
+        cJSON_Delete(j);
+        return send_error(req, "422 Unprocessable Entity", "invalid GridTracker UDP port");
+    }
+    esp_err_t e = freerig_config_set_log(call, key, qrz_enabled, gridtracker_enabled,
+                                         gridtracker_host, (uint16_t)gridtracker_port_in);
+    cJSON_Delete(j);
+    if (e != ESP_OK) return send_error(req, "422 Unprocessable Entity", "invalid Log configuration");
+    return qrz_status_handler(req);
+}
 
 static void wireguard_status_to_json(cJSON *x, const freerig_wireguard_config_t *cfg, const freerig_wireguard_status_t *st)
 {
@@ -1192,6 +1263,14 @@ typedef struct {
     uint32_t rx_frequency_hz;
     int tx_power_w;
     char adif_preview[768];
+    bool qrz_enabled;
+    bool gridtracker_enabled;
+    bool qrz_sent;
+    bool gridtracker_sent;
+    char gridtracker_host[FREERIG_GRIDTRACKER_HOST_MAX];
+    uint16_t gridtracker_port;
+    char qrz_detail[128];
+    char gridtracker_detail[128];
 } qrz_job_status_t;
 
 static portMUX_TYPE s_qrz_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -1218,6 +1297,14 @@ static void qrz_status_from_job(const qrz_job_t *job, const char *state, const c
         next.frequency_hz = job->frequency_hz;
         next.rx_frequency_hz = job->rx_frequency_hz;
         next.tx_power_w = job->tx_power_w;
+        next.qrz_enabled = job->config.qrz_enabled;
+        next.gridtracker_enabled = job->config.gridtracker_enabled;
+        snprintf(next.gridtracker_host, sizeof(next.gridtracker_host), "%s", job->config.gridtracker_host);
+        next.gridtracker_port = job->config.gridtracker_port;
+        next.qrz_sent = false;
+        next.gridtracker_sent = false;
+        next.qrz_detail[0] = '\0';
+        next.gridtracker_detail[0] = '\0';
     }
     portENTER_CRITICAL(&s_qrz_mux);
     s_qrz_status = next;
@@ -1242,6 +1329,19 @@ static void qrz_status_set_adif(const char *adif)
     portEXIT_CRITICAL(&s_qrz_mux);
 }
 
+static void qrz_status_set_destinations(bool qrz_sent, const char *qrz_detail,
+                                        bool gridtracker_sent, const char *gridtracker_detail)
+{
+    qrz_job_status_t next = qrz_status_snapshot();
+    next.qrz_sent = qrz_sent;
+    next.gridtracker_sent = gridtracker_sent;
+    snprintf(next.qrz_detail, sizeof(next.qrz_detail), "%s", qrz_detail ? qrz_detail : "");
+    snprintf(next.gridtracker_detail, sizeof(next.gridtracker_detail), "%s", gridtracker_detail ? gridtracker_detail : "");
+    portENTER_CRITICAL(&s_qrz_mux);
+    s_qrz_status = next;
+    portEXIT_CRITICAL(&s_qrz_mux);
+}
+
 static void *qrz_alloc(size_t size)
 {
     void *p = heap_caps_calloc(1, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -1258,6 +1358,23 @@ static bool qrz_append(char *buf, size_t cap, size_t *used, const char *fmt, ...
     if (n < 0 || (size_t)n >= cap - *used) return false;
     *used += (size_t)n;
     return true;
+}
+
+static void log_join_destination_detail(char *buf, size_t cap,
+                                        bool qrz_selected, const char *qrz_detail,
+                                        bool gridtracker_selected, const char *gridtracker_detail)
+{
+    if (!buf || cap == 0) return;
+    buf[0] = '\0';
+    size_t used = 0;
+    bool wrote = false;
+    if (qrz_selected && qrz_detail && qrz_detail[0]) {
+        if (qrz_append(buf, cap, &used, "%s", qrz_detail)) wrote = true;
+    }
+    if (gridtracker_selected && gridtracker_detail && gridtracker_detail[0]) {
+        if (wrote) (void)qrz_append(buf, cap, &used, " / ");
+        (void)qrz_append(buf, cap, &used, "%s", gridtracker_detail);
+    }
 }
 
 static bool qrz_adif_field(char *buf, size_t cap, size_t *used, const char *name, const char *value)
@@ -1280,6 +1397,46 @@ static bool qrz_adif_int(char *buf, size_t cap, size_t *used, const char *name, 
     int n = snprintf(text, sizeof(text), "%d", value);
     if (n <= 0 || (size_t)n >= sizeof(text)) return false;
     return qrz_adif_field(buf, cap, used, name, text);
+}
+
+static esp_err_t gridtracker_send_adif(const freerig_qrz_config_t *cfg, const char *adif,
+                                       char *detail, size_t detail_size)
+{
+    if (!cfg || !cfg->gridtracker_host[0] || cfg->gridtracker_port == 0 || !adif) {
+        if (detail && detail_size) snprintf(detail, detail_size, "GridTracker is not configured");
+        return ESP_ERR_INVALID_ARG;
+    }
+    char port[8];
+    snprintf(port, sizeof(port), "%u", (unsigned)cfg->gridtracker_port);
+    struct addrinfo hints = {
+        .ai_family = AF_INET,
+        .ai_socktype = SOCK_DGRAM,
+        .ai_protocol = IPPROTO_UDP,
+    };
+    struct addrinfo *res = NULL;
+    int rc = getaddrinfo(cfg->gridtracker_host, port, &hints, &res);
+    if (rc != 0 || !res) {
+        if (detail && detail_size) snprintf(detail, detail_size, "GridTracker address lookup failed");
+        return ESP_FAIL;
+    }
+    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sock < 0) {
+        if (detail && detail_size) snprintf(detail, detail_size, "GridTracker UDP socket failed: errno %d", errno);
+        freeaddrinfo(res);
+        return ESP_FAIL;
+    }
+    ssize_t sent = sendto(sock, adif, strlen(adif), 0, res->ai_addr, res->ai_addrlen);
+    close(sock);
+    freeaddrinfo(res);
+    if (sent < 0 || (size_t)sent != strlen(adif)) {
+        if (detail && detail_size) snprintf(detail, detail_size, "GridTracker UDP send failed: errno %d", errno);
+        return ESP_FAIL;
+    }
+    if (detail && detail_size) {
+        snprintf(detail, detail_size, "GridTracker UDP sent to %s:%u",
+                 cfg->gridtracker_host, (unsigned)cfg->gridtracker_port);
+    }
+    return ESP_OK;
 }
 
 static void qrz_response_value(const char *response, const char *key, char *out, size_t out_size)
@@ -1786,20 +1943,35 @@ static esp_err_t qrz_fetch_handler(httpd_req_t *req)
 static void qrz_log_task(void *arg)
 {
     qrz_job_t *job = (qrz_job_t *)arg;
-    qrz_status_from_job(job, "running", "Sending QSO to QRZ", NULL, true);
+    qrz_status_from_job(job, "running", "Sending QSO to configured logs", NULL, true);
 
     const size_t adif_cap = 1024;
     char *adif = qrz_alloc(adif_cap);
-    char *response = qrz_alloc(1024);
+    char *response = NULL;
     char *encoded_key = NULL;
     char *encoded_adif = NULL;
     char *post = NULL;
-    const char *error_detail = NULL;
-    char error_buf[192] = {0};
+    const char *fatal_error = NULL;
     char logid[32] = {0};
+    char qrz_detail[128] = {0};
+    char gridtracker_detail[128] = {0};
+    char final_detail[192] = {0};
+    bool qrz_sent = false;
+    bool gridtracker_sent = false;
+    bool destination_error = false;
+    const bool qrz_selected = job->config.qrz_enabled;
+    const bool gridtracker_selected = job->config.gridtracker_enabled;
+    const bool qrz_active = qrz_selected && job->config.api_key_set;
+    const bool gridtracker_active = gridtracker_selected &&
+        job->config.gridtracker_host[0] && job->config.gridtracker_port > 0;
 
-    if (!adif || !response) {
-        error_detail = "QRZ worker out of memory";
+    if (!qrz_selected && !gridtracker_selected) {
+        fatal_error = "No log destination is configured";
+        goto done;
+    }
+
+    if (!adif) {
+        fatal_error = "Log worker out of memory";
         goto done;
     }
 
@@ -1823,85 +1995,125 @@ static void qrz_log_task(void *arg)
     if (ok) ok = qrz_adif_field(adif, adif_cap, &used, "MY_RIG", job->my_rig[0] ? job->my_rig : "Yaesu FT-710");
     if (ok) ok = qrz_append(adif, adif_cap, &used, "<EOR>");
     if (!ok) {
-        error_detail = "QRZ ADIF record is too large";
+        fatal_error = "Log ADIF record is too large";
         goto done;
     }
 
     qrz_status_set_adif(adif);
-    ESP_LOGI(TAG, "QRZ job %" PRIu32 " prepared ADIF for %s", job->id, job->call);
+    ESP_LOGI(TAG, "LOG job %" PRIu32 " prepared ADIF for %s", job->id, job->call);
 
-    size_t key_cap = strlen(job->config.api_key) * 3U + 1U;
-    size_t adif_encoded_cap = strlen(adif) * 3U + 1U;
-    encoded_key = qrz_alloc(key_cap);
-    encoded_adif = qrz_alloc(adif_encoded_cap);
-    if (!encoded_key || !encoded_adif) {
-        error_detail = "QRZ worker out of memory";
-        goto done;
-    }
-    form_encode(job->config.api_key, encoded_key, key_cap);
-    form_encode(adif, encoded_adif, adif_encoded_cap);
+    if (qrz_active) {
+        response = qrz_alloc(1024);
+        if (!response) {
+            snprintf(qrz_detail, sizeof(qrz_detail), "QRZ worker out of memory");
+            destination_error = true;
+        } else {
+            size_t key_cap = strlen(job->config.api_key) * 3U + 1U;
+            size_t adif_encoded_cap = strlen(adif) * 3U + 1U;
+            encoded_key = qrz_alloc(key_cap);
+            encoded_adif = qrz_alloc(adif_encoded_cap);
+            if (!encoded_key || !encoded_adif) {
+                snprintf(qrz_detail, sizeof(qrz_detail), "QRZ worker out of memory");
+                destination_error = true;
+            } else {
+                form_encode(job->config.api_key, encoded_key, key_cap);
+                form_encode(adif, encoded_adif, adif_encoded_cap);
 
-    size_t post_cap = strlen(encoded_key) + strlen(encoded_adif) + 32U;
-    post = qrz_alloc(post_cap);
-    if (!post) {
-        error_detail = "QRZ worker out of memory";
-        goto done;
-    }
-    snprintf(post, post_cap, "KEY=%s&ACTION=INSERT&ADIF=%s", encoded_key, encoded_adif);
+                size_t post_cap = strlen(encoded_key) + strlen(encoded_adif) + 32U;
+                post = qrz_alloc(post_cap);
+                if (!post) {
+                    snprintf(qrz_detail, sizeof(qrz_detail), "QRZ worker out of memory");
+                    destination_error = true;
+                } else {
+                    snprintf(post, post_cap, "KEY=%s&ACTION=INSERT&ADIF=%s", encoded_key, encoded_adif);
 
-    http_accum_t acc = {
-        .buf = response,
-        .cap = 1024,
-        .len = 0,
-        .truncated = false,
-    };
-    char user_agent[96];
-    snprintf(user_agent, sizeof(user_agent), "FreeRig710/1.0 (%s)", job->config.station_callsign);
-    esp_http_client_config_t cfg = {
-        .url = "https://logbook.qrz.com/api",
-        .event_handler = qrz_http_event,
-        .user_data = &acc,
-        .timeout_ms = 10000,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .user_agent = user_agent,
-    };
-    esp_http_client_handle_t h = esp_http_client_init(&cfg);
-    if (!h) {
-        error_detail = "QRZ HTTP client init failed";
-        goto done;
-    }
-    esp_http_client_set_method(h, HTTP_METHOD_POST);
-    esp_http_client_set_header(h, "Content-Type", "application/x-www-form-urlencoded");
-    esp_http_client_set_post_field(h, post, (int)strlen(post));
-    esp_err_t err = esp_http_client_perform(h);
-    int http_status = esp_http_client_get_status_code(h);
-    esp_http_client_cleanup(h);
+                    http_accum_t acc = {
+                        .buf = response,
+                        .cap = 1024,
+                        .len = 0,
+                        .truncated = false,
+                    };
+                    char user_agent[96];
+                    snprintf(user_agent, sizeof(user_agent), "FreeRig710/1.0 (%s)", job->config.station_callsign);
+                    esp_http_client_config_t cfg = {
+                        .url = "https://logbook.qrz.com/api",
+                        .event_handler = qrz_http_event,
+                        .user_data = &acc,
+                        .timeout_ms = 10000,
+                        .crt_bundle_attach = esp_crt_bundle_attach,
+                        .user_agent = user_agent,
+                    };
+                    esp_http_client_handle_t h = esp_http_client_init(&cfg);
+                    if (!h) {
+                        snprintf(qrz_detail, sizeof(qrz_detail), "QRZ HTTP client init failed");
+                        destination_error = true;
+                    } else {
+                        esp_http_client_set_method(h, HTTP_METHOD_POST);
+                        esp_http_client_set_header(h, "Content-Type", "application/x-www-form-urlencoded");
+                        esp_http_client_set_post_field(h, post, (int)strlen(post));
+                        esp_err_t err = esp_http_client_perform(h);
+                        int http_status = esp_http_client_get_status_code(h);
+                        esp_http_client_cleanup(h);
 
-    if (err != ESP_OK) {
-        snprintf(error_buf, sizeof(error_buf), "QRZ HTTPS failed: %s", esp_err_to_name(err));
-        error_detail = error_buf;
-        goto done;
+                        if (err != ESP_OK) {
+                            snprintf(qrz_detail, sizeof(qrz_detail), "QRZ HTTPS failed: %s", esp_err_to_name(err));
+                            destination_error = true;
+                        } else if (http_status < 200 || http_status >= 300) {
+                            snprintf(qrz_detail, sizeof(qrz_detail), "QRZ HTTP status %d", http_status);
+                            destination_error = true;
+                        } else if (!strstr(response, "RESULT=OK") && !strstr(response, "RESULT=REPLACE")) {
+                            snprintf(qrz_detail, sizeof(qrz_detail), "%s", response[0] ? response : "QRZ rejected QSO");
+                            destination_error = true;
+                        } else {
+                            qrz_response_value(response, "LOGID", logid, sizeof(logid));
+                            if (!logid[0]) qrz_response_value(response, "LOGIDS", logid, sizeof(logid));
+                            snprintf(qrz_detail, sizeof(qrz_detail), "QRZ logged%s%s", logid[0] ? " LOGID " : "", logid);
+                            qrz_sent = true;
+                        }
+                    }
+                }
+            }
+        }
+    } else if (qrz_selected) {
+        snprintf(qrz_detail, sizeof(qrz_detail), "QRZ API key missing");
+        destination_error = true;
+    } else {
+        snprintf(qrz_detail, sizeof(qrz_detail), "QRZ disabled");
     }
-    if (http_status < 200 || http_status >= 300) {
-        snprintf(error_buf, sizeof(error_buf), "QRZ HTTP status %d", http_status);
-        error_detail = error_buf;
-        goto done;
+
+    if (gridtracker_active) {
+        esp_err_t gt_err = gridtracker_send_adif(&job->config, adif, gridtracker_detail, sizeof(gridtracker_detail));
+        if (gt_err == ESP_OK) {
+            gridtracker_sent = true;
+        } else {
+            destination_error = true;
+        }
+    } else if (gridtracker_selected) {
+        snprintf(gridtracker_detail, sizeof(gridtracker_detail), "GridTracker address or port missing");
+        destination_error = true;
+    } else {
+        snprintf(gridtracker_detail, sizeof(gridtracker_detail), "GridTracker disabled");
     }
-    if (!strstr(response, "RESULT=OK") && !strstr(response, "RESULT=REPLACE")) {
-        snprintf(error_buf, sizeof(error_buf), "%s", response[0] ? response : "QRZ rejected QSO");
-        error_detail = error_buf;
-        goto done;
-    }
-    qrz_response_value(response, "LOGID", logid, sizeof(logid));
-    if (!logid[0]) qrz_response_value(response, "LOGIDS", logid, sizeof(logid));
+    qrz_status_set_destinations(qrz_sent, qrz_detail, gridtracker_sent, gridtracker_detail);
 
  done:
-    if (error_detail) {
-        ESP_LOGW(TAG, "QRZ job %" PRIu32 " failed: %s", job->id, error_detail);
-        qrz_status_from_job(job, "error", error_detail, NULL, false);
+    if (fatal_error) {
+        ESP_LOGW(TAG, "LOG job %" PRIu32 " failed: %s", job->id, fatal_error);
+        qrz_status_from_job(job, "error", fatal_error, NULL, false);
+    } else if (destination_error) {
+        log_join_destination_detail(final_detail, sizeof(final_detail),
+                                    qrz_selected, qrz_detail,
+                                    gridtracker_selected, gridtracker_detail);
+        ESP_LOGW(TAG, "LOG job %" PRIu32 " partially failed: %s", job->id, final_detail);
+        qrz_status_from_job(job, "error", final_detail, logid, false);
+        qrz_status_set_destinations(qrz_sent, qrz_detail, gridtracker_sent, gridtracker_detail);
     } else {
-        ESP_LOGI(TAG, "QRZ job %" PRIu32 " logged %s on %s %s", job->id, job->call, job->band, job->mode);
-        qrz_status_from_job(job, "ok", "QSO logged to QRZ", logid, false);
+        log_join_destination_detail(final_detail, sizeof(final_detail),
+                                    qrz_selected, qrz_detail,
+                                    gridtracker_selected, gridtracker_detail);
+        ESP_LOGI(TAG, "LOG job %" PRIu32 " logged %s on %s %s: %s", job->id, job->call, job->band, job->mode, final_detail);
+        qrz_status_from_job(job, "ok", final_detail[0] ? final_detail : "QSO logged", logid, false);
+        qrz_status_set_destinations(qrz_sent, qrz_detail, gridtracker_sent, gridtracker_detail);
     }
 
     if (post) { memset(post, 0, strlen(post)); free(post); }
@@ -1935,6 +2147,18 @@ static cJSON *qrz_job_json(const qrz_job_status_t *st)
         cJSON_AddStringToObject(q, "time_on", st->time_on);
         if (st->logid[0]) cJSON_AddStringToObject(q, "logid", st->logid);
         if (st->adif_preview[0]) cJSON_AddStringToObject(q, "adif", st->adif_preview);
+        cJSON *dest = cJSON_AddObjectToObject(q, "destinations");
+        cJSON *qrz = cJSON_AddObjectToObject(dest, "qrz");
+        cJSON_AddBoolToObject(qrz, "enabled", st->qrz_enabled);
+        cJSON_AddBoolToObject(qrz, "sent", st->qrz_sent);
+        cJSON_AddStringToObject(qrz, "detail", st->qrz_detail);
+        if (st->logid[0]) cJSON_AddStringToObject(qrz, "logid", st->logid);
+        cJSON *gt = cJSON_AddObjectToObject(dest, "gridtracker");
+        cJSON_AddBoolToObject(gt, "enabled", st->gridtracker_enabled);
+        cJSON_AddBoolToObject(gt, "sent", st->gridtracker_sent);
+        cJSON_AddStringToObject(gt, "host", st->gridtracker_host);
+        cJSON_AddNumberToObject(gt, "port", st->gridtracker_port);
+        cJSON_AddStringToObject(gt, "detail", st->gridtracker_detail);
     }
     return o;
 }
@@ -1945,6 +2169,36 @@ static esp_err_t qrz_log_status_handler(httpd_req_t *req)
     cJSON *o = cJSON_CreateObject();
     cJSON_AddTrueToObject(o, "ok");
     cJSON_AddItemToObject(o, "job", qrz_job_json(&st));
+    return send_json(req, o);
+}
+
+static esp_err_t log_gridtracker_adif_handler(httpd_req_t *req)
+{
+    freerig_qrz_config_t q;
+    esp_err_t cfg_err = freerig_config_get_qrz(&q);
+    if (cfg_err != ESP_OK) return send_error(req, "500 Internal Server Error", esp_err_to_name(cfg_err));
+    if (!q.gridtracker_enabled) return send_error(req, "503 Service Unavailable", "GridTracker logging is disabled");
+    if (!q.gridtracker_host[0] || q.gridtracker_port == 0) {
+        return send_error(req, "503 Service Unavailable", "GridTracker UDP target is not configured");
+    }
+
+    cJSON *j = read_json(req);
+    if (!j) return send_error(req, "422 Unprocessable Entity", "invalid JSON");
+    const char *adif = json_string(j, "adif", NULL);
+    if (!adif || !adif[0]) {
+        cJSON_Delete(j);
+        return send_error(req, "422 Unprocessable Entity", "ADIF payload is required");
+    }
+    char detail[128] = {0};
+    esp_err_t err = gridtracker_send_adif(&q, adif, detail, sizeof(detail));
+    size_t bytes = strlen(adif);
+    cJSON_Delete(j);
+    if (err != ESP_OK) return send_error(req, "502 Bad Gateway", detail[0] ? detail : esp_err_to_name(err));
+
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddTrueToObject(o, "ok");
+    cJSON_AddNumberToObject(o, "bytes", (double)bytes);
+    cJSON_AddStringToObject(o, "detail", detail);
     return send_json(req, o);
 }
 
@@ -1966,12 +2220,15 @@ static void qrz_iso_to_adif(const char *iso, char date[9], char time_value[7])
 static esp_err_t qrz_log_handler(httpd_req_t *req)
 {
     freerig_qrz_config_t q;
-    if (freerig_config_get_qrz(&q) != ESP_OK || !q.station_callsign[0] || !q.api_key_set) {
-        return send_error(req, "503 Service Unavailable", "QRZ Logbook is not configured");
-    }
+    esp_err_t cfg_err = freerig_config_get_qrz(&q);
+    if (cfg_err != ESP_OK) return send_error(req, "500 Internal Server Error", esp_err_to_name(cfg_err));
+    if (!q.station_callsign[0]) return send_error(req, "503 Service Unavailable", "Station callsign is not configured");
+    if (!q.qrz_enabled && !q.gridtracker_enabled) return send_error(req, "503 Service Unavailable", "No log destination is enabled");
+    if (q.qrz_enabled && !q.api_key_set) return send_error(req, "503 Service Unavailable", "QRZ Logbook API key is not configured");
+    if (q.gridtracker_enabled && (!q.gridtracker_host[0] || q.gridtracker_port == 0)) return send_error(req, "503 Service Unavailable", "GridTracker UDP target is not configured");
 
     qrz_job_status_t current = qrz_status_snapshot();
-    if (current.busy) return send_error(req, "409 Conflict", "a QRZ log request is already running");
+    if (current.busy) return send_error(req, "409 Conflict", "a Log request is already running");
 
     cJSON *j = read_json(req);
     if (!j) return send_error(req, "422 Unprocessable Entity", "invalid JSON");
@@ -2040,18 +2297,18 @@ static esp_err_t qrz_log_handler(httpd_req_t *req)
     if (s_qrz_status.busy) {
         portEXIT_CRITICAL(&s_qrz_mux);
         memset(job->config.api_key, 0, sizeof(job->config.api_key)); free(job);
-        return send_error(req, "409 Conflict", "a QRZ log request is already running");
+        return send_error(req, "409 Conflict", "a Log request is already running");
     }
     job->id = s_qrz_next_job_id++;
     if (s_qrz_next_job_id == 0) s_qrz_next_job_id = 1;
     s_qrz_status.busy = true;
     portEXIT_CRITICAL(&s_qrz_mux);
-    qrz_status_from_job(job, "queued", "QRZ log request queued", NULL, true);
+    qrz_status_from_job(job, "queued", "Log request queued", NULL, true);
 
     if (xTaskCreate(qrz_log_task, "qrz_log", 10240, job, 3, NULL) != pdPASS) {
-        qrz_status_from_job(job, "error", "unable to start QRZ worker", NULL, false);
+        qrz_status_from_job(job, "error", "unable to start Log worker", NULL, false);
         memset(job->config.api_key, 0, sizeof(job->config.api_key)); free(job);
-        return send_error(req, "503 Service Unavailable", "unable to start QRZ worker");
+        return send_error(req, "503 Service Unavailable", "unable to start Log worker");
     }
 
     qrz_job_status_t accepted = qrz_status_snapshot();
@@ -4089,6 +4346,7 @@ esp_err_t control_api_register(httpd_handle_t server)
     R("/api/v1/ft8/status",HTTP_GET,ft8_status_handler);R("/api/v1/ft8/tx/arm",HTTP_POST,ft8_tx_arm_handler);R("/api/v1/ft8/tx/keepalive",HTTP_POST,ft8_tx_keepalive_handler);R("/api/v1/ft8/tx/stop",HTTP_POST,ft8_tx_stop_handler);R("/api/v1/ft8/tune/start",HTTP_POST,ft8_tune_start_handler);R("/api/v1/ft8/tune/level",HTTP_POST,ft8_tune_level_handler);R("/api/v1/ft8/tune/keepalive",HTTP_POST,ft8_tune_keepalive_handler);R("/api/v1/ft8/tune/stop",HTTP_POST,ft8_tune_stop_handler);R("/api/v1/cw/status",HTTP_GET,cw_status_handler);R("/api/v1/cw/send",HTTP_POST,cw_send_handler);R("/api/v1/cw/stop",HTTP_POST,cw_stop_handler);
     R("/api/v1/video/settings",HTTP_GET,video_settings_get);R("/api/v1/video/settings",HTTP_POST,video_settings_post);
     R("/api/v1/wireguard/status",HTTP_GET,wireguard_status_handler);R("/api/v1/wireguard/config",HTTP_POST,wireguard_config_handler);
+    R("/api/v1/log/status",HTTP_GET,qrz_status_handler);R("/api/v1/log/config",HTTP_POST,qrz_config_handler);R("/api/v1/log/qso",HTTP_POST,qrz_log_handler);R("/api/v1/log/qso/status",HTTP_GET,qrz_log_status_handler);R("/api/v1/log/gridtracker/adif",HTTP_POST,log_gridtracker_adif_handler);
     R("/api/v1/qrz/status",HTTP_GET,qrz_status_handler);R("/api/v1/qrz/config",HTTP_POST,qrz_config_handler);R("/api/v1/qrz/log",HTTP_POST,qrz_log_handler);R("/api/v1/qrz/log/status",HTTP_GET,qrz_log_status_handler);R("/api/v1/qrz/fetch",HTTP_POST,qrz_fetch_handler);R("/api/v1/qrz/fetch/status",HTTP_GET,qrz_fetch_status_handler);R("/api/v1/qrz/fetch/page",HTTP_GET,qrz_fetch_page_handler);R("/api/v1/qrz/fetch/cancel",HTTP_POST,qrz_fetch_cancel_handler);
     R("/api/v1/cw/status",HTTP_OPTIONS,options_handler);
     R("/api/v1/radio/jog",HTTP_OPTIONS,options_handler);

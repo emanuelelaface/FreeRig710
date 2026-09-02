@@ -76,6 +76,19 @@
 .rtty-tx-actions button.danger { border-color:#8f3b48; color:#ffc1c8; }
 .rtty-tx-status { display:grid; grid-template-columns:1.4fr .7fr .8fr; gap:4px; margin:7px 0 0; font-size:.68rem; }
 
+.rtty-log-card { margin-top:6px; padding:7px; border-radius:8px; }
+.rtty-log-preview { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; margin:0 0 7px; font-size:.68rem; }
+.rtty-log-preview > div { display:block; min-width:0; padding:5px 7px; border:1px solid var(--line); border-radius:7px; background:var(--panel-2); }
+.rtty-log-preview dt { color:var(--muted); font-size:.54rem; text-transform:uppercase; letter-spacing:.05em; }
+.rtty-log-preview dd { margin:2px 0 0; text-align:left; font:800 .66rem/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rtty-log-form { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:6px; align-items:end; }
+.rtty-log-form label { display:grid; gap:3px; min-width:0; }
+.rtty-log-form label > span { display:block; color:var(--muted); font-size:.57rem; font-weight:850; letter-spacing:.05em; text-transform:uppercase; }
+.rtty-log-form input { min-height:30px; padding:5px 7px; border-radius:7px; font-size:.71rem; }
+.rtty-log-notes { grid-column:span 2; }
+.rtty-log-form button { min-height:31px; padding:0 .62rem; border-radius:7px; font-size:.7rem; font-weight:800; }
+.rtty-log-result { margin:6px 0 0; font-size:.61rem; }
+
 .rtty-diagnostics-card { margin-top:6px; }
 .rtty-diagnostics-card summary { cursor:pointer; font-weight:800; font-size:.72rem; }
 .rtty-log { min-height:80px; max-height:260px; overflow:auto; font-size:.68rem; }
@@ -97,8 +110,9 @@
   .rtty-title-block h1{display:none}
   .rtty-band-button-row{grid-template-columns:repeat(5,1fr)}
   .rtty-tune-row{grid-template-columns:minmax(0,1fr) repeat(2,minmax(78px,auto))}
-  .rtty-readouts,.rtty-strip,.rtty-status-grid,.rtty-tx-status{grid-template-columns:1fr 1fr}
+  .rtty-readouts,.rtty-strip,.rtty-status-grid,.rtty-tx-status,.rtty-log-preview,.rtty-log-form{grid-template-columns:1fr 1fr}
+  .rtty-log-notes{grid-column:1/-1}
 }
 @media(max-width:480px){
-  .rtty-readouts,.rtty-strip,.rtty-status-grid,.rtty-tx-status,.rtty-station-grid,.rtty-tx-actions,.rtty-tune-row{grid-template-columns:1fr}
+  .rtty-readouts,.rtty-strip,.rtty-status-grid,.rtty-tx-status,.rtty-station-grid,.rtty-tx-actions,.rtty-tune-row,.rtty-log-preview,.rtty-log-form{grid-template-columns:1fr}
 }

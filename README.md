@@ -30,11 +30,11 @@ FreeRig710 is not affiliated with or endorsed by Yaesu. "Yaesu" and "FT-710" ide
 - [Installation](docs/INSTALLATION.md) - ESP-IDF setup, build, flash, boot validation and local web serving.
 - [Radio setup](docs/RADIO_SETUP.md) - FT-710 CAT/audio/display settings and transmit safety checks.
 - [Main interface](docs/MAIN_INTERFACE.md) - radio display, VFOs, receiver controls, audio/PTT, memories, CW/SSTV and settings.
-- [FT8](docs/FT8.md) - integrated browser FT8 operation, waterfall, QSO automation and local/QRZ logging.
-- [JS8](docs/JS8.md) - native browser JS8 operation, heartbeat replies, directed messages and QRZ ADIF mapping.
-- [RTTY](docs/RTTY.md) - browser Baudot/ITA2 AFSK decode and staged digital audio transmit.
+- [FT8](docs/FT8.md) - integrated browser FT8 operation, waterfall, QSO automation and shared logging.
+- [JS8](docs/JS8.md) - native browser JS8 operation, heartbeat replies, directed messages and shared logging.
+- [RTTY](docs/RTTY.md) - browser Baudot/ITA2 AFSK decode, staged digital audio transmit and manual logging.
 - [Winlink / ARDOP](docs/WINLINK.md) - browser Winlink client, gateway CSV import, dial/center frequency handling and DL2MAN credits.
-- [QRZ Logbook](docs/QRZ_LOGBOOK.md) - QRZ API key storage, QSO upload, import and sync.
+- [Logging](docs/QRZ_LOGBOOK.md) - QRZ API key storage, GridTracker UDP, QSO upload, ADI import and QRZ sync.
 - [Apache deployment](docs/APACHE.md) - HTTPS reverse proxy and form-login protection.
 - [Architecture](docs/ARCHITECTURE.md) - firmware/frontend components and API paths.
 - [Printable case](hardware/case/README.md) - STL notes for the supplied ESP32-P4 enclosure.

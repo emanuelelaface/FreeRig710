@@ -173,6 +173,13 @@
       .slice(0, 16);
   }
 
+  function sanitizeGrid(value) {
+    return String(value || "")
+      .toUpperCase()
+      .replace(/[^A-R0-9]/g, "")
+      .slice(0, 8);
+  }
+
   function sharedStationSettings() {
     return window.FreeRig710Settings?.get?.() || { call: "", grid: "", backend: "" };
   }
@@ -182,6 +189,174 @@
     el.textContent = text;
     el.classList.remove("is-ok", "is-warn", "is-bad", "is-idle");
     if (status) el.classList.add(status);
+  }
+
+  function bandFromFrequency(hz) {
+    const f = Number(hz);
+    if (!Number.isFinite(f)) return "--";
+    const bands = [
+      [135700, 137800, "2190m"], [472000, 479000, "630m"],
+      [1800000, 2000000, "160m"], [3500000, 4000000, "80m"],
+      [5060000, 5450000, "60m"], [7000000, 7300000, "40m"],
+      [10100000, 10150000, "30m"], [14000000, 14350000, "20m"],
+      [18068000, 18168000, "17m"], [21000000, 21450000, "15m"],
+      [24890000, 24990000, "12m"], [28000000, 29700000, "10m"],
+      [50000000, 54000000, "6m"], [70000000, 71000000, "4m"],
+    ];
+    return bands.find(([lo, hi]) => f >= lo && f <= hi)?.[2] || "OUT OF BAND";
+  }
+
+  function isLogConfigured(status = state.qrzState) {
+    if (Object.prototype.hasOwnProperty.call(status || {}, "log_configured")) return Boolean(status.log_configured);
+    return Boolean(status?.configured);
+  }
+
+  function logDestinationLabel(status = state.qrzState) {
+    const destinations = [];
+    if (status?.qrz_enabled) destinations.push("QRZ");
+    if (status?.gridtracker_enabled) destinations.push("GridTracker");
+    return destinations.length ? destinations.join(" + ") : "no destination";
+  }
+
+  function logContext() {
+    const frequency = Number(state.dialHz);
+    const txPower = Number(state.radio?.tx_power_w);
+    return {
+      txFrequency: Number.isFinite(frequency) ? Math.round(frequency) : NaN,
+      rxFrequency: Number.isFinite(frequency) ? Math.round(frequency) : NaN,
+      band: state.activeBand || bandFromFrequency(frequency),
+      mode: "RTTY",
+      txPower: Number.isFinite(txPower) ? txPower : null,
+    };
+  }
+
+  function setLogStatus(text, status = "") {
+    const el = elements["rtty-log-status"];
+    if (!el) return;
+    el.textContent = text;
+    el.className = `rtty-page-pill${status ? ` ${status}` : ""}`;
+  }
+
+  function updateLogButton() {
+    const button = elements["rtty-log-submit"];
+    if (!button) return;
+    const call = sanitizeCall(elements["rtty-log-call"]?.value || "");
+    const context = logContext();
+    const radioReady = state.radio?.radio_power === "ON"
+      && Number.isFinite(context.txFrequency)
+      && context.band !== "--"
+      && context.band !== "OUT OF BAND";
+    button.classList.toggle("busy", state.qrzLogging);
+    button.textContent = state.qrzLogging ? "Logging..." : "Log QSO";
+    button.disabled = state.qrzLogging || !isLogConfigured(state.qrzState) || !radioReady || !call;
+  }
+
+  function renderLogPreview() {
+    if (!elements["rtty-log-tx-frequency"]) return;
+    const context = logContext();
+    elements["rtty-log-station-call"].textContent = state.qrzState?.station_callsign || sharedStationSettings().call || "Not configured";
+    elements["rtty-log-tx-frequency"].textContent = Number.isFinite(context.txFrequency) ? `${formatFrequencyDigits(context.txFrequency)} Hz` : "--.---.---";
+    elements["rtty-log-rx-frequency"].textContent = Number.isFinite(context.rxFrequency) ? `${formatFrequencyDigits(context.rxFrequency)} Hz` : "--.---.---";
+    elements["rtty-log-band"].textContent = context.band;
+    elements["rtty-log-mode"].textContent = context.mode;
+    elements["rtty-log-power"].textContent = context.txPower == null ? "--" : `${context.txPower} W`;
+    elements["rtty-log-utc"].textContent = `${new Date().toISOString().slice(0, 19).replace("T", " ")} UTC`;
+    updateLogButton();
+  }
+
+  function logQsoResultText(qso = {}, fallbackCall = "", context = {}) {
+    const qrzLogId = qso.destinations?.qrz?.logid || qso.logid || "";
+    const logIdText = qrzLogId ? ` · QRZ ${qrzLogId}` : "";
+    const destinations = qso.destinations
+      ? Object.entries(qso.destinations).filter(([, value]) => value?.enabled && value?.sent).map(([key]) => key === "qrz" ? "QRZ" : "GridTracker")
+      : [];
+    const destinationText = destinations.length ? ` · ${destinations.join(" + ")}` : "";
+    return `${qso.call || fallbackCall} logged on ${qso.band || context.band || "--"} · ${qso.submode || qso.mode || "RTTY"} · TX ${formatFrequencyDigits(qso.frequency_hz || context.txFrequency)} Hz${logIdText}${destinationText}`;
+  }
+
+  async function loadLogStatus() {
+    try {
+      const response = await api("/api/v1/log/status");
+      state.qrzState = response?.qrz || response?.log || response || state.qrzState;
+      if (isLogConfigured(state.qrzState)) {
+        setLogStatus("READY", "is-ok");
+        if (elements["rtty-log-result"] && /checking/i.test(elements["rtty-log-result"].textContent || "")) {
+          elements["rtty-log-result"].textContent = `Ready for ${logDestinationLabel(state.qrzState)}.`;
+        }
+      } else {
+        setLogStatus("NOT CONFIGURED", "is-bad");
+        if (elements["rtty-log-result"] && /checking/i.test(elements["rtty-log-result"].textContent || "")) {
+          elements["rtty-log-result"].textContent = "Configure QRZ and/or GridTracker in the main Settings panel.";
+        }
+      }
+      renderLogPreview();
+    } catch (error) {
+      setLogStatus("ERROR", "is-bad");
+      if (elements["rtty-log-result"]) elements["rtty-log-result"].textContent = error.message;
+    }
+  }
+
+  async function submitLog(event) {
+    if (event) event.preventDefault();
+    if (state.qrzLogging) return;
+    const call = sanitizeCall(elements["rtty-log-call"]?.value || "");
+    if (!call) {
+      if (elements["rtty-log-result"]) elements["rtty-log-result"].textContent = "Enter the other station callsign first.";
+      updateLogButton();
+      return;
+    }
+    const context = logContext();
+    if (!Number.isFinite(context.txFrequency) || context.band === "--" || context.band === "OUT OF BAND") {
+      if (elements["rtty-log-result"]) elements["rtty-log-result"].textContent = "Tune an amateur band before logging.";
+      updateLogButton();
+      return;
+    }
+    state.qrzLogging = true;
+    setLogStatus("LOGGING", "is-warn");
+    if (elements["rtty-log-result"]) elements["rtty-log-result"].textContent = `Logging ${call} to ${logDestinationLabel(state.qrzState)}...`;
+    updateLogButton();
+    try {
+      const payload = {
+        call,
+        mode: "RTTY",
+        timestamp_utc: new Date().toISOString(),
+        frequency_hz: Math.round(context.txFrequency),
+        rx_frequency_hz: Math.round(context.rxFrequency),
+        band: context.band,
+        grid: sanitizeGrid(elements["rtty-log-grid"]?.value || ""),
+        my_grid: sanitizeGrid(sharedStationSettings().grid || ""),
+        rst_sent: String(elements["rtty-log-rst-sent"]?.value || "").trim(),
+        rst_rcvd: String(elements["rtty-log-rst-rcvd"]?.value || "").trim(),
+        comment: String(elements["rtty-log-notes"]?.value || "").trim(),
+        my_rig: "Yaesu FT-710",
+      };
+      if (Number(context.txPower) > 0) payload.tx_power_w = Math.round(Number(context.txPower));
+      const accepted = await post("/api/v1/log/qso", payload);
+      const jobId = Number(accepted?.job?.job_id || 0);
+      if (!jobId) throw new Error("Log worker did not return a job id");
+      let job = accepted.job;
+      const deadline = Date.now() + 15000;
+      while (["queued", "running"].includes(job?.state)) {
+        if (Date.now() >= deadline) throw new Error("Log request timed out");
+        await sleep(300);
+        const status = await api("/api/v1/log/qso/status");
+        if (Number(status?.job?.job_id) === jobId) job = status.job;
+      }
+      if (job?.state !== "ok") throw new Error(job?.detail || "Log rejected QSO");
+      const qso = job.qso || {};
+      if (qso.adif) console.info("Log ADIF sent:", qso.adif);
+      setLogStatus("LOGGED", "is-ok");
+      if (elements["rtty-log-result"]) elements["rtty-log-result"].textContent = logQsoResultText(qso, call, context);
+      if (elements["rtty-log-call"]) elements["rtty-log-call"].value = "";
+      showToast(`${qso.call || call} logged`);
+    } catch (error) {
+      setLogStatus("ERROR", "is-bad");
+      if (elements["rtty-log-result"]) elements["rtty-log-result"].textContent = error.message;
+      showToast(error.message, true);
+    } finally {
+      state.qrzLogging = false;
+      updateLogButton();
+    }
   }
 
   class BaudotCodec {
@@ -753,6 +928,8 @@
     rxAccum: 0,
     rxAccumCount: 0,
     waterfallDragging: false,
+    qrzState: { configured: false, log_configured: false, station_callsign: null, qrz_enabled: true, gridtracker_enabled: false },
+    qrzLogging: false,
   };
 
   function cacheElements() {
@@ -770,6 +947,11 @@
       "rtty-signal", "rtty-my-call", "rtty-preset", "rtty-message",
       "rtty-send", "rtty-send-cq", "rtty-send-ry", "rtty-halt", "rtty-last-tx",
       "rtty-tx-detail", "rtty-tx-duration", "rtty-staged-bytes", "rtty-log",
+      "rtty-log-status", "rtty-log-station-call", "rtty-log-tx-frequency",
+      "rtty-log-rx-frequency", "rtty-log-band", "rtty-log-mode", "rtty-log-power",
+      "rtty-log-utc", "rtty-log-form", "rtty-log-call", "rtty-log-grid",
+      "rtty-log-rst-sent", "rtty-log-rst-rcvd", "rtty-log-notes", "rtty-log-submit",
+      "rtty-log-result",
       "toast",
     ].forEach((id) => {
       elements[id] = byId(id);
@@ -1805,6 +1987,20 @@
     elements["rtty-halt"]?.addEventListener("click", haltTransmit);
     elements["rtty-preset"]?.addEventListener("change", () => applyPreset(elements["rtty-preset"].value));
     elements["rtty-message"]?.addEventListener("input", () => setTxButtons());
+    elements["rtty-log-call"]?.addEventListener("input", () => {
+      const input = elements["rtty-log-call"];
+      const start = input.selectionStart;
+      input.value = sanitizeCall(input.value);
+      if (start != null) input.setSelectionRange(start, start);
+      updateLogButton();
+    });
+    elements["rtty-log-grid"]?.addEventListener("input", () => {
+      const input = elements["rtty-log-grid"];
+      const start = input.selectionStart;
+      input.value = sanitizeGrid(input.value);
+      if (start != null) input.setSelectionRange(start, start);
+    });
+    elements["rtty-log-form"]?.addEventListener("submit", submitLog);
     elements["rtty-waterfall-hitbox"]?.addEventListener("pointerdown", (event) => {
       state.waterfallDragging = true;
       try { elements["rtty-waterfall-hitbox"].setPointerCapture?.(event.pointerId); } catch {}
@@ -1830,13 +2026,17 @@
     elements["rtty-waterfall-hitbox"]?.addEventListener("pointercancel", finishWaterfall);
     window.addEventListener("resize", () => buildWaterfall());
     window.addEventListener("beforeunload", () => closeAudio(false));
-    window.addEventListener("freerig710-settings-changed", () => applySharedStationSettings());
+    window.addEventListener("freerig710-settings-changed", () => {
+      applySharedStationSettings();
+      void loadLogStatus();
+    });
   }
 
   function tick() {
     if (elements["rtty-utc"]) elements["rtty-utc"].textContent = `${formatUtc()} UTC`;
     updatePill(elements["rtty-clock-state"], "UTC live", "is-ok");
     setTxButtons();
+    renderLogPreview();
   }
 
   function initDecoder() {
@@ -1858,6 +2058,7 @@
     bindEvents();
     setRxUi();
     setTxButtons();
+    await loadLogStatus();
     initAudioOwnerChannel();
     tick();
     setInterval(tick, 250);

@@ -13,9 +13,9 @@ FreeRig710 moves the old Raspberry Pi responsibilities into the ESP32-P4 firmwar
 - `ft710_cat` — CP2105 CAT-2/AUX transport and radio state polling/control.
 - `ft710_audio` — UAC1 receive stream.
 - `ft710_audio_tx` — UAC1 transmit stream.
-- `freerig_config` — NVS station/QRZ/memory metadata.
+- `freerig_config` — NVS station/logging/memory metadata.
 - `freerig_memories` — FT-710 memory synchronization.
-- `web_api` — HTTP API, MJPEG, bidirectional audio WebSocket, QRZ and FT8 TX services.
+- `web_api` — HTTP API, MJPEG, bidirectional audio WebSocket, QRZ/GridTracker logging and FT8 TX services.
 
 ## Frontend
 

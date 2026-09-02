@@ -112,6 +112,28 @@
       </article>
     </section>
 
+    <section class="card rtty-log-card" aria-label="RTTY log">
+      <div class="rtty-section-title"><strong>Log</strong><span id="rtty-log-status">CHECKING</span></div>
+      <dl class="status-list rtty-log-preview">
+        <div><dt>My call</dt><dd id="rtty-log-station-call">Not configured</dd></div>
+        <div><dt>TX frequency</dt><dd id="rtty-log-tx-frequency">--.---.---</dd></div>
+        <div><dt>RX frequency</dt><dd id="rtty-log-rx-frequency">--.---.---</dd></div>
+        <div><dt>Band</dt><dd id="rtty-log-band">--</dd></div>
+        <div><dt>Mode</dt><dd id="rtty-log-mode">RTTY</dd></div>
+        <div><dt>Power</dt><dd id="rtty-log-power">--</dd></div>
+        <div><dt>UTC</dt><dd id="rtty-log-utc">--</dd></div>
+      </dl>
+      <form id="rtty-log-form" class="rtty-log-form">
+        <label><span>Call</span><input id="rtty-log-call" type="text" minlength="3" maxlength="16" pattern="[A-Za-z0-9/]+" autocomplete="off" autocapitalize="characters" spellcheck="false" required></label>
+        <label><span>Grid</span><input id="rtty-log-grid" type="text" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+        <label><span>RST sent</span><input id="rtty-log-rst-sent" type="text" maxlength="7" value="599"></label>
+        <label><span>RST received</span><input id="rtty-log-rst-rcvd" type="text" maxlength="7" value="599"></label>
+        <label class="rtty-log-notes"><span>Notes</span><input id="rtty-log-notes" type="text" maxlength="120" placeholder="Optional"></label>
+        <button id="rtty-log-submit" type="submit" disabled>Log QSO</button>
+      </form>
+      <p id="rtty-log-result" class="help rtty-log-result" aria-live="polite">Log status checking...</p>
+    </section>
+
     <details class="card rtty-diagnostics-card">
       <summary>Developer diagnostics</summary>
       <pre id="rtty-log" class="rtty-log">RTTY page loading...</pre>

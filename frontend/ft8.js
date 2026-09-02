@@ -173,6 +173,7 @@
       this.applySharedStationSettings();
       window.addEventListener("freerig710-settings-changed", () => {
         this.applySharedStationSettings();
+        void this.refreshStationIdentity();
         this.recomputeQsoNext();
         this.renderDecodeRows();
         this.renderQso();
@@ -686,7 +687,7 @@
 
     async initLogbook() {
       const lb = window.FreeRig710FT8Logbook;
-      const status = id("ft8-adi-status"), progress = id("ft8-adi-progress"), drop = id("ft8-adi-drop"), fileInput = id("ft8-adi-file");
+      const status = id("ft8-adi-status");
       if (!lb) { if (status) status.textContent = "Logbook module unavailable"; return; }
       const renderIndexCount = async () => {
         try {
@@ -701,29 +702,6 @@
           return counts;
         } catch (error) { if (status) status.textContent = `Logbook error: ${error?.message || error}`; }
       };
-      const importFile = async (file) => {
-        if (!file) return;
-        if (status) { status.dataset.importing = "1"; status.textContent = `Importing ${file.name}…`; }
-        if (progress) progress.value = 0;
-        try {
-          const result = await lb.importAdiFile(file, { onProgress: (p) => {
-            if (progress) progress.value = p.total ? Math.min(100, Math.round(p.bytes * 100 / p.total)) : 0;
-            if (status) status.textContent = `Parsed ${p.parsed} · new ${p.imported} · duplicates ${p.duplicates} · errors ${p.errors}`;
-          }});
-          if (progress) progress.value = 100;
-          if (status) status.textContent = `Done · ${result.imported} new · ${result.duplicates} duplicates · ${result.errors} errors`;
-          await renderIndexCount();
-        } catch (error) {
-          if (status) status.textContent = `Import failed: ${error?.message || error}`;
-        } finally { if (status) delete status.dataset.importing; }
-      };
-      fileInput?.addEventListener("change", () => void importFile(fileInput.files?.[0]));
-      drop?.addEventListener("click", (event) => { if (event.target !== fileInput) fileInput?.click(); });
-      drop?.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); fileInput?.click(); } });
-      for (const eventName of ["dragenter","dragover"]) drop?.addEventListener(eventName, (event) => { event.preventDefault(); drop.classList.add("dragover"); });
-      for (const eventName of ["dragleave","drop"]) drop?.addEventListener(eventName, (event) => { event.preventDefault(); drop.classList.remove("dragover"); });
-      drop?.addEventListener("drop", (event) => void importFile(event.dataTransfer?.files?.[0]));
-      id("ft8-qrz-sync")?.addEventListener("click", () => void this.runQrzSync(renderIndexCount));
       window.addEventListener("freerig-ft8-logbook-updated", () => void renderIndexCount());
       try {
         await window.FreeRig710FT8CTY?.ready;
@@ -797,8 +775,8 @@
       const date=d(f.QSO_DATE);const toDate=x=>x.length===8?`${x.slice(0,4)}-${x.slice(4,6)}-${x.slice(6,8)}`:"";const toTime=x=>{const z=d(x).replace(/[^0-9]/g,"").padEnd(6,"0");return z?`${z.slice(0,2)}:${z.slice(2,4)}:${z.slice(4,6)}`:"";};
       const values={"ft8-log-call":f.CALL,"ft8-log-grid":f.GRIDSQUARE,"ft8-log-rst-sent":f.RST_SENT,"ft8-log-rst-rcvd":f.RST_RCVD,"ft8-log-date":toDate(date),"ft8-log-time-on":toTime(f.TIME_ON),"ft8-log-time-off":toTime(f.TIME_OFF),"ft8-log-freq":f.FREQ,"ft8-log-band":f.BAND,"ft8-log-power":f.TX_PWR,"ft8-log-comment":f.COMMENT};
       for(const [domId,value] of Object.entries(values)){const el=id(domId);if(el)el.value=d(value);}
-      if(id("ft8-log-local-state"))id("ft8-log-local-state").textContent=record.logStatus==="QRZ_LOGGED"?`QRZ LOGID ${record.qrzLogId||"confirmed"}`:"Local copy saved";
-      if(id("ft8-log-status"))id("ft8-log-status").textContent=record.qrzError?`QRZ error: ${record.qrzError} · local copy retained`:"The QSO is already stored locally. QRZ can be retried without losing it.";
+      if(id("ft8-log-local-state"))id("ft8-log-local-state").textContent=record.logStatus==="QRZ_LOGGED"?`Logged${record.qrzLogId?` · QRZ ${record.qrzLogId}`:""}`:"Local copy saved";
+      if(id("ft8-log-status"))id("ft8-log-status").textContent=record.qrzError?`Log error: ${record.qrzError} · local copy retained`:"The QSO is already stored locally. Log destinations can be retried without losing it.";
       const dialog=id("ft8-log-dialog");if(dialog&&!dialog.open){if(typeof dialog.showModal==="function")dialog.showModal();else dialog.setAttribute("open","");}
     },
 
@@ -813,19 +791,19 @@
         if(!patch.CALL||!patch.BAND)throw new Error("Call and band are required");
         let record=await lb.replaceLocalQso(this.currentLocalQsoId,patch,{logStatus:"QRZ_PENDING",qrzError:""});this.currentLocalQsoId=record.id;this.currentLocalQsoRecord=record;
         if(this.qsoMachine)this.syncQsoFromMachine(this.qsoMachine.markQrzPending({unixMs:this.getServerUnixMs()}));
-        if(status)status.textContent="Sending local QSO to QRZ…";
+        if(status)status.textContent="Sending local QSO to configured logs…";
         const original=record.fields||{};const hz=Math.round(freqMhz*1e6);const rxHz=Number(original.FREQ_RX)>0?Math.round(Number(original.FREQ_RX)*1e6):hz;
-        const accepted=await post("/api/v1/qrz/log",{call:patch.CALL,grid:patch.GRIDSQUARE,my_grid:original.MY_GRIDSQUARE||this.myGrid,rst_sent:patch.RST_SENT,rst_rcvd:patch.RST_RCVD,mode:"FT8",timestamp_utc:`${date}T${timeOn}Z`,timestamp_off_utc:`${date}T${timeOff}Z`,frequency_hz:hz,rx_frequency_hz:rxHz,band:patch.BAND,tx_power_w:Number(patch.TX_PWR)||0,comment:patch.COMMENT,my_rig:original.MY_RIG||"Yaesu FT-710"});
-        const jobId=Number(accepted?.job?.job_id||0);if(!jobId)throw new Error("QRZ worker did not return a job id");let job=accepted.job;const deadline=Date.now()+20000;
-        while(["queued","running"].includes(job?.state)&&Date.now()<deadline){await new Promise(r=>setTimeout(r,300));const r=await api("/api/v1/qrz/log/status");if(Number(r?.job?.job_id)===jobId)job=r.job;}
-        if(job?.state!=="ok")throw new Error(job?.detail||"QRZ logging not confirmed");
+        const accepted=await post("/api/v1/log/qso",{call:patch.CALL,grid:patch.GRIDSQUARE,my_grid:original.MY_GRIDSQUARE||this.myGrid,rst_sent:patch.RST_SENT,rst_rcvd:patch.RST_RCVD,mode:"FT8",timestamp_utc:`${date}T${timeOn}Z`,timestamp_off_utc:`${date}T${timeOff}Z`,frequency_hz:hz,rx_frequency_hz:rxHz,band:patch.BAND,tx_power_w:Number(patch.TX_PWR)||0,comment:patch.COMMENT,my_rig:original.MY_RIG||"Yaesu FT-710"});
+        const jobId=Number(accepted?.job?.job_id||0);if(!jobId)throw new Error("Log worker did not return a job id");let job=accepted.job;const deadline=Date.now()+20000;
+        while(["queued","running"].includes(job?.state)&&Date.now()<deadline){await new Promise(r=>setTimeout(r,300));const r=await api("/api/v1/log/qso/status");if(Number(r?.job?.job_id)===jobId)job=r.job;}
+        if(job?.state!=="ok")throw new Error(job?.detail||"Log not confirmed");
         const logid=String(job?.qso?.logid||"");record=await lb.updateQso(this.currentLocalQsoId,{logStatus:"QRZ_LOGGED",qrzLogId:logid,qrzError:"",fields:{APP_FREERIG_STATUS:"QRZ_LOGGED",...(logid?{APP_QRZLOG_LOGID:logid}:{})}});this.currentLocalQsoRecord=record;
         if(this.qsoMachine)this.syncQsoFromMachine(this.qsoMachine.markQrzLogged({unixMs:this.getServerUnixMs()}));
-        if(status)status.textContent=`QRZ logged${logid?` · LOGID ${logid}`:""}`;if(id("ft8-log-local-state"))id("ft8-log-local-state").textContent=logid?`QRZ LOGID ${logid}`:"QRZ confirmed";
+        if(status)status.textContent=`Logged${logid?` · QRZ ${logid}`:""}`;if(id("ft8-log-local-state"))id("ft8-log-local-state").textContent=logid?`Logged · QRZ ${logid}`:"Logged";
         const dialog=id("ft8-log-dialog");if(dialog?.open)dialog.close();
       }catch(error){
         const msg=error?.message||String(error);if(this.currentLocalQsoId&&lb){try{this.currentLocalQsoRecord=await lb.updateQso(this.currentLocalQsoId,{logStatus:"LOCAL_SAVED",qrzError:msg,fields:{APP_FREERIG_STATUS:"LOCAL_SAVED"}});}catch(_){}}
-        if(this.qsoMachine?.snapshot?.().state==="QRZ_PENDING")this.syncQsoFromMachine(this.qsoMachine.markLocalSaved({unixMs:this.getServerUnixMs()}));if(status)status.textContent=`QRZ failed: ${msg} · local QSO retained`;
+        if(this.qsoMachine?.snapshot?.().state==="QRZ_PENDING")this.syncQsoFromMachine(this.qsoMachine.markLocalSaved({unixMs:this.getServerUnixMs()}));if(status)status.textContent=`Log failed: ${msg} · local QSO retained`;
       }finally{if(submit)submit.disabled=false;this.renderQso();}
     },
 
@@ -1047,7 +1025,7 @@
     async refreshStationIdentity() {
       if (typeof window.FreeRig710API?.api !== "function") return;
       try {
-        const result = await window.FreeRig710API.api("/api/v1/qrz/status");
+        const result = await window.FreeRig710API.api("/api/v1/log/status");
         const call = normalizeCall(result?.qrz?.station_callsign || result?.station_callsign);
         if (call && window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ call });
         else if (call && !this.myCall) this.myCall = call;
@@ -1127,7 +1105,7 @@
 
     renderQso() {
       const q = this.qso;
-      if (id("ft8-my-call")) id("ft8-my-call").textContent = this.myCall || "not configured in QRZ";
+      if (id("ft8-my-call")) id("ft8-my-call").textContent = this.myCall || "not configured in Settings";
       if (id("ft8-dx-call")) id("ft8-dx-call").value = q.dxCall || "";
       if (id("ft8-dx-grid")) id("ft8-dx-grid").value = q.dxGrid || "";
       if (id("ft8-qso-state")) id("ft8-qso-state").textContent = q.state.replaceAll("_", " ");

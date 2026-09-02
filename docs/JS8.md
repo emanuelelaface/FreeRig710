@@ -13,7 +13,8 @@ The page uses the shared station settings from the main Settings dialog:
 - Call;
 - Grid;
 - ESP32 backend;
-- QRZ Logbook API key.
+- QRZ Logbook destination;
+- GridTracker UDP destination.
 
 Call and grid are shown in JS8 as read-only values so all digital pages use the same station identity.
 
@@ -48,7 +49,7 @@ are already replies and should not be treated as new heartbeat requests.
 
 JS8 messages can span multiple frames. That is normal: longer free-text messages are split into the number of JS8 frames required by the selected submode and payload size.
 
-QRZ Logbook submission uses ADIF mode `MFSK` with `SUBMODE=JS8`, because QRZ maps JS8 as an MFSK submode.
+The JS8 **Log QSO** form submits the prepared QSO to the enabled shared Log destinations. QRZ Logbook submission uses ADIF mode `MFSK` with `SUBMODE=JS8`, because QRZ maps JS8 as an MFSK submode. GridTracker receives the same ADIF record by UDP when enabled.
 
 ## Upstream Codec
 

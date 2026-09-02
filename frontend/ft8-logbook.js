@@ -483,6 +483,7 @@
       bytes += value.byteLength;
       const records = parser.feed(decoder.decode(value, { stream: true }), false);
       if (records.length) {
+        options.onRecords?.(records);
         const r = await putBatch(records, options.source || `file:${file.name || "adi"}`);
         imported += r.imported; duplicates += r.duplicates;
       }
@@ -490,6 +491,7 @@
     }
     const finalRecords = parser.feed(decoder.decode() || "", true);
     if (finalRecords.length) {
+      options.onRecords?.(finalRecords);
       const r = await putBatch(finalRecords, options.source || `file:${file.name || "adi"}`);
       imported += r.imported; duplicates += r.duplicates;
     }

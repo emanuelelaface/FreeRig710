@@ -1,69 +1,47 @@
-# QRZ Logbook integration
+# Logging integrations
 
-FreeRig710 uses the QRZ Logbook API for two purposes:
+FreeRig710 has a shared **Log** configuration used by the main radio page, FT8, JS8 and RTTY.
 
-1. upload completed QSOs;
-2. import/synchronize worked QSOs so the FT8 interface can identify worked calls, countries and DXCC entities.
+Supported destinations:
 
-## Obtain the API key
+- **QRZ Logbook**: the ESP32 uploads QSOs to `https://logbook.qrz.com/api` with the stored QRZ API key.
+- **GridTracker**: the ESP32 sends ADIF records by UDP to the configured GridTracker host and port. The default UDP port is `2237`.
 
-QRZ's Logbook API page is:
+The browser builds or selects the QSO data, but the ESP32 performs the QRZ HTTPS request and the GridTracker UDP send. QRZ secrets are not returned to browser JavaScript.
 
-<https://www.qrz.com/docs/logbook30/api>
+## Configure Logging
 
-Select the API key belonging to the logbook/callsign you want FreeRig710 to use. QRZ states that the key grants full read/write access to that logbook; treat it as a password. QRZ also documents Logbook API access as a subscriber feature.
+Open the main radio page and press **Settings**.
 
-## Store the key in FreeRig710
+1. Enter **Call** and optionally **Grid**.
+2. In **Log**, enable **Log to QRZ** and/or **Log to GridTracker**.
+3. For QRZ, enter the **QRZ Logbook API key**.
+4. For GridTracker, enter the IP address reachable from the ESP32 network and the UDP port. Use `2237` unless GridTracker is configured differently.
+5. Click **Save Settings**.
 
-Open the main radio page and press the Settings button in the header.
+GridTracker must be configured to receive ADIF UDP broadcasts. If the browser is remote, use the IP route as seen by the ESP32, not necessarily the browser computer's local address.
 
-1. Enter **Call**.
-2. Enter the **QRZ Logbook API key**.
-3. Click **Save Settings**.
+Leaving the QRZ key field blank while saving keeps the existing saved key. Disabling both log destinations is allowed; manual/automatic QSO logging will then stay disabled until at least one destination is configured.
 
-The ESP32 stores:
+## Manual QSO Logging
 
-- callsign as NVS key `qrz_call`;
-- API key as NVS key `qrz_key`.
+The main page, FT8, JS8 and RTTY expose a **Log QSO** form. Submitting it calls the ESP32 once; the firmware then sends the generated ADIF record to every enabled destination.
 
-The browser can query whether a key is configured, but the API does not return the secret itself.
+If both QRZ and GridTracker are enabled, the job succeeds only when both destinations accept the QSO. The status JSON includes per-destination details so the UI can report partial failures.
 
-Leaving the key field blank while saving keeps the existing saved key. The firmware validates the callsign before committing configuration.
+## ADI Import And QRZ Sync
 
-## Manual log from the main page
+The **Log** section in Settings contains:
 
-The main QRZ panel builds a QSO from the current radio context and submits it through the ESP32 to `https://logbook.qrz.com/api`. FT8 and JS8 can also submit completed or prepared contacts through the same ESP32 QRZ path.
+- **Import ADI file**: imports local ADIF into the shared browser IndexedDB logbook/worked cache.
+- **QRZ Sync**: fetches QRZ Logbook ADIF pages and replaces the shared local logbook with the authoritative QRZ result.
 
-The ESP32 performs the QRZ HTTPS request, so the API key never needs to be exposed to browser JavaScript.
+When GridTracker logging is enabled, imported or QRZ-synced ADIF records are also forwarded through the ESP32 to GridTracker by UDP. ADI import does not bulk-upload the whole file back to QRZ; QRZ receives QSO uploads through the normal manual/automatic **Log QSO** flow.
 
-## FT8 local log
+## FT8 Local Log
 
 Completed FT8 contacts are first stored locally in the browser. The FT8 logbook maintains an IndexedDB database containing QSO records and worked indexes.
 
-This means the worked cache is **browser/profile specific**. If you open FreeRig710 from a different computer, browser or private profile, run an import/sync there as well.
+This worked cache is browser/profile specific. If you open FreeRig710 from a different computer, browser or private profile, run an ADI import or QRZ Sync there as well.
 
-## QRZ Import
-
-Use **QRZ Import** for the first population/rebuild of the local worked database. The import walks QRZ pages, parses ADIF and merges contacts into local IndexedDB.
-
-The status reports fetched/parsed/new/duplicate counts plus worked calls, DXCC and countries. If QRZ reports records but ADIF parsing returns zero, the operation fails visibly rather than reporting a misleading successful zero-record import.
-
-## QRZ Sync
-
-Use **QRZ Sync** after the full import. It resumes from stored synchronization state and merges newer records without rebuilding everything from scratch.
-
-## Worked / country / DXCC behavior
-
-FreeRig710 tracks several concepts separately:
-
-- **worked call** — exact station callsign already present in the log;
-- **worked country** — normalized geographic country family used for visual country highlighting;
-- **worked DXCC** — DXCC entity when the ADIF data provides it.
-
-Country aliases are canonicalized, so examples such as `Netherlands`/`The Netherlands` compare as one country. England, Scotland, Wales and Northern Ireland compare as **United Kingdom** for the broad country highlight, but remain separate DXCC entities where DXCC data is available.
-
-If an imported QSO has a Maidenhead locator but incomplete country/region fields, FreeRig710 can enrich the local worked index using its offline grid geography table.
-
-## Automatic FT8 logging
-
-The completed-QSO dialog can upload the already-saved local QSO to QRZ. On a successful QRZ result the dialog closes automatically. If QRZ fails, it remains open so the operation can be retried without losing the local contact.
+The completed-QSO dialog can automatically or manually submit the already-saved local QSO to the enabled log destinations. On success the dialog closes automatically. If logging fails, the local copy remains and the dialog stays available for retry.

@@ -86,11 +86,13 @@ Click the desired Band Activity row. FreeRig710 extracts the transmitting CALL, 
 The FT8 logbook is local-first:
 
 1. a completed contact is stored in IndexedDB;
-2. the completion dialog can upload it to QRZ;
-3. on QRZ success the dialog closes automatically;
-4. on QRZ failure the local copy remains and the dialog stays available for retry.
+2. the completion dialog can submit it to the enabled Log destinations;
+3. on successful logging the dialog closes automatically;
+4. on logging failure the local copy remains and the dialog stays available for retry.
 
-Use **QRZ Import** for a full worked-history population and **QRZ Sync** for later incremental updates. ADIF files can also be dropped/imported locally.
+The **Auto log completed QSO** checkbox keeps the existing automatic prompt behavior after an FT8 QSO closes. Manual **Log QSO** is also available from the FT8 Log section.
+
+Use the main page **Settings > Log** section for ADI file import and QRZ Sync. Those tools update the shared browser logbook/worked cache used by FT8 and the other logging panels; when GridTracker is enabled they also forward imported/synced ADIF records to GridTracker by UDP through the ESP32.
 
 ## External FT8 runtime dependencies
 

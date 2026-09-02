@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stddef.h>
 
 #include "esp_err.h"
@@ -11,6 +12,8 @@ extern "C" {
 
 #define FREERIG_QRZ_CALLSIGN_MAX 17
 #define FREERIG_QRZ_API_KEY_MAX 129
+#define FREERIG_GRIDTRACKER_HOST_MAX 65
+#define FREERIG_GRIDTRACKER_DEFAULT_PORT 2237U
 #define FREERIG_WIREGUARD_CONFIG_TEXT_MAX 3073
 #define FREERIG_MEMORY_CATEGORY_MAX 25
 #define FREERIG_MEMORY_NOTE_MAX 241
@@ -19,6 +22,10 @@ typedef struct {
     char station_callsign[FREERIG_QRZ_CALLSIGN_MAX];
     char api_key[FREERIG_QRZ_API_KEY_MAX];
     bool api_key_set;
+    bool qrz_enabled;
+    bool gridtracker_enabled;
+    char gridtracker_host[FREERIG_GRIDTRACKER_HOST_MAX];
+    uint16_t gridtracker_port;
 } freerig_qrz_config_t;
 
 typedef struct {
@@ -30,6 +37,9 @@ typedef struct {
 esp_err_t freerig_config_init(void);
 esp_err_t freerig_config_get_qrz(freerig_qrz_config_t *out);
 esp_err_t freerig_config_set_qrz(const char *station_callsign, const char *api_key_or_null);
+esp_err_t freerig_config_set_log(const char *station_callsign, const char *api_key_or_null,
+                                 bool qrz_enabled, bool gridtracker_enabled,
+                                 const char *gridtracker_host_or_null, uint16_t gridtracker_port);
 esp_err_t freerig_config_get_wireguard(freerig_wireguard_config_t *out);
 esp_err_t freerig_config_set_wireguard(const char *config_text_or_null, bool enable_on_boot);
 esp_err_t freerig_config_get_memory_metadata(int slot, char *category, size_t category_size, char *note, size_t note_size);

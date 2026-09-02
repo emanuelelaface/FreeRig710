@@ -90,7 +90,7 @@ For a development machine, `tools/serve_gui.py` can serve the static frontend; o
 2. Verify live video.
 3. Change frequency/mode at low risk and confirm the radio follows.
 4. Enable browser RX audio.
-5. Configure station Call/Grid and QRZ only after normal CAT/network operation is stable.
+5. Configure station Call/Grid and logging destinations only after normal CAT/network operation is stable.
 6. For FT8, JS8 and Winlink, start with low RF power or a dummy load.
 7. Wait for **CLOCK SYNC** before automatic digital TX.
 8. Verify the selected digital-mode band configures VFO A/B as expected before transmitting.

@@ -61,9 +61,11 @@ CW decoder/keyer and SSTV receive decoding share the normal browser receive-audi
 
 Controls TX power, tuner enable/disable and tune.
 
-## Settings And QRZ Log
+## Settings And Log
 
-The Settings dialog stores the shared station callsign, grid, QRZ Logbook API key and ESP32 backend used by the main page, FT8, JS8, RTTY and Winlink. The QRZ Log panel provides manual QSO submission from the current radio context. See `QRZ_LOGBOOK.md`.
+The Settings dialog stores the shared station callsign, grid, ESP32 backend, QRZ Logbook destination and GridTracker UDP destination used by the main page, FT8, JS8, RTTY and Winlink.
+
+The **Log** section also contains ADI file import and QRZ Sync for the shared local worked/QSO database. The main Log panel provides manual QSO submission from the current radio context to the enabled destinations. See `QRZ_LOGBOOK.md`.
 
 ## Radio status and backend
 

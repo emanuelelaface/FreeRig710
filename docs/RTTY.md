@@ -8,4 +8,6 @@ Selecting a band configures the FT-710 for DATA-U simplex by default, keeps the 
 
 The Mark and Shift controls tune the browser audio decoder and transmitter tones. The waterfall shows the full 200-3000 Hz DATA-U audio span, matching the AFSK path used for transmit. These controls do not move the FT-710 IF display or change the radio's internal RTTY tone menu. Use the waterfall click target, Auto Mark, or Auto RX to align the browser decoder with the received mark/space pair.
 
+The RTTY page includes a **Log QSO** panel matching the main, FT8 and JS8 logging flow. It builds an ADIF RTTY QSO from the current radio context and submits it through the ESP32 to the enabled shared Log destinations.
+
 RTTY transmit is a high-duty-cycle mode. Start with low RF power, keep ALC below the onset point, and verify the mark/space tones on a dummy load before operating on air. Native FT-710 RTTY-U/RTTY-L FSK transmit would need firmware support for the radio keying path, such as RTS/DTR or DAKY, instead of browser audio.

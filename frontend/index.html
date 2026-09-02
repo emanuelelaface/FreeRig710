@@ -64,10 +64,43 @@
             <span class="control-label">Winlink Password</span>
             <input id="settings-winlink-password" type="password" maxlength="128" autocomplete="new-password" placeholder="Leave blank to keep saved password">
           </label>
-          <label>
-            <span class="control-label">QRZ Logbook API key</span>
-            <input id="settings-qrz-api-key" type="password" maxlength="128" autocomplete="new-password" placeholder="Leave blank to keep saved key">
-          </label>
+          <fieldset class="settings-section settings-log-section">
+            <legend>Log</legend>
+            <label class="settings-check-row">
+              <span>Log to QRZ</span>
+              <input id="settings-log-qrz-enable" type="checkbox" checked>
+            </label>
+            <label>
+              <span class="control-label">QRZ Logbook API key</span>
+              <input id="settings-qrz-api-key" type="password" maxlength="128" autocomplete="new-password" placeholder="Leave blank to keep saved key">
+            </label>
+            <label class="settings-check-row">
+              <span>Log to GridTracker</span>
+              <input id="settings-log-gridtracker-enable" type="checkbox">
+            </label>
+            <div class="settings-two-column">
+              <label>
+                <span class="control-label">GridTracker IP</span>
+                <input id="settings-gridtracker-host" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="192.168.1.50">
+              </label>
+              <label>
+                <span class="control-label">GridTracker UDP port</span>
+                <input id="settings-gridtracker-port" type="number" min="1" max="65535" step="1" value="2237">
+              </label>
+            </div>
+            <div class="settings-log-tools">
+              <label class="settings-adi-import" for="settings-adi-file">
+                <span class="control-label">Import ADI file</span>
+                <input id="settings-adi-file" type="file" accept=".adi,text/plain">
+              </label>
+              <button id="settings-qrz-sync" class="secondary" type="button">QRZ Sync</button>
+            </div>
+            <div class="settings-log-progress" aria-live="polite">
+              <progress id="settings-adi-progress" max="100" value="0"></progress>
+              <strong id="settings-logbook-status">Logbook tools readying…</strong>
+            </div>
+            <p id="settings-log-status" class="help" aria-live="polite">Log settings are stored on the ESP32.</p>
+          </fieldset>
           <label>
             <span class="control-label">ESP32 backend</span>
             <input id="settings-backend" type="text" autocomplete="off" spellcheck="false" placeholder="http://ft710.local">
@@ -591,14 +624,14 @@
       </article>
 
 
-      <article class="card panel-card qrz-card" data-panel-id="qrz-log">
+      <article class="card panel-card qrz-card" data-panel-id="log">
         <div class="panel-heading-row">
-          <h2>QRZ Log</h2>
+          <h2>Log</h2>
           <span id="qrz-log-status" class="qrz-status">CHECKING</span>
         </div>
-        <p class="help">The browser captures the current QSO context and asks the ESP32 to submit it to QRZ. Station callsign and Logbook API key are stored on the ESP32; the key is never returned to the browser.</p>
+        <p class="help">The browser captures the current QSO context and asks the ESP32 to submit it to the enabled log destinations. QRZ credentials and GridTracker UDP target are stored on the ESP32.</p>
 
-        <p id="qrz-config-state" class="help">Reading QRZ configuration from ESP32…</p>
+        <p id="qrz-config-state" class="help">Reading Log configuration from ESP32…</p>
 
         <dl class="status-list qrz-preview">
           <div><dt>My call</dt><dd id="qrz-station-call">Not configured</dd></div>
@@ -616,7 +649,7 @@
             <input id="qrz-call" class="qrz-call-input" type="text" minlength="3" maxlength="16" pattern="[A-Za-z0-9/]+" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="IZ0ABC" required>
           </label>
           <label>
-            <span class="control-label">QRZ mode</span>
+            <span class="control-label">Mode</span>
             <select id="qrz-log-mode">
               <option value="AUTO">AUTO · from radio</option>
               <option value="FT8">FT8</option>
@@ -631,9 +664,9 @@
               <option value="SSTV">SSTV</option>
             </select>
           </label>
-          <button id="qrz-log-submit" class="wide" type="submit" disabled>LOG QSO TO QRZ</button>
+          <button id="qrz-log-submit" class="wide" type="submit" disabled>LOG QSO</button>
         </form>
-        <p id="qrz-log-result" class="help qrz-result" aria-live="polite">Configure your callsign and QRZ Logbook API key above.</p>
+        <p id="qrz-log-result" class="help qrz-result" aria-live="polite">Configure at least one log destination in Settings.</p>
       </article>
 
       <article class="card panel-card" data-panel-id="radio-status">
@@ -670,6 +703,8 @@
 
   <script src="config.js?v=1.0"></script>
   <script src="settings.js?v=1.0-settings3"></script>
+  <script src="ft8-cty.js?v=1.0-cty2"></script>
+  <script src="ft8-logbook.js?v=1.0-country8"></script>
   <script src="cw.js?v=1.0"></script>
   <script src="sstv.js?v=1.0"></script>
   <script src="app.js?v=1.0-video-starting1"></script>

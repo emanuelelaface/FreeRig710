@@ -150,14 +150,12 @@
       <div class="ft8-compat-controls" hidden aria-hidden="true"><button id="ft8-generate-wave" type="button">Generate waveform</button><button id="ft8-send-wave" type="button" disabled>Live send disabled</button><button id="ft8-stop-wave" type="button" disabled>Halt audio</button></div>
     </section>
 
-    <section class="card ft8-logbook-box ft8-wsjtx-log" aria-label="FT8 local logbook">
-      <div class="ft8-page-section-title"><strong>Log QSO</strong><span id="ft8-logbook-count">0 worked calls</span></div>
+    <section class="card ft8-logbook-box ft8-wsjtx-log" aria-label="FT8 log">
+      <div class="ft8-page-section-title"><strong>Log</strong><span id="ft8-logbook-count">0 worked calls</span></div>
       <div class="ft8-logbook-actions">
-        <div id="ft8-adi-drop" class="ft8-adi-drop" tabindex="0" role="button" aria-label="Drop ADIF file here or choose a file"><strong>Import ADI File</strong><span>Drop .adi here</span><input id="ft8-adi-file" type="file" accept=".adi,text/plain"></div>
-        <div class="ft8-qrz-sync-controls" aria-label="QRZ Logbook synchronization"><button id="ft8-qrz-sync" class="secondary small" type="button" title="Authoritative full sync: replace the local worked log with QRZ Logbook">QRZ Sync</button><span id="ft8-qrz-sync-status">QRZ authoritative sync idle</span></div>
         <button id="ft8-log-qso" class="small" type="button" disabled>Log QSO</button>
       </div>
-      <div class="ft8-logbook-progress" aria-live="polite"><progress id="ft8-adi-progress" max="100" value="0"></progress><strong id="ft8-adi-status">IndexedDB readying…</strong></div>
+      <div class="ft8-logbook-progress" aria-live="polite"><strong id="ft8-adi-status">IndexedDB readying…</strong></div>
       <p class="help" id="ft8-selected-worked">Select a station to show worked-before history.</p>
     </section>
 
@@ -177,8 +175,8 @@
           <label><span>Power W</span><input id="ft8-log-power" type="number" min="1" max="1000"></label>
           <label class="ft8-log-comment"><span>Comment</span><input id="ft8-log-comment" maxlength="150"></label>
         </div>
-        <label class="ft8-auto-log-option"><span>Auto log completed QSO to QRZ</span><input id="ft8-auto-log-qrz" type="checkbox"></label>
-        <p id="ft8-log-status" class="help">The QSO is already stored locally. QRZ can be retried without losing it.</p>
+        <label class="ft8-auto-log-option"><span>Auto log completed QSO</span><input id="ft8-auto-log-qrz" type="checkbox"></label>
+        <p id="ft8-log-status" class="help">The QSO is already stored locally. Log destinations can be retried without losing it.</p>
         <div class="ft8-dialog-actions">
           <button id="ft8-log-submit" type="submit">Log QSO</button>
           <button id="ft8-log-close" class="secondary" type="button">Close</button>
@@ -212,7 +210,7 @@
       <p id="ft8-detail" class="help">FT8 engine status.</p>
     </details>
 
-    <p class="help ft8-page-footer-status">FreeRig710 · integrated FT8 operating console · offline geography · worked-call/DXCC highlighting · QRZ logbook sync.</p>
+    <p class="help ft8-page-footer-status">FreeRig710 · integrated FT8 operating console · offline geography · worked-call/DXCC highlighting.</p>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </main>
 

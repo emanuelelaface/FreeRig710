@@ -23,6 +23,20 @@ static bool valid_callsign(const char *value)
     return true;
 }
 
+static bool valid_gridtracker_host(const char *value)
+{
+    if (value == NULL || value[0] == '\0') return true;
+    size_t n = strlen(value);
+    if (n >= FREERIG_GRIDTRACKER_HOST_MAX) return false;
+    bool has_alnum = false;
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = (unsigned char)value[i];
+        if (isalnum(c)) has_alnum = true;
+        if (!(isalnum(c) || c == '.' || c == '-' || c == ':')) return false;
+    }
+    return has_alnum;
+}
+
 static void uppercase_copy(char *dst, size_t dst_size, const char *src)
 {
     if (dst == NULL || dst_size == 0) return;
@@ -33,6 +47,18 @@ static void uppercase_copy(char *dst, size_t dst_size, const char *src)
     for (; *src && j + 1 < dst_size; ++src) {
         dst[j++] = (char)toupper((unsigned char)*src);
     }
+    while (j > 0 && isspace((unsigned char)dst[j - 1])) j--;
+    dst[j] = '\0';
+}
+
+static void trim_copy(char *dst, size_t dst_size, const char *src)
+{
+    if (dst == NULL || dst_size == 0) return;
+    dst[0] = '\0';
+    if (src == NULL) return;
+    while (*src && isspace((unsigned char)*src)) src++;
+    size_t j = 0;
+    for (; *src && j + 1 < dst_size; ++src) dst[j++] = *src;
     while (j > 0 && isspace((unsigned char)dst[j - 1])) j--;
     dst[j] = '\0';
 }
@@ -57,6 +83,8 @@ esp_err_t freerig_config_get_qrz(freerig_qrz_config_t *out)
 {
     if (out == NULL) return ESP_ERR_INVALID_ARG;
     memset(out, 0, sizeof(*out));
+    out->qrz_enabled = true;
+    out->gridtracker_port = FREERIG_GRIDTRACKER_DEFAULT_PORT;
     esp_err_t err = freerig_config_init();
     if (err != ESP_OK) return err;
     nvs_handle_t h;
@@ -68,6 +96,17 @@ esp_err_t freerig_config_get_qrz(freerig_qrz_config_t *out)
     size = sizeof(out->api_key);
     if (nvs_get_str(h, "qrz_key", out->api_key, &size) != ESP_OK) out->api_key[0] = '\0';
     out->api_key_set = out->api_key[0] != '\0';
+    uint8_t enabled = 1;
+    if (nvs_get_u8(h, "qrz_enabled", &enabled) != ESP_OK) enabled = 1;
+    out->qrz_enabled = enabled != 0;
+    enabled = 0;
+    if (nvs_get_u8(h, "gt_enabled", &enabled) != ESP_OK) enabled = 0;
+    out->gridtracker_enabled = enabled != 0;
+    size = sizeof(out->gridtracker_host);
+    if (nvs_get_str(h, "gt_host", out->gridtracker_host, &size) != ESP_OK) out->gridtracker_host[0] = '\0';
+    uint16_t port = FREERIG_GRIDTRACKER_DEFAULT_PORT;
+    if (nvs_get_u16(h, "gt_port", &port) != ESP_OK || port == 0) port = FREERIG_GRIDTRACKER_DEFAULT_PORT;
+    out->gridtracker_port = port;
     nvs_close(h);
     return ESP_OK;
 }
@@ -89,6 +128,46 @@ esp_err_t freerig_config_set_qrz(const char *station_callsign, const char *api_k
         else err = nvs_set_str(h, "qrz_key", api_key_or_null);
         if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
     }
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t freerig_config_set_log(const char *station_callsign, const char *api_key_or_null,
+                                 bool qrz_enabled, bool gridtracker_enabled,
+                                 const char *gridtracker_host_or_null, uint16_t gridtracker_port)
+{
+    char call[FREERIG_QRZ_CALLSIGN_MAX];
+    char host[FREERIG_GRIDTRACKER_HOST_MAX];
+    uppercase_copy(call, sizeof(call), station_callsign);
+    trim_copy(host, sizeof(host), gridtracker_host_or_null);
+    if (!valid_callsign(call)) return ESP_ERR_INVALID_ARG;
+    if (api_key_or_null != NULL && strlen(api_key_or_null) >= FREERIG_QRZ_API_KEY_MAX) return ESP_ERR_INVALID_SIZE;
+    if (!valid_gridtracker_host(host)) return ESP_ERR_INVALID_ARG;
+    if (gridtracker_enabled && (host[0] == '\0' || gridtracker_port == 0)) return ESP_ERR_INVALID_ARG;
+    if (gridtracker_port == 0) gridtracker_port = FREERIG_GRIDTRACKER_DEFAULT_PORT;
+
+    esp_err_t err = freerig_config_init();
+    if (err != ESP_OK) return err;
+    nvs_handle_t h;
+    err = nvs_open("freerig", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(h, "qrz_call", call);
+    if (err == ESP_OK && api_key_or_null != NULL) {
+        if (api_key_or_null[0] == '\0') err = nvs_erase_key(h, "qrz_key");
+        else err = nvs_set_str(h, "qrz_key", api_key_or_null);
+        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    }
+    if (err == ESP_OK) err = nvs_set_u8(h, "qrz_enabled", qrz_enabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_set_u8(h, "gt_enabled", gridtracker_enabled ? 1 : 0);
+    if (err == ESP_OK) {
+        if (host[0]) err = nvs_set_str(h, "gt_host", host);
+        else {
+            err = nvs_erase_key(h, "gt_host");
+            if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+        }
+    }
+    if (err == ESP_OK) err = nvs_set_u16(h, "gt_port", gridtracker_port);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     return err;

@@ -105,7 +105,16 @@ let clickTuneSending = false;
 let clickTuneHover = null;
 let rfSqlModeSwitching = false;
 let vfoSplitSwitching = false;
-let qrzState = { configured: false, station_callsign: null };
+let qrzState = {
+  configured: false,
+  log_configured: false,
+  station_callsign: null,
+  api_key_set: false,
+  qrz_enabled: true,
+  gridtracker_enabled: false,
+  gridtracker_host: "",
+  gridtracker_port: 2237,
+};
 let qrzLogging = false;
 
 const CLICK_TUNING_DEFAULTS = Object.freeze({
@@ -376,6 +385,33 @@ function qrzUtcText() {
   return new Date().toISOString().slice(0, 19).replace("T", " ");
 }
 
+function logDestinationLabel(state = qrzState) {
+  const destinations = [];
+  if (state?.qrz_enabled) destinations.push("QRZ");
+  if (state?.gridtracker_enabled) destinations.push("GridTracker");
+  return destinations.length ? destinations.join(" + ") : "no destination";
+}
+
+function isLogConfigured(state = qrzState) {
+  if (Object.prototype.hasOwnProperty.call(state || {}, "log_configured")) return Boolean(state.log_configured);
+  return Boolean(state?.configured);
+}
+
+function logQsoResultText(qso = {}, fallbackCall = "") {
+  const modeText = qso.submode || qso.mode || "--";
+  const qrzLogId = qso.destinations?.qrz?.logid || qso.logid || "";
+  const logIdText = qrzLogId ? ` · QRZ ${qrzLogId}` : "";
+  const rxText = Number(qso.rx_frequency_hz) !== Number(qso.frequency_hz)
+    ? ` · RX ${formatFrequency(qso.rx_frequency_hz)} Hz`
+    : "";
+  const powerText = Number(qso.tx_power_w) > 0 ? ` · ${qso.tx_power_w} W` : "";
+  const destinations = qso.destinations
+    ? Object.entries(qso.destinations).filter(([, value]) => value?.enabled && value?.sent).map(([key]) => key === "qrz" ? "QRZ" : "GridTracker")
+    : [];
+  const destinationText = destinations.length ? ` · ${destinations.join(" + ")}` : "";
+  return `${qso.call || fallbackCall} logged on ${qso.band || "--"} · ${modeText} · TX ${formatFrequency(qso.frequency_hz)} Hz${rxText}${powerText}${logIdText}${destinationText}`;
+}
+
 function setQrzLogStatus(text, state = "") {
   const element = byId("qrz-log-status");
   if (!element) return;
@@ -392,8 +428,8 @@ function updateQrzLogButton() {
     && Number.isFinite(context.txFrequency)
     && Boolean(context.radioMode);
   button.classList.toggle("busy", qrzLogging);
-  button.textContent = qrzLogging ? "LOGGING…" : "LOG QSO TO QRZ";
-  button.disabled = qrzLogging || !qrzState.configured || !radioReady || !call;
+  button.textContent = qrzLogging ? "LOGGING…" : "LOG QSO";
+  button.disabled = qrzLogging || !isLogConfigured(qrzState) || !radioReady || !call;
 }
 
 function renderQrzPreview(state = lastState) {
@@ -420,19 +456,19 @@ function applyQrzStatus(status, options = {}) {
   const configState = byId("qrz-config-state");
   const resultElement = byId("qrz-log-result");
   if (configState) {
-    configState.textContent = qrzState.configured
-      ? `Saved on ESP32 · API key ${qrzState.api_key_set ? "present" : "missing"} · edit in Settings`
-      : `Not configured · API key ${qrzState.api_key_set ? "present" : "missing"} · edit in Settings`;
+    configState.textContent = isLogConfigured(qrzState)
+      ? `Saved on ESP32 · ${logDestinationLabel(qrzState)} · edit in Settings`
+      : `Not configured · ${logDestinationLabel(qrzState)} · edit in Settings`;
   }
-  if (qrzState.configured) {
+  if (isLogConfigured(qrzState)) {
     setQrzLogStatus("READY", "ready");
     if (resultElement && !options.keepResult) {
-      resultElement.textContent = options.resultMessage || "Ready. QSO time is captured when you press LOG QSO TO QRZ.";
+      resultElement.textContent = options.resultMessage || "Ready. QSO time is captured when you press LOG QSO.";
     }
   } else {
     setQrzLogStatus("NOT CONFIGURED", "error");
     if (resultElement && !options.keepResult) {
-      resultElement.textContent = "Open Settings to enter your callsign and QRZ Logbook API key.";
+      resultElement.textContent = "Open Settings to enable QRZ and/or GridTracker.";
     }
   }
   renderQrzPreview();
@@ -458,7 +494,7 @@ async function initQrzLog() {
   byId("qrz-log-mode").addEventListener("change", () => renderQrzPreview());
 
   try {
-    const response = await api("/api/v1/qrz/status");
+    const response = await api("/api/v1/log/status");
     applyQrzStatus(response.qrz || response);
   } catch (error) {
     setQrzLogStatus("ERROR", "error");
@@ -474,44 +510,38 @@ async function initQrzLog() {
 
     qrzLogging = true;
     setQrzLogStatus("LOGGING", "working");
-    resultElement.textContent = `Sending ${call} to QRZ…`;
+    resultElement.textContent = `Logging ${call} to ${logDestinationLabel(qrzState)}…`;
     updateQrzLogButton();
     try {
-      const response = await post("/api/v1/qrz/log", {
+      const response = await post("/api/v1/log/qso", {
         call,
         mode: byId("qrz-log-mode").value,
         timestamp_utc: new Date().toISOString(),
       });
       const jobId = Number(response?.job?.job_id || 0);
-      if (!jobId) throw new Error("QRZ worker did not return a job id");
+      if (!jobId) throw new Error("Log worker did not return a job id");
 
       let job = response.job;
       const deadline = Date.now() + 15_000;
       while (job && (job.state === "queued" || job.state === "running")) {
-        if (Date.now() >= deadline) throw new Error("QRZ log request timed out");
+        if (Date.now() >= deadline) throw new Error("Log request timed out");
         resultElement.textContent = job.state === "queued"
-          ? `Queued ${call} for QRZ…`
-          : `Sending ${call} to QRZ…`;
+          ? `Queued ${call} for log…`
+          : `Logging ${call}…`;
         await new Promise((resolve) => window.setTimeout(resolve, 300));
-        const status = await api("/api/v1/qrz/log/status");
+        const status = await api("/api/v1/log/qso/status");
         if (Number(status?.job?.job_id) !== jobId) continue;
         job = status.job;
       }
       if (!job || job.state !== "ok") {
-        throw new Error(job?.detail || "QRZ rejected QSO");
+        throw new Error(job?.detail || "Log rejected QSO");
       }
       const qso = job.qso || {};
-      const modeText = qso.submode || qso.mode || "--";
-      const logIdText = qso.logid ? ` · Log ID ${qso.logid}` : "";
-      const rxText = Number(qso.rx_frequency_hz) !== Number(qso.frequency_hz)
-        ? ` · RX ${formatFrequency(qso.rx_frequency_hz)} Hz`
-        : "";
-      const powerText = Number(qso.tx_power_w) > 0 ? ` · ${qso.tx_power_w} W` : "";
-      if (qso.adif) console.info("QRZ ADIF sent:", qso.adif);
+      if (qso.adif) console.info("Log ADIF sent:", qso.adif);
       setQrzLogStatus("LOGGED", "ready");
-      resultElement.textContent = `${qso.call} logged on ${qso.band} · ${modeText} · TX ${formatFrequency(qso.frequency_hz)} Hz${rxText}${powerText}${logIdText}`;
+      resultElement.textContent = logQsoResultText(qso, call);
       callInput.value = "";
-      showToast(`${qso.call} logged to QRZ`);
+      showToast(`${qso.call || call} logged`);
     } catch (error) {
       setQrzLogStatus("ERROR", "error");
       resultElement.textContent = error.message;
@@ -538,14 +568,23 @@ function initStationSettings() {
   const winlinkCallInput = byId("settings-winlink-call");
   const winlinkGridInput = byId("settings-winlink-grid");
   const winlinkPasswordInput = byId("settings-winlink-password");
+  const logQrzEnableInput = byId("settings-log-qrz-enable");
+  const logGridTrackerEnableInput = byId("settings-log-gridtracker-enable");
+  const gridTrackerHostInput = byId("settings-gridtracker-host");
+  const gridTrackerPortInput = byId("settings-gridtracker-port");
   const apiKeyInput = byId("settings-qrz-api-key");
   const backendInput = byId("settings-backend");
+  const adiFileInput = byId("settings-adi-file");
+  const adiProgress = byId("settings-adi-progress");
+  const logbookStatus = byId("settings-logbook-status");
+  const qrzSyncButton = byId("settings-qrz-sync");
+  const logSettingsStatus = byId("settings-log-status");
   const wireguardConfigInput = byId("settings-wireguard-config");
   const wireguardEnableInput = byId("settings-wireguard-enable");
   const wireguardStatus = byId("settings-wireguard-status");
   const saveButton = byId("settings-save");
   const status = byId("settings-status");
-  if (!button || !dialog || !form || !callInput || !gridInput || !winlinkCallSameInput || !winlinkGridSameInput || !winlinkCallInput || !winlinkGridInput || !winlinkPasswordInput || !apiKeyInput || !backendInput || !saveButton || !status) return;
+  if (!button || !dialog || !form || !callInput || !gridInput || !winlinkCallSameInput || !winlinkGridSameInput || !winlinkCallInput || !winlinkGridInput || !winlinkPasswordInput || !logQrzEnableInput || !logGridTrackerEnableInput || !gridTrackerHostInput || !gridTrackerPortInput || !apiKeyInput || !backendInput || !saveButton || !status) return;
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
@@ -556,6 +595,12 @@ function initStationSettings() {
     if (!wireguardStatus) return;
     wireguardStatus.textContent = message;
     wireguardStatus.classList.toggle("error", isError);
+  };
+
+  const setLogSettingsStatus = (message, isError = false) => {
+    if (!logSettingsStatus) return;
+    logSettingsStatus.textContent = message;
+    logSettingsStatus.classList.toggle("error", isError);
   };
 
   const describeWireGuard = (wg) => {
@@ -589,6 +634,217 @@ function initStationSettings() {
     }
   };
 
+  const renderLogbookSettingsStatus = async () => {
+    const lb = window.FreeRig710FT8Logbook;
+    if (!logbookStatus) return null;
+    if (!lb) {
+      logbookStatus.textContent = "Logbook module unavailable";
+      return null;
+    }
+    try {
+      const counts = await lb.loadIndexCaches();
+      logbookStatus.textContent = `${counts.calls} worked calls · ${counts.dxcc} DXCC · ${counts.countries || 0} countries`;
+      return counts;
+    } catch (error) {
+      logbookStatus.textContent = `Logbook error: ${error?.message || error}`;
+      return null;
+    }
+  };
+
+  const adifValueLength = (value) => {
+    const textValue = String(value ?? "");
+    try {
+      return new TextEncoder().encode(textValue).length;
+    } catch (_) {
+      return textValue.length;
+    }
+  };
+
+  const adifRecordText = (record) => {
+    const raw = String(record?.raw || "").trim();
+    if (raw) return /<\s*EOR\s*>/i.test(raw) ? raw : `${raw}<EOR>`;
+    const fields = record?.fields || {};
+    let out = "";
+    for (const [name, value] of Object.entries(fields)) {
+      const key = String(name || "").trim().toUpperCase().replace(/[^A-Z0-9_]/g, "");
+      const textValue = String(value ?? "");
+      if (!key || !textValue || key === "EOR" || key === "EOH") continue;
+      out += `<${key}:${adifValueLength(textValue)}>${textValue}`;
+    }
+    return out ? `${out}<EOR>` : "";
+  };
+
+  const createGridTrackerAdifQueue = () => {
+    const chunks = [];
+    const maxChunk = 5600;
+    let current = "";
+    let recordCount = 0;
+    const push = (textValue) => {
+      const adif = String(textValue || "");
+      if (!adif) return;
+      if (current && current.length + adif.length > maxChunk) {
+        chunks.push(current);
+        current = "";
+      }
+      if (adif.length > maxChunk) chunks.push(adif);
+      else current += adif;
+      recordCount += 1;
+    };
+    return {
+      addRecords(records) {
+        for (const record of records || []) push(adifRecordText(record));
+      },
+      finish() {
+        if (current) {
+          chunks.push(current);
+          current = "";
+        }
+        return { chunks, recordCount };
+      },
+    };
+  };
+
+  const broadcastGridTrackerChunks = async (queued, label) => {
+    const chunks = queued?.chunks || [];
+    const recordCount = Number(queued?.recordCount || 0);
+    if (!chunks.length) return { sentRecords: 0, sentChunks: 0, skipped: false };
+    let state = qrzState;
+    try {
+      const response = await api("/api/v1/log/status");
+      state = response.qrz || response.log || response;
+    } catch (error) {
+      return { sentRecords: 0, sentChunks: 0, skipped: false, error: error?.message || String(error) };
+    }
+    if (!state?.gridtracker_enabled || !state?.gridtracker_configured) {
+      return { sentRecords: 0, sentChunks: 0, skipped: true };
+    }
+    let lastDetail = "";
+    for (let i = 0; i < chunks.length; i += 1) {
+      if (logbookStatus) logbookStatus.textContent = `${label} · GridTracker UDP ${i + 1}/${chunks.length}`;
+      try {
+        const response = await post("/api/v1/log/gridtracker/adif", { adif: chunks[i] });
+        lastDetail = response?.detail || lastDetail;
+      } catch (error) {
+        return { sentRecords: 0, sentChunks: i, skipped: false, error: error?.message || String(error) };
+      }
+    }
+    return { sentRecords: recordCount, sentChunks: chunks.length, skipped: false, detail: lastDetail };
+  };
+
+  const gridTrackerBroadcastSuffix = (result) => {
+    if (!result || result.skipped) return "";
+    if (result.error) return ` · GridTracker failed: ${result.error}`;
+    if (result.sentChunks) return ` · GridTracker ${result.sentRecords} ADIF QSO sent`;
+    return "";
+  };
+
+  const importAdiFromSettings = async (file) => {
+    const lb = window.FreeRig710FT8Logbook;
+    if (!file || !lb || !logbookStatus) return;
+    const gtQueue = createGridTrackerAdifQueue();
+    logbookStatus.dataset.importing = "1";
+    logbookStatus.textContent = `Importing ${file.name}…`;
+    if (adiProgress) adiProgress.value = 0;
+    try {
+      const result = await lb.importAdiFile(file, { onProgress: (p) => {
+        if (adiProgress) adiProgress.value = p.total ? Math.min(100, Math.round(p.bytes * 100 / p.total)) : 0;
+        logbookStatus.textContent = `Parsed ${p.parsed} · new ${p.imported} · duplicates ${p.duplicates} · errors ${p.errors}`;
+      }, onRecords: (records) => gtQueue.addRecords(records) });
+      if (adiProgress) adiProgress.value = 100;
+      const gtResult = await broadcastGridTrackerChunks(gtQueue.finish(), "ADI import");
+      window.dispatchEvent(new CustomEvent("freerig-ft8-logbook-updated"));
+      const counts = await renderLogbookSettingsStatus();
+      logbookStatus.textContent = `Done · ${result.imported} new · ${result.duplicates} duplicates · ${result.errors} errors · ${counts?.calls || 0} worked calls${gridTrackerBroadcastSuffix(gtResult)}`;
+    } catch (error) {
+      logbookStatus.textContent = `Import failed: ${error?.message || error}`;
+    } finally {
+      delete logbookStatus.dataset.importing;
+      if (adiFileInput) adiFileInput.value = "";
+    }
+  };
+
+  const waitQrzFetchJob = async (jobId, deadlineMs = 20_000) => {
+    const deadline = Date.now() + deadlineMs;
+    while (Date.now() < deadline) {
+      const response = await api("/api/v1/qrz/fetch/status");
+      const job = response?.job;
+      if (Number(job?.job_id) !== Number(jobId)) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        continue;
+      }
+      if (["ok", "error", "cancelled"].includes(job.state)) return job;
+      await new Promise((resolve) => window.setTimeout(resolve, 300));
+    }
+    throw new Error("QRZ FETCH timeout");
+  };
+
+  let settingsQrzSyncRunning = false;
+  const runSettingsQrzSync = async () => {
+    const lb = window.FreeRig710FT8Logbook;
+    if (settingsQrzSyncRunning || !lb || !logbookStatus || !qrzSyncButton) return;
+    settingsQrzSyncRunning = true;
+    qrzSyncButton.disabled = true;
+    let totalParsed = 0;
+    let totalFetched = 0;
+    let totalErrors = 0;
+    let pages = 0;
+    const stagedRecords = [];
+    const gtQueue = createGridTrackerAdifQueue();
+    try {
+      const qrz = await api("/api/v1/qrz/status");
+      if (!qrz?.qrz?.configured) throw new Error("Configure station callsign and QRZ Logbook API key first");
+      await window.FreeRig710FT8CTY?.ready;
+      let after = "0";
+      logbookStatus.textContent = "QRZ Sync · authoritative full reconciliation from LOGID 0";
+      for (;;) {
+        let job = null;
+        let lastError = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          try {
+            const accepted = await post("/api/v1/qrz/fetch", { after_logid: after, max: 250 });
+            job = await waitQrzFetchJob(Number(accepted?.job?.job_id || 0));
+            if (job?.state !== "ok") throw new Error(job?.detail || "QRZ FETCH rejected");
+            lastError = null;
+            break;
+          } catch (error) {
+            lastError = error;
+            if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 1000 * (2 ** attempt)));
+          }
+        }
+        if (lastError) throw lastError;
+        const pageResponse = await fetch(apiUrl("/api/v1/qrz/fetch/page"), { cache: "no-store" });
+        if (!pageResponse.ok) throw new Error(`QRZ page HTTP ${pageResponse.status}`);
+        const adif = await pageResponse.text();
+        const parsed = adif.trim() ? lb.parseAdi(adif) : { records: [], stats: { records: 0, errors: 0, ignored: 0 } };
+        const pageParsed = Number(parsed?.stats?.records || 0);
+        const pageErrors = Number(parsed?.stats?.errors || 0);
+        if (Number(job?.count || 0) > 0 && pageParsed === 0) throw new Error(`QRZ returned ${job?.count || 0} QSO but the ADIF parser produced 0 records`);
+        const pageRecords = parsed?.records || [];
+        stagedRecords.push(...pageRecords);
+        gtQueue.addRecords(pageRecords);
+        pages += 1;
+        totalFetched += Number(job?.count || 0);
+        totalParsed += pageParsed;
+        totalErrors += pageErrors;
+        after = String(job?.next_after_logid || after);
+        logbookStatus.textContent = `QRZ page ${pages} · ${job?.count || 0} fetched / ${pageParsed} parsed · ${totalParsed} staged`;
+        if (!job?.has_more || Number(job?.count || 0) === 0) break;
+      }
+      logbookStatus.textContent = `QRZ Sync · replacing local log with ${totalParsed} QRZ QSO…`;
+      const replaced = await lb.replaceAllRecords(stagedRecords, { source: "qrz" });
+      await lb.setSyncState("qrz", { nextAfterLogId: after, lastPageCount: pages ? Number(stagedRecords.length) : 0, lastSyncAt: new Date().toISOString(), complete: true, authoritative: true, qsoCount: Number(replaced?.stored || 0) });
+      const counts = await renderLogbookSettingsStatus();
+      const gtResult = await broadcastGridTrackerChunks(gtQueue.finish(), "QRZ Sync");
+      window.dispatchEvent(new CustomEvent("freerig-ft8-logbook-updated"));
+      logbookStatus.textContent = `QRZ complete · ${pages} page${pages === 1 ? "" : "s"} · ${totalFetched} fetched · ${replaced?.stored || 0} QRZ QSO stored · ${counts?.calls || 0} worked calls · ${counts?.dxcc || 0} DXCC · ${counts?.countries || 0} countries${totalErrors ? ` · ${totalErrors} ADIF warnings` : ""}${gridTrackerBroadcastSuffix(gtResult)}`;
+    } catch (error) {
+      logbookStatus.textContent = `QRZ sync failed: ${error?.message || error} · local log unchanged`;
+    } finally {
+      settingsQrzSyncRunning = false;
+      qrzSyncButton.disabled = false;
+    }
+  };
+
   const applyWinlinkSameState = () => {
     const mainCall = normalizeStationCall(callInput.value || qrzState.station_callsign || "");
     const mainGrid = normalizeGridSquare(gridInput.value || "");
@@ -619,8 +875,13 @@ function initStationSettings() {
     winlinkPasswordInput.placeholder = settings.winlinkPassword ? "Saved locally; leave blank to keep it" : "Winlink Secure Login password";
     backendInput.value = IS_LOCAL_GUI ? (settings.backend || API_BASE || DEFAULT_LOCAL_BACKEND) : window.location.origin;
     backendInput.disabled = !IS_LOCAL_GUI;
+    logQrzEnableInput.checked = qrzState.api_key_set ? qrzState.qrz_enabled !== false : false;
+    logGridTrackerEnableInput.checked = Boolean(qrzState.gridtracker_enabled);
+    gridTrackerHostInput.value = qrzState.gridtracker_host || "";
+    gridTrackerPortInput.value = String(Number(qrzState.gridtracker_port) || 2237);
     apiKeyInput.value = "";
     apiKeyInput.placeholder = qrzState.api_key_set ? "Saved on ESP32; leave blank to keep it" : "Paste QRZ Logbook API key";
+    setLogSettingsStatus(isLogConfigured(qrzState) ? `Log destinations: ${logDestinationLabel(qrzState)}` : "Enable QRZ and/or GridTracker to log QSOs.");
     setStatus("Settings are shared by Radio, FT8, JS8 and Winlink.");
     if (wireguardConfigInput) wireguardConfigInput.value = "";
     if (wireguardEnableInput) wireguardEnableInput.checked = false;
@@ -631,6 +892,7 @@ function initStationSettings() {
     syncFields();
     dialog.hidden = false;
     loadWireGuardSettings();
+    void renderLogbookSettingsStatus();
     window.setTimeout(() => callInput.focus(), 0);
   };
 
@@ -669,12 +931,21 @@ function initStationSettings() {
   winlinkGridInput.addEventListener("input", () => {
     winlinkGridInput.value = normalizeGridSquare(winlinkGridInput.value);
   });
+  apiKeyInput.addEventListener("input", () => {
+    if (apiKeyInput.value.trim()) logQrzEnableInput.checked = true;
+  });
+  adiFileInput?.addEventListener("change", () => void importAdiFromSettings(adiFileInput.files?.[0]));
+  qrzSyncButton?.addEventListener("click", () => void runSettingsQrzSync());
   window.addEventListener("freerig710-settings-changed", () => {
     const settings = stationSettings();
     const backend = IS_LOCAL_GUI ? (settings.backend || API_BASE || DEFAULT_LOCAL_BACKEND) : window.location.origin;
     const backendStatus = byId("status-backend");
     if (backendStatus) backendStatus.textContent = backend;
     renderQrzPreview();
+  });
+  window.addEventListener("freerig-ft8-logbook-updated", () => {
+    if (logbookStatus?.dataset.importing || settingsQrzSyncRunning) return;
+    void renderLogbookSettingsStatus();
   });
 
   form.addEventListener("submit", async (event) => {
@@ -688,6 +959,10 @@ function initStationSettings() {
     const winlinkPassword = winlinkPasswordInput.value;
     const backend = IS_LOCAL_GUI ? normalizeBackend(backendInput.value || DEFAULT_LOCAL_BACKEND) : "";
     const qrzKey = apiKeyInput.value.trim();
+    const qrzEnabled = logQrzEnableInput.checked;
+    const gridTrackerEnabled = logGridTrackerEnableInput.checked;
+    const gridTrackerHost = gridTrackerHostInput.value.trim();
+    const gridTrackerPort = Number(gridTrackerPortInput.value || 2237);
     const gridOk = !grid || /^[A-R]{2}\d{2}(?:[A-X]{2}(?:\d{2})?)?$/.test(grid);
     const winlinkGridOk = !winlinkGrid || /^[A-R]{2}\d{2}(?:[A-X]{2}(?:\d{2})?)?$/.test(winlinkGrid);
 
@@ -711,6 +986,18 @@ function initStationSettings() {
       setStatus("ESP32 backend URL is invalid.", true);
       return;
     }
+    if (qrzEnabled && !qrzKey && !qrzState.api_key_set) {
+      setStatus("QRZ Logbook API key is required when QRZ logging is enabled.", true);
+      return;
+    }
+    if (gridTrackerEnabled && !gridTrackerHost) {
+      setStatus("GridTracker IP is required when GridTracker logging is enabled.", true);
+      return;
+    }
+    if (!Number.isInteger(gridTrackerPort) || gridTrackerPort < 1 || gridTrackerPort > 65535) {
+      setStatus("GridTracker UDP port must be 1..65535.", true);
+      return;
+    }
 
     const previousBackend = API_BASE;
     const backendChanged = IS_LOCAL_GUI && backend && backend !== previousBackend;
@@ -730,13 +1017,25 @@ function initStationSettings() {
     let qrzError = "";
     let wireguardError = "";
     try {
-      const payload = { station_callsign: call };
+      const payload = {
+        station_callsign: call,
+        qrz_enabled: qrzEnabled,
+        gridtracker_enabled: gridTrackerEnabled,
+        gridtracker_host: gridTrackerHost,
+        gridtracker_port: gridTrackerPort,
+      };
       if (qrzKey) payload.api_key = qrzKey;
-      const response = await post("/api/v1/qrz/config", payload);
+      const response = await post("/api/v1/log/config", payload);
       apiKeyInput.value = "";
-      applyQrzStatus(response.qrz || response, { resultMessage: "QRZ configuration saved. Ready to log QSOs." });
+      const savedLogState = response.qrz || response;
+      const readyMessage = isLogConfigured(savedLogState)
+        ? "Log configuration saved. Ready to log QSOs."
+        : "Log configuration saved. No log destination is enabled.";
+      applyQrzStatus(savedLogState, { resultMessage: readyMessage });
+      setLogSettingsStatus(isLogConfigured(savedLogState) ? `Log destinations: ${logDestinationLabel(savedLogState)}` : "No log destination is enabled.");
     } catch (error) {
       qrzError = error.message;
+      setLogSettingsStatus(error.message, true);
     } finally {
       saveButton.disabled = false;
     }
@@ -757,7 +1056,7 @@ function initStationSettings() {
     const backendStatus = byId("status-backend");
     if (backendStatus) backendStatus.textContent = backendDisplayName();
     const remoteErrors = [];
-    if (qrzError) remoteErrors.push(`QRZ: ${qrzError}`);
+    if (qrzError) remoteErrors.push(`Log: ${qrzError}`);
     if (wireguardError) remoteErrors.push(`WireGuard: ${wireguardError}`);
     if (remoteErrors.length) {
       setStatus(`Settings saved locally. ${remoteErrors.join(" · ")}`, true);
