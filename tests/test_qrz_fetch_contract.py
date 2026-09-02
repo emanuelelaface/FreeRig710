@@ -27,6 +27,16 @@ for token in ['/api/v1/qrz/fetch','/api/v1/qrz/fetch/status','/api/v1/qrz/fetch/
     assert token in js, token
 for token in ['/api/v1/qrz/fetch','/api/v1/qrz/fetch/status','/api/v1/qrz/fetch/page','max: 250']:
     assert token in main_js, token
+assert 'MAX:%u,AFTERLOGID:%" PRIu64' in c
+assert 'has_more = page_count > 0U && next_after > job->after_logid' in c
+assert 'RESULT=FAIL&COUNT=0' in c
+assert 'QRZ FETCH reached end of log' in c
+assert 'unsignedDecimalGreaterThan' in main_js
+assert 'unsignedDecimalGreaterThan' in js
+assert 'if (!job?.has_more || Number(job?.count || 0) === 0) break' not in main_js
+assert 'if(!job?.has_more || Number(job?.count||0)===0)break' not in js
+assert 'if (pageCount === 0 || pageParsed === 0) break' in main_js
+assert 'if(pageCount===0 || pageParsed===0)break' in js
 for token in ['settings-adi-file','settings-qrz-sync','settings-adi-progress','settings-logbook-status']:
     assert token in main_html, token
 for token in ['ft8-qrz-import','ft8-qrz-sync','ft8-qrz-cancel','ft8-adi-file']:

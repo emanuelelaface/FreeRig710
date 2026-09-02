@@ -5,7 +5,7 @@ FreeRig710 has a shared **Log** configuration used by the main radio page, FT8, 
 Supported destinations:
 
 - **QRZ Logbook**: the ESP32 uploads QSOs to `https://logbook.qrz.com/api` with the stored QRZ API key.
-- **GridTracker**: the ESP32 sends ADIF records by UDP to the configured GridTracker host and port. The default UDP port is `2237`.
+- **GridTracker**: the ESP32 sends ADIF records by UDP to the configured GridTracker host and port. The FreeRig710 default UDP port is `2333`.
 
 The browser builds or selects the QSO data, but the ESP32 performs the QRZ HTTPS request and the GridTracker UDP send. QRZ secrets are not returned to browser JavaScript.
 
@@ -16,7 +16,7 @@ Open the main radio page and press **Settings**.
 1. Enter **Call** and optionally **Grid**.
 2. In **Log**, enable **Log to QRZ** and/or **Log to GridTracker**.
 3. For QRZ, enter the **QRZ Logbook API key**.
-4. For GridTracker, enter the IP address reachable from the ESP32 network and the UDP port. Use `2237` unless GridTracker is configured differently.
+4. For GridTracker, enter the IP address reachable from the ESP32 network and the UDP port. Use `2333` unless you configured a different ADIF UDP port in GridTracker.
 5. Click **Save Settings**.
 
 GridTracker must be configured to receive ADIF UDP broadcasts. If the browser is remote, use the IP route as seen by the ESP32, not necessarily the browser computer's local address.

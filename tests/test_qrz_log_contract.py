@@ -9,13 +9,16 @@ for field in ['CALL','STATION_CALLSIGN','QSO_DATE','TIME_ON','TIME_OFF','BAND','
     assert f'"{field}"' in c, field
 assert 'KEY=%s&ACTION=INSERT&ADIF=%s' in c
 assert 'gridtracker_send_adif' in c
-assert 'sendto(sock, adif' in c
+assert 'adif_find_eor' in c
+assert 'sendto(sock, record' in c
+assert 'GridTracker UDP sent %u record' in c
 assert '/api/v1/log/config' in c
 assert '/api/v1/log/qso' in c
 assert '/api/v1/log/qso/status' in c
 assert '/api/v1/log/gridtracker/adif' in c
 assert '"destinations"' in c
 assert 'FREERIG_GRIDTRACKER_DEFAULT_PORT' in c
+assert '#define FREERIG_GRIDTRACKER_DEFAULT_PORT 2333U' in (root/'components/freerig_config/include/freerig_config.h').read_text()
 # Automatic duplicate replacement is forbidden: no outgoing INSERT request uses OPTION=REPLACE.
 insert_window=c[c.index('static void qrz_log_task'):c.index('static esp_err_t qrz_log_handler')]
 assert 'OPTION=REPLACE' not in insert_window

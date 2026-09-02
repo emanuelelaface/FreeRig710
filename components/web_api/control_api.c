@@ -1399,6 +1399,15 @@ static bool qrz_adif_int(char *buf, size_t cap, size_t *used, const char *name, 
     return qrz_adif_field(buf, cap, used, name, text);
 }
 
+static const char *adif_find_eor(const char *text)
+{
+    if (!text) return NULL;
+    for (const char *p = text; (p = strchr(p, '<')) != NULL; p++) {
+        if (!strncasecmp(p, "<EOR>", 5)) return p;
+    }
+    return NULL;
+}
+
 static esp_err_t gridtracker_send_adif(const freerig_qrz_config_t *cfg, const char *adif,
                                        char *detail, size_t detail_size)
 {
@@ -1425,15 +1434,45 @@ static esp_err_t gridtracker_send_adif(const freerig_qrz_config_t *cfg, const ch
         freeaddrinfo(res);
         return ESP_FAIL;
     }
-    ssize_t sent = sendto(sock, adif, strlen(adif), 0, res->ai_addr, res->ai_addrlen);
+    size_t records = 0;
+    size_t bytes = 0;
+    const char *start = adif;
+    const char *eor = NULL;
+    while ((eor = adif_find_eor(start)) != NULL) {
+        const char *record = start;
+        while (record < eor && isspace((unsigned char)*record)) record++;
+        size_t len = (size_t)((eor + 5) - record);
+        if (len > 0) {
+            ssize_t sent = sendto(sock, record, len, 0, res->ai_addr, res->ai_addrlen);
+            if (sent < 0 || (size_t)sent != len) {
+                close(sock);
+                freeaddrinfo(res);
+                if (detail && detail_size) snprintf(detail, detail_size, "GridTracker UDP send failed: errno %d", errno);
+                return ESP_FAIL;
+            }
+            records++;
+            bytes += (size_t)sent;
+            vTaskDelay(pdMS_TO_TICKS(2));
+        }
+        start = eor + 5;
+    }
+    if (records == 0 && adif[0]) {
+        size_t len = strlen(adif);
+        ssize_t sent = sendto(sock, adif, len, 0, res->ai_addr, res->ai_addrlen);
+        if (sent < 0 || (size_t)sent != len) {
+            close(sock);
+            freeaddrinfo(res);
+            if (detail && detail_size) snprintf(detail, detail_size, "GridTracker UDP send failed: errno %d", errno);
+            return ESP_FAIL;
+        }
+        records = 1;
+        bytes = (size_t)sent;
+    }
     close(sock);
     freeaddrinfo(res);
-    if (sent < 0 || (size_t)sent != strlen(adif)) {
-        if (detail && detail_size) snprintf(detail, detail_size, "GridTracker UDP send failed: errno %d", errno);
-        return ESP_FAIL;
-    }
     if (detail && detail_size) {
-        snprintf(detail, detail_size, "GridTracker UDP sent to %s:%u",
+        snprintf(detail, detail_size, "GridTracker UDP sent %u record%s (%u bytes) to %s:%u",
+                 (unsigned)records, records == 1 ? "" : "s", (unsigned)bytes,
                  cfg->gridtracker_host, (unsigned)cfg->gridtracker_port);
     }
     return ESP_OK;
@@ -1680,24 +1719,17 @@ static void qrz_fetch_task(void *arg)
 
     /*
      * Keep FETCH options deliberately minimal. QRZ documents TYPE=ADIF and
-     * STATUS=ALL as defaults, so do not send redundant selectors. On the
-     * first page omit AFTERLOGID:0 as well; MAX keeps the request bounded.
-     * Subsequent pages use AFTERLOGID:<cursor>.
+     * STATUS=ALL as defaults, so do not send redundant selectors. Always send
+     * AFTERLOGID so the first page is explicitly anchored at LOGID 0 and later
+     * pages can continue even if QRZ returns fewer records than MAX.
      */
     char option[160];
     if (job->modsince[0]) {
-        if (job->after_logid > 0) {
-            snprintf(option, sizeof(option), "MAX:%u,AFTERLOGID:%" PRIu64 ",MODSINCE:%s",
-                     job->max_records, job->after_logid, job->modsince);
-        } else {
-            snprintf(option, sizeof(option), "MAX:%u,MODSINCE:%s",
-                     job->max_records, job->modsince);
-        }
-    } else if (job->after_logid > 0) {
+        snprintf(option, sizeof(option), "MAX:%u,AFTERLOGID:%" PRIu64 ",MODSINCE:%s",
+                 job->max_records, job->after_logid, job->modsince);
+    } else {
         snprintf(option, sizeof(option), "MAX:%u,AFTERLOGID:%" PRIu64,
                  job->max_records, job->after_logid);
-    } else {
-        snprintf(option, sizeof(option), "MAX:%u", job->max_records);
     }
     size_t key_cap = strlen(job->config.api_key) * 3U + 1U;
     size_t option_cap = strlen(option) * 3U + 1U;
@@ -1750,6 +1782,31 @@ static void qrz_fetch_task(void *arg)
     if (!result || strcasecmp(result, "OK") != 0) {
         char *reason = qrz_response_value_alloc(response, "REASON");
         char *count_text = qrz_response_value_alloc(response, "COUNT");
+        if (result && strcasecmp(result, "FAIL") == 0 && count_text &&
+            strtoul(count_text, NULL, 10) == 0UL && (!reason || !reason[0])) {
+            /*
+             * QRZ FETCH returns RESULT=OK only when at least one QSO matches.
+             * The page after the last APP_QRZLOG_LOGID may therefore be
+             * RESULT=FAIL&COUNT=0 even though paging completed normally.
+             */
+            if (count_text) free(count_text);
+            if (reason) free(reason);
+            if (result) free(result);
+            adif = qrz_alloc(1);
+            if (!adif) { error_detail = "QRZ FETCH worker out of memory"; goto done; }
+            adif[0] = '\0';
+            if (xSemaphoreTake(s_qrz_fetch_page_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+                error_detail = "QRZ page store busy"; goto done;
+            }
+            if (s_qrz_fetch_page) free(s_qrz_fetch_page);
+            s_qrz_fetch_page = adif;
+            s_qrz_fetch_page_len = 0;
+            adif = NULL;
+            xSemaphoreGive(s_qrz_fetch_page_mutex);
+            qrz_fetch_status_set(job, "ok", "QRZ FETCH reached end of log", false, 0,
+                                 job->after_logid, false, true, 0);
+            goto cleanup;
+        }
         if (result && strcasecmp(result, "AUTH") == 0) {
             snprintf(error_buf, sizeof(error_buf),
                      "QRZ RESULT=AUTH: FETCH not authorized (subscription/logbook access); OPTION=%s", option);
@@ -1790,7 +1847,7 @@ static void qrz_fetch_task(void *arg)
         goto done;
     }
     if (max_logid) next_after = max_logid + 1U;
-    has_more = page_count >= job->max_records;
+    has_more = page_count > 0U && next_after > job->after_logid;
 
     if (xSemaphoreTake(s_qrz_fetch_page_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
         error_detail = "QRZ page store busy"; goto done;

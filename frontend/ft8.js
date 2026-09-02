@@ -807,6 +807,19 @@
       }finally{if(submit)submit.disabled=false;this.renderQso();}
     },
 
+    normalizedUnsignedDecimal(value, fallback = "0") {
+      const raw = String(value ?? "").trim();
+      if (!/^\d+$/.test(raw)) return String(fallback ?? "0");
+      return raw.replace(/^0+(?=\d)/, "") || "0";
+    },
+
+    unsignedDecimalGreaterThan(a, b) {
+      const left = this.normalizedUnsignedDecimal(a);
+      const right = this.normalizedUnsignedDecimal(b);
+      if (left.length !== right.length) return left.length > right.length;
+      return left > right;
+    },
+
     async waitQrzFetchJob(jobId, deadlineMs = 20000) {
       const api = window.FreeRig710API?.api;
       if (typeof api !== "function") throw new Error("API unavailable");
@@ -857,11 +870,13 @@
           const parsed=adif.trim()?lb.parseAdi(adif):{records:[],stats:{records:0,errors:0,ignored:0,errorMessages:[]}};
           const pageParsed=Number(parsed?.stats?.records||0), pageErrors=Number(parsed?.stats?.errors||0);
           if(Number(job?.count||0)>0 && pageParsed===0) throw new Error(`QRZ returned ${job?.count||0} QSO but the ADIF parser produced 0 records`);
+          const pageCount=Number(job?.count||0), previousAfter=after, nextAfter=this.normalizedUnsignedDecimal(job?.next_after_logid,previousAfter);
+          if(pageCount>0 && pageParsed>0 && !this.unsignedDecimalGreaterThan(nextAfter,previousAfter)) throw new Error(`QRZ cursor did not advance after LOGID ${previousAfter}`);
           stagedRecords.push(...(parsed?.records||[]));
-          pages+=1;totalFetched+=Number(job?.count||0);totalParsed+=pageParsed;totalErrors+=pageErrors;
-          after=String(job?.next_after_logid||after);
+          pages+=1;totalFetched+=pageCount;totalParsed+=pageParsed;totalErrors+=pageErrors;
+          after=nextAfter;
           if(statusEl)statusEl.textContent=`QRZ page ${pages} · ${job?.count||0} fetched / ${pageParsed} parsed · ${totalParsed} staged`;
-          if(!job?.has_more || Number(job?.count||0)===0)break;
+          if(pageCount===0 || pageParsed===0)break;
         }
         if(statusEl)statusEl.textContent=`QRZ Sync · replacing local log with ${totalParsed} QRZ QSO…`;
         const replaced=await lb.replaceAllRecords(stagedRecords,{source:"qrz"});
