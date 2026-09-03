@@ -2,7 +2,9 @@
 
 **FreeRig710** is a self-hosted browser station for the **Yaesu FT-710**, built around a **Waveshare ESP32-P4-NANO**. The ESP32-P4 handles CAT, USB audio, the FT-710 external-display capture, the HTTP/WebSocket API and the guarded transmit path; the browser provides the radio UI plus FT8, JS8, RTTY and Winlink/ARDOP operating consoles.
 
-[![Buy FreeRig710 on Tindie](https://raw.githubusercontent.com/emanuelelaface/USBtoC64/main/images/tindie-logo.png)](https://www.tindie.com/products/burglar_ot/freerig-710/)
+If you like this project and want a fully assembled and tested board, you can purchase it on [Tindie](https://www.tindie.com/products/burglar_ot/freerig-710/). By doing so, you will support the future development of the project.
+
+<a href="https://www.tindie.com/products/burglar_ot/freerig-710/"><img src="https://raw.githubusercontent.com/emanuelelaface/USBtoC64/main/images/tindie-logo.png" alt="Buy FreeRig710 on Tindie" width="150" height="78"></a>
 
 > **RF safety:** this software can key a real transmitter. Start at low power or into a dummy load, verify CAT/PTT/audio behavior locally, and do not expose the ESP32 HTTP port directly to the public Internet.
 
