@@ -31,6 +31,7 @@
 #include "lwip/netdb.h"
 #include "lwip/sockets.h"
 #include "network_eth.h"
+#include "network_wifi.h"
 #include "video_jpeg.h"
 
 static const char *TAG = "control_api";
@@ -447,7 +448,7 @@ static esp_err_t state_handler(httpd_req_t *req){ return send_json(req,state_jso
 static esp_err_t capabilities_handler(httpd_req_t *req)
 {
     cJSON *o=cJSON_CreateObject();cJSON_AddTrueToObject(o,"ok");cJSON_AddStringToObject(o,"platform","ESP32-P4");cJSON_AddStringToObject(o,"hostname","ft710.local");cJSON_AddStringToObject(o,"version","1.0");
-    cJSON_AddBoolToObject(o,"ft8",true);cJSON_AddStringToObject(o,"ft8_stage","FreeRig710_1.0");cJSON_AddBoolToObject(o,"ft8_decode",true);cJSON_AddBoolToObject(o,"ft8_tx",true);cJSON_AddBoolToObject(o,"ft8_tx_audio",true);cJSON_AddBoolToObject(o,"ft8_tune",true);cJSON_AddBoolToObject(o,"ft8_auto_ptt",true);cJSON_AddBoolToObject(o,"video",true);cJSON_AddBoolToObject(o,"cat",true);cJSON_AddBoolToObject(o,"audio_rx",true);cJSON_AddBoolToObject(o,"audio_tx",true);cJSON_AddBoolToObject(o,"ptt_latching",true);cJSON_AddNumberToObject(o,"ptt_watchdog_ms",1500);
+    cJSON_AddBoolToObject(o,"ft8",true);cJSON_AddStringToObject(o,"ft8_stage","FreeRig710_1.0");cJSON_AddBoolToObject(o,"ft8_decode",true);cJSON_AddBoolToObject(o,"ft8_tx",true);cJSON_AddBoolToObject(o,"ft8_tx_audio",true);cJSON_AddBoolToObject(o,"ft8_tune",true);cJSON_AddBoolToObject(o,"ft8_auto_ptt",true);cJSON_AddBoolToObject(o,"video",true);cJSON_AddBoolToObject(o,"cat",true);cJSON_AddBoolToObject(o,"audio_rx",true);cJSON_AddBoolToObject(o,"audio_tx",true);cJSON_AddBoolToObject(o,"wifi",true);cJSON_AddBoolToObject(o,"ptt_latching",true);cJSON_AddNumberToObject(o,"ptt_watchdog_ms",1500);
     return send_json(req,o);
 }
 
@@ -1015,6 +1016,91 @@ static esp_err_t cw_stop_handler(httpd_req_t*req){esp_err_t e=ft710_cat_set("KY0
 
 static esp_err_t video_settings_get(httpd_req_t*req){video_jpeg_status_t v;video_jpeg_get_status(&v);cJSON*o=cJSON_CreateObject();cJSON_AddTrueToObject(o,"ok");cJSON*x=cJSON_AddObjectToObject(o,"settings");cJSON_AddNumberToObject(x,"fps",v.fps_limit);cJSON_AddNumberToObject(x,"jpeg_quality",v.quality);return send_json(req,o);}
 static esp_err_t video_settings_post(httpd_req_t*req){video_jpeg_status_t v;video_jpeg_get_status(&v);cJSON*j=read_json(req);if(!j)return send_error(req,"422 Unprocessable Entity","invalid JSON");int fps=json_int(j,"fps",v.fps_limit),q=json_int(j,"jpeg_quality",v.quality);cJSON_Delete(j);esp_err_t e=video_jpeg_set_settings((uint8_t)q,(uint8_t)fps);if(e!=ESP_OK)return send_error(req,"422 Unprocessable Entity","fps 1..30, jpeg_quality 20..95");return video_settings_get(req);}
+
+static void wifi_status_to_json(cJSON *x, const freerig_wifi_config_t *cfg, const network_wifi_status_t *st)
+{
+    cJSON_AddBoolToObject(x, "enabled", cfg && cfg->enabled);
+    cJSON_AddBoolToObject(x, "configured", cfg && cfg->ssid_set);
+    cJSON_AddBoolToObject(x, "password_set", cfg && cfg->password_set);
+    cJSON_AddStringToObject(x, "ssid", cfg ? cfg->ssid : "");
+    cJSON_AddBoolToObject(x, "initialized", st && st->initialized);
+    cJSON_AddBoolToObject(x, "started", st && st->started);
+    cJSON_AddBoolToObject(x, "connecting", st && st->connecting);
+    cJSON_AddBoolToObject(x, "connected", st && st->connected);
+    cJSON_AddBoolToObject(x, "got_ip", st && st->got_ip);
+    cJSON_AddStringToObject(x, "ip", st ? st->ip_address : "");
+    cJSON_AddStringToObject(x, "netmask", st ? st->netmask : "");
+    cJSON_AddStringToObject(x, "gateway", st ? st->gateway : "");
+    cJSON_AddNumberToObject(x, "rssi", st ? st->rssi : 0);
+    cJSON_AddNumberToObject(x, "channel", st ? st->channel : 0);
+    cJSON_AddNumberToObject(x, "connect_attempts", st ? st->connect_attempts : 0);
+    cJSON_AddNumberToObject(x, "disconnects", st ? st->disconnects : 0);
+    cJSON_AddNumberToObject(x, "last_disconnect_reason", st ? st->last_disconnect_reason : 0);
+    char mac_text[18] = "";
+    if (st) {
+        snprintf(mac_text, sizeof(mac_text), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 st->mac[0], st->mac[1], st->mac[2], st->mac[3], st->mac[4], st->mac[5]);
+    }
+    cJSON_AddStringToObject(x, "mac", mac_text);
+    cJSON_AddStringToObject(x, "last_error", st ? esp_err_to_name(st->last_error) : "ESP_OK");
+}
+
+static esp_err_t wifi_status_handler(httpd_req_t *req)
+{
+    freerig_wifi_config_t cfg;
+    esp_err_t e = freerig_config_get_wifi(&cfg);
+    if (e != ESP_OK) return send_error(req, "500 Internal Server Error", esp_err_to_name(e));
+    network_wifi_status_t st;
+    network_wifi_get_status(&st);
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddTrueToObject(o, "ok");
+    cJSON *x = cJSON_AddObjectToObject(o, "wifi");
+    wifi_status_to_json(x, &cfg, &st);
+    return send_json(req, o);
+}
+
+static esp_err_t wifi_config_handler(httpd_req_t *req)
+{
+    cJSON *j = read_json(req);
+    if (!j) return send_error(req, "422 Unprocessable Entity", "invalid JSON");
+    freerig_wifi_config_t current;
+    memset(&current, 0, sizeof(current));
+    (void)freerig_config_get_wifi(&current);
+    const char *ssid = json_string(j, "ssid", current.ssid);
+    cJSON *password_item = cJSON_GetObjectItemCaseSensitive(j, "password");
+    const char *password = cJSON_IsString(password_item) ? password_item->valuestring : NULL;
+    bool enabled_present = false;
+    bool enabled = json_bool(j, "enabled", current.enabled, &enabled_present);
+    if (!enabled_present) enabled = current.enabled;
+    esp_err_t e = freerig_config_set_wifi(ssid, password, enabled);
+    cJSON_Delete(j);
+    if (e != ESP_OK) return send_error(req, "422 Unprocessable Entity", "invalid Wi-Fi configuration");
+    e = network_wifi_apply_config();
+    if (e != ESP_OK) return send_error(req, "500 Internal Server Error", esp_err_to_name(e));
+    return wifi_status_handler(req);
+}
+
+static esp_err_t wifi_scan_handler(httpd_req_t *req)
+{
+    network_wifi_ap_t aps[NETWORK_WIFI_SCAN_MAX];
+    size_t count = 0;
+    esp_err_t e = network_wifi_scan(aps, NETWORK_WIFI_SCAN_MAX, &count);
+    if (e != ESP_OK) return send_error(req, "503 Service Unavailable", esp_err_to_name(e));
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddTrueToObject(o, "ok");
+    cJSON *a = cJSON_AddArrayToObject(o, "networks");
+    for (size_t i = 0; i < count; ++i) {
+        cJSON *n = cJSON_CreateObject();
+        cJSON_AddStringToObject(n, "ssid", aps[i].ssid);
+        cJSON_AddNumberToObject(n, "rssi", aps[i].rssi);
+        cJSON_AddNumberToObject(n, "channel", aps[i].channel);
+        cJSON_AddNumberToObject(n, "authmode", aps[i].authmode);
+        cJSON_AddStringToObject(n, "authmode_name", aps[i].authmode_name);
+        cJSON_AddBoolToObject(n, "secure", aps[i].secure);
+        cJSON_AddItemToArray(a, n);
+    }
+    return send_json(req, o);
+}
 
 static void log_config_json(cJSON *x, const freerig_qrz_config_t *q)
 {
@@ -4402,6 +4488,7 @@ esp_err_t control_api_register(httpd_handle_t server)
     R("/api/v1/memories",HTTP_GET,memories_list_handler);R("/api/v1/memories",HTTP_POST,memory_save_handler);R("/api/v1/memories/sync",HTTP_POST,memories_sync_handler);R("/api/v1/memories/*",HTTP_POST,memory_wild_handler);R("/api/v1/memories/*",HTTP_PUT,memory_wild_handler);
     R("/api/v1/ft8/status",HTTP_GET,ft8_status_handler);R("/api/v1/ft8/tx/arm",HTTP_POST,ft8_tx_arm_handler);R("/api/v1/ft8/tx/keepalive",HTTP_POST,ft8_tx_keepalive_handler);R("/api/v1/ft8/tx/stop",HTTP_POST,ft8_tx_stop_handler);R("/api/v1/ft8/tune/start",HTTP_POST,ft8_tune_start_handler);R("/api/v1/ft8/tune/level",HTTP_POST,ft8_tune_level_handler);R("/api/v1/ft8/tune/keepalive",HTTP_POST,ft8_tune_keepalive_handler);R("/api/v1/ft8/tune/stop",HTTP_POST,ft8_tune_stop_handler);R("/api/v1/cw/status",HTTP_GET,cw_status_handler);R("/api/v1/cw/send",HTTP_POST,cw_send_handler);R("/api/v1/cw/stop",HTTP_POST,cw_stop_handler);
     R("/api/v1/video/settings",HTTP_GET,video_settings_get);R("/api/v1/video/settings",HTTP_POST,video_settings_post);
+    R("/api/v1/wifi/status",HTTP_GET,wifi_status_handler);R("/api/v1/wifi/config",HTTP_POST,wifi_config_handler);R("/api/v1/wifi/scan",HTTP_GET,wifi_scan_handler);
     R("/api/v1/wireguard/status",HTTP_GET,wireguard_status_handler);R("/api/v1/wireguard/config",HTTP_POST,wireguard_config_handler);
     R("/api/v1/log/status",HTTP_GET,qrz_status_handler);R("/api/v1/log/config",HTTP_POST,qrz_config_handler);R("/api/v1/log/qso",HTTP_POST,qrz_log_handler);R("/api/v1/log/qso/status",HTTP_GET,qrz_log_status_handler);R("/api/v1/log/gridtracker/adif",HTTP_POST,log_gridtracker_adif_handler);
     R("/api/v1/qrz/status",HTTP_GET,qrz_status_handler);R("/api/v1/qrz/config",HTTP_POST,qrz_config_handler);R("/api/v1/qrz/log",HTTP_POST,qrz_log_handler);R("/api/v1/qrz/log/status",HTTP_GET,qrz_log_status_handler);R("/api/v1/qrz/fetch",HTTP_POST,qrz_fetch_handler);R("/api/v1/qrz/fetch/status",HTTP_GET,qrz_fetch_status_handler);R("/api/v1/qrz/fetch/page",HTTP_GET,qrz_fetch_page_handler);R("/api/v1/qrz/fetch/cancel",HTTP_POST,qrz_fetch_cancel_handler);

@@ -103,6 +103,29 @@ static void sntp_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     }
 }
 
+void network_eth_start_time_sync(void)
+{
+    bool should_start_sntp = false;
+    status_lock();
+    if (s_status.time_sync_initialized && !s_status.time_sync_started) {
+        s_status.time_sync_started = true;
+        should_start_sntp = true;
+    }
+    status_unlock();
+
+    if (!should_start_sntp) return;
+
+    esp_err_t sntp_err = esp_netif_sntp_start();
+    if (sntp_err != ESP_OK) {
+        status_lock();
+        s_status.time_sync_started = false;
+        status_unlock();
+        ESP_LOGW(TAG, "Could not start SNTP after network IP: %s", esp_err_to_name(sntp_err));
+    } else {
+        ESP_LOGI(TAG, "SNTP started for FT8 UTC timing cross-check (pool.ntp.org)");
+    }
+}
+
 static void got_ip_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     (void)arg;
@@ -118,21 +141,9 @@ static void got_ip_event_handler(void *arg, esp_event_base_t event_base, int32_t
     snprintf(s_status.netmask, sizeof(s_status.netmask), IPSTR, IP2STR(&ip_info->netmask));
     snprintf(s_status.gateway, sizeof(s_status.gateway), IPSTR, IP2STR(&ip_info->gw));
     ESP_LOGI(TAG, "DHCP address: %s", s_status.ip_address);
-    const bool should_start_sntp = s_status.time_sync_initialized && !s_status.time_sync_started;
-    if (should_start_sntp) s_status.time_sync_started = true;
     status_unlock();
 
-    if (should_start_sntp) {
-        esp_err_t sntp_err = esp_netif_sntp_start();
-        if (sntp_err != ESP_OK) {
-            status_lock();
-            s_status.time_sync_started = false;
-            status_unlock();
-            ESP_LOGW(TAG, "Could not start SNTP after DHCP: %s", esp_err_to_name(sntp_err));
-        } else {
-            ESP_LOGI(TAG, "SNTP started for FT8 UTC timing cross-check (pool.ntp.org)");
-        }
-    }
+    network_eth_start_time_sync();
 }
 
 esp_err_t network_eth_start(void)

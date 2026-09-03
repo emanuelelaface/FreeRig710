@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FreeRig710 · Yaesu FT-710</title>
-  <link rel="stylesheet" href="styles.css?v=1.0-rtty2">
+  <link rel="stylesheet" href="styles.css?v=1.0-network1">
 </head>
 <body>
   <main class="shell">
@@ -101,19 +101,48 @@
             </div>
             <p id="settings-log-status" class="help" aria-live="polite">Log settings are stored on the ESP32.</p>
           </fieldset>
-          <label>
-            <span class="control-label">ESP32 backend</span>
-            <input id="settings-backend" type="text" autocomplete="off" spellcheck="false" placeholder="http://ft710.local">
-          </label>
-          <label>
-            <span class="control-label">WireGuard config</span>
-            <textarea id="settings-wireguard-config" rows="9" spellcheck="false" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.7.0.2/32&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = vpn.example.net:51820&#10;AllowedIPs = 10.7.0.0/24&#10;PersistentKeepalive = 25"></textarea>
-          </label>
-          <label class="settings-check-row">
-            <span>Enable WireGuard on boot</span>
-            <input id="settings-wireguard-enable" type="checkbox">
-          </label>
-          <p id="settings-wireguard-status" class="help" aria-live="polite">WireGuard settings are stored on the ESP32.</p>
+          <fieldset class="settings-section settings-network-section">
+            <legend>Network</legend>
+            <div class="settings-network-group">
+              <div class="settings-network-heading">Wi-Fi</div>
+              <label class="settings-check-row">
+                <span>Enable Wi-Fi</span>
+                <input id="settings-wifi-enable" type="checkbox">
+              </label>
+              <div class="settings-wifi-row">
+                <label>
+                  <span class="control-label">Network name</span>
+                  <input id="settings-wifi-ssid" type="text" maxlength="32" autocomplete="off" spellcheck="false" placeholder="SSID" list="settings-wifi-networks">
+                  <datalist id="settings-wifi-networks"></datalist>
+                </label>
+                <button id="settings-wifi-scan" class="secondary" type="button">Scan</button>
+              </div>
+              <label>
+                <span class="control-label">Password</span>
+                <input id="settings-wifi-password" type="password" maxlength="64" autocomplete="new-password" placeholder="Leave blank to keep saved password">
+              </label>
+              <p id="settings-wifi-status" class="help" aria-live="polite">Wi-Fi settings are stored on the ESP32.</p>
+            </div>
+            <div class="settings-network-group">
+              <div class="settings-network-heading">ESP32 Backend</div>
+              <label>
+                <span class="control-label">Backend URL</span>
+                <input id="settings-backend" type="text" autocomplete="off" spellcheck="false" placeholder="http://ft710.local">
+              </label>
+            </div>
+            <div class="settings-network-group">
+              <div class="settings-network-heading">WireGuard Config</div>
+              <label>
+                <span class="control-label">Config</span>
+                <textarea id="settings-wireguard-config" rows="9" spellcheck="false" placeholder="[Interface]&#10;PrivateKey = ...&#10;Address = 10.7.0.2/32&#10;&#10;[Peer]&#10;PublicKey = ...&#10;Endpoint = vpn.example.net:51820&#10;AllowedIPs = 10.7.0.0/24&#10;PersistentKeepalive = 25"></textarea>
+              </label>
+              <label class="settings-check-row">
+                <span>Enable WireGuard on boot</span>
+                <input id="settings-wireguard-enable" type="checkbox">
+              </label>
+              <p id="settings-wireguard-status" class="help" aria-live="polite">WireGuard settings are stored on the ESP32.</p>
+            </div>
+          </fieldset>
           <p id="settings-status" class="help" aria-live="polite">Settings are shared by Radio, FT8, JS8, RTTY and Winlink.</p>
           <div class="settings-actions">
             <button id="settings-save" type="submit">Save Settings</button>
@@ -707,6 +736,6 @@
   <script src="ft8-logbook.js?v=1.0-country8"></script>
   <script src="cw.js?v=1.0"></script>
   <script src="sstv.js?v=1.0"></script>
-  <script src="app.js?v=1.0-video-starting1"></script>
+  <script src="app.js?v=1.0-network1"></script>
 </body>
 </html>

@@ -30,6 +30,7 @@ typedef struct {
 
 esp_err_t network_eth_start(void);
 void network_eth_get_status(network_eth_status_t *out_status);
+void network_eth_start_time_sync(void);
 
 #ifdef __cplusplus
 }

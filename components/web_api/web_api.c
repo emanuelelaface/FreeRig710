@@ -18,6 +18,7 @@
 #include "ft710_audio.h"
 #include "ft710_audio_tx.h"
 #include "network_eth.h"
+#include "network_wifi.h"
 #include "tc358743.h"
 #include "video_capture.h"
 #include "video_jpeg.h"
@@ -111,6 +112,27 @@ static void append_i2c_addresses(char *buffer, size_t buffer_size, const tc35874
     }
 }
 
+static void json_escape_string(char *dst, size_t dst_size, const char *src)
+{
+    if (dst == NULL || dst_size == 0) return;
+    dst[0] = '\0';
+    if (src == NULL) return;
+    size_t used = 0;
+    for (const unsigned char *p = (const unsigned char *)src; *p && used + 1 < dst_size; ++p) {
+        if ((*p == '"' || *p == '\\') && used + 2 < dst_size) {
+            dst[used++] = '\\';
+            dst[used++] = (char)*p;
+        } else if (*p < 0x20 && used + 6 < dst_size) {
+            int n = snprintf(dst + used, dst_size - used, "\\u%04X", *p);
+            if (n <= 0 || (size_t)n >= dst_size - used) break;
+            used += (size_t)n;
+        } else {
+            dst[used++] = (char)*p;
+        }
+    }
+    dst[used] = '\0';
+}
+
 static esp_err_t root_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
@@ -127,6 +149,7 @@ static esp_err_t favicon_handler(httpd_req_t *req)
 static esp_err_t health_handler(httpd_req_t *req)
 {
     network_eth_status_t eth;
+    network_wifi_status_t wifi;
     tc358743_status_t tc;
     video_jpeg_status_t jpeg;
     ft710_usb_status_t *usb = malloc(sizeof(*usb));
@@ -135,6 +158,7 @@ static esp_err_t health_handler(httpd_req_t *req)
     }
 
     network_eth_get_status(&eth);
+    network_wifi_get_status(&wifi);
     tc358743_get_status(&tc);
     video_jpeg_get_status(&jpeg);
     ft710_usb_get_status(usb);
@@ -146,7 +170,10 @@ static esp_err_t health_handler(httpd_req_t *req)
         }
     }
 
-    const size_t json_capacity = 3072;
+    char wifi_ssid_json[96];
+    json_escape_string(wifi_ssid_json, sizeof(wifi_ssid_json), wifi.ssid);
+
+    const size_t json_capacity = 4096;
     char *json = malloc(json_capacity);
     if (json == NULL) {
         free(usb);
@@ -184,6 +211,19 @@ static esp_err_t health_handler(httpd_req_t *req)
             "\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
             "\"last_error\":%d"
         "},"
+        "\"wifi\":{"
+            "\"initialized\":%s,"
+            "\"enabled\":%s,"
+            "\"configured\":%s,"
+            "\"connected\":%s,"
+            "\"got_ip\":%s,"
+            "\"ssid\":\"%s\","
+            "\"ip\":\"%s\","
+            "\"rssi\":%d,"
+            "\"channel\":%u,"
+            "\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
+            "\"last_error\":%d"
+        "},"
         "\"tc358743\":{"
             "\"bus_ready\":%s,"
             "\"found\":%s,"
@@ -211,6 +251,17 @@ static esp_err_t health_handler(httpd_req_t *req)
         eth.ip_address,
         eth.mac[0], eth.mac[1], eth.mac[2], eth.mac[3], eth.mac[4], eth.mac[5],
         (int)eth.last_error,
+        wifi.initialized ? "true" : "false",
+        wifi.enabled ? "true" : "false",
+        wifi.configured ? "true" : "false",
+        wifi.connected ? "true" : "false",
+        wifi.got_ip ? "true" : "false",
+        wifi_ssid_json,
+        wifi.ip_address,
+        wifi.rssi,
+        wifi.channel,
+        wifi.mac[0], wifi.mac[1], wifi.mac[2], wifi.mac[3], wifi.mac[4], wifi.mac[5],
+        (int)wifi.last_error,
         tc.bus_ready ? "true" : "false",
         tc.found ? "true" : "false",
         tc.address,

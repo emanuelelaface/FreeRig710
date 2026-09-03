@@ -115,6 +115,21 @@ let qrzState = {
   gridtracker_host: "",
   gridtracker_port: 2333,
 };
+let wifiState = {
+  enabled: false,
+  configured: false,
+  password_set: false,
+  ssid: "",
+  initialized: false,
+  connecting: false,
+  connected: false,
+  got_ip: false,
+  ip: "",
+  rssi: 0,
+  channel: 0,
+  last_error: "ESP_OK",
+  last_disconnect_reason: 0,
+};
 let qrzLogging = false;
 
 const CLICK_TUNING_DEFAULTS = Object.freeze({
@@ -573,6 +588,12 @@ function initStationSettings() {
   const gridTrackerHostInput = byId("settings-gridtracker-host");
   const gridTrackerPortInput = byId("settings-gridtracker-port");
   const apiKeyInput = byId("settings-qrz-api-key");
+  const wifiEnableInput = byId("settings-wifi-enable");
+  const wifiSsidInput = byId("settings-wifi-ssid");
+  const wifiPasswordInput = byId("settings-wifi-password");
+  const wifiScanButton = byId("settings-wifi-scan");
+  const wifiNetworksList = byId("settings-wifi-networks");
+  const wifiStatus = byId("settings-wifi-status");
   const backendInput = byId("settings-backend");
   const adiFileInput = byId("settings-adi-file");
   const adiProgress = byId("settings-adi-progress");
@@ -584,7 +605,7 @@ function initStationSettings() {
   const wireguardStatus = byId("settings-wireguard-status");
   const saveButton = byId("settings-save");
   const status = byId("settings-status");
-  if (!button || !dialog || !form || !callInput || !gridInput || !winlinkCallSameInput || !winlinkGridSameInput || !winlinkCallInput || !winlinkGridInput || !winlinkPasswordInput || !logQrzEnableInput || !logGridTrackerEnableInput || !gridTrackerHostInput || !gridTrackerPortInput || !apiKeyInput || !backendInput || !saveButton || !status) return;
+  if (!button || !dialog || !form || !callInput || !gridInput || !winlinkCallSameInput || !winlinkGridSameInput || !winlinkCallInput || !winlinkGridInput || !winlinkPasswordInput || !logQrzEnableInput || !logGridTrackerEnableInput || !gridTrackerHostInput || !gridTrackerPortInput || !apiKeyInput || !wifiEnableInput || !wifiSsidInput || !wifiPasswordInput || !wifiScanButton || !wifiNetworksList || !wifiStatus || !backendInput || !saveButton || !status) return;
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
@@ -601,6 +622,72 @@ function initStationSettings() {
     if (!logSettingsStatus) return;
     logSettingsStatus.textContent = message;
     logSettingsStatus.classList.toggle("error", isError);
+  };
+
+  const setWiFiStatus = (message, isError = false) => {
+    wifiStatus.textContent = message;
+    wifiStatus.classList.toggle("error", isError);
+  };
+
+  const describeWiFi = (wifi) => {
+    if (!wifi) return "Wi-Fi status unavailable.";
+    if (!wifi.enabled) return "Wi-Fi disabled.";
+    if (!wifi.configured) return "Wi-Fi not configured.";
+    if (wifi.got_ip) {
+      const signal = Number.isFinite(Number(wifi.rssi)) && Number(wifi.rssi) !== 0 ? ` · ${wifi.rssi} dBm` : "";
+      return `Wi-Fi connected${wifi.ip ? ` · ${wifi.ip}` : ""}${signal}`;
+    }
+    if (wifi.connected) return "Wi-Fi associated · waiting for DHCP.";
+    if (wifi.connecting) return `Wi-Fi connecting to ${wifi.ssid || "network"}…`;
+    if (wifi.last_disconnect_reason) return `Wi-Fi disconnected · reason ${wifi.last_disconnect_reason}`;
+    return "Wi-Fi configured.";
+  };
+
+  const applyWiFiStatus = (wifi) => {
+    wifiState = { ...wifiState, ...(wifi || {}) };
+    wifiEnableInput.checked = Boolean(wifiState.enabled);
+    wifiSsidInput.value = wifiState.ssid || "";
+    wifiPasswordInput.value = "";
+    wifiPasswordInput.placeholder = wifiState.password_set ? "Saved on ESP32; leave blank to keep it" : "Wi-Fi password";
+    const isError = Boolean(wifiState.enabled && wifiState.configured && wifiState.last_error && wifiState.last_error !== "ESP_OK");
+    setWiFiStatus(describeWiFi(wifiState), isError);
+    if (!dialog.hidden && wifiState.enabled && wifiState.connecting && !wifiState.got_ip) window.setTimeout(loadWiFiSettings, 2500);
+  };
+
+  const loadWiFiSettings = async () => {
+    setWiFiStatus("Loading Wi-Fi settings…");
+    try {
+      const response = await api("/api/v1/wifi/status");
+      applyWiFiStatus(response.wifi || response);
+    } catch (error) {
+      setWiFiStatus(`Wi-Fi status unavailable: ${error.message}`, true);
+    }
+  };
+
+  const runWiFiScan = async () => {
+    if (wifiScanButton.disabled) return;
+    wifiScanButton.disabled = true;
+    setWiFiStatus("Scanning Wi-Fi networks…");
+    try {
+      const response = await api("/api/v1/wifi/scan");
+      const networks = Array.isArray(response?.networks) ? response.networks : [];
+      wifiNetworksList.replaceChildren();
+      const seen = new Set();
+      for (const network of networks) {
+        const ssid = String(network?.ssid || "").trim();
+        if (!ssid || seen.has(ssid)) continue;
+        seen.add(ssid);
+        const option = document.createElement("option");
+        option.value = ssid;
+        option.label = `${network.rssi ?? "--"} dBm · ch ${network.channel ?? "--"} · ${network.authmode_name || (network.secure ? "secured" : "open")}`;
+        wifiNetworksList.append(option);
+      }
+      setWiFiStatus(networks.length ? `Found ${networks.length} Wi-Fi network${networks.length === 1 ? "" : "s"}.` : "No Wi-Fi networks found.");
+    } catch (error) {
+      setWiFiStatus(`Wi-Fi scan failed: ${error.message}`, true);
+    } finally {
+      wifiScanButton.disabled = false;
+    }
   };
 
   const describeWireGuard = (wg) => {
@@ -915,7 +1002,12 @@ function initStationSettings() {
     apiKeyInput.value = "";
     apiKeyInput.placeholder = qrzState.api_key_set ? "Saved on ESP32; leave blank to keep it" : "Paste QRZ Logbook API key";
     setLogSettingsStatus(isLogConfigured(qrzState) ? `Log destinations: ${logDestinationLabel(qrzState)}` : "Enable QRZ and/or GridTracker to log QSOs.");
-    setStatus("Settings are shared by Radio, FT8, JS8 and Winlink.");
+    wifiEnableInput.checked = Boolean(wifiState.enabled);
+    wifiSsidInput.value = wifiState.ssid || "";
+    wifiPasswordInput.value = "";
+    wifiPasswordInput.placeholder = wifiState.password_set ? "Saved on ESP32; leave blank to keep it" : "Wi-Fi password";
+    setWiFiStatus("Wi-Fi settings are stored on the ESP32.");
+    setStatus("Settings are shared by Radio, FT8, JS8, RTTY and Winlink.");
     if (wireguardConfigInput) wireguardConfigInput.value = "";
     if (wireguardEnableInput) wireguardEnableInput.checked = false;
     setWireGuardStatus("WireGuard settings are stored on the ESP32.");
@@ -924,6 +1016,7 @@ function initStationSettings() {
   const openDialog = () => {
     syncFields();
     dialog.hidden = false;
+    loadWiFiSettings();
     loadWireGuardSettings();
     void renderLogbookSettingsStatus();
     window.setTimeout(() => callInput.focus(), 0);
@@ -967,6 +1060,13 @@ function initStationSettings() {
   apiKeyInput.addEventListener("input", () => {
     if (apiKeyInput.value.trim()) logQrzEnableInput.checked = true;
   });
+  wifiSsidInput.addEventListener("input", () => {
+    if (wifiSsidInput.value.trim()) wifiEnableInput.checked = true;
+  });
+  wifiPasswordInput.addEventListener("input", () => {
+    if (wifiPasswordInput.value) wifiEnableInput.checked = true;
+  });
+  wifiScanButton.addEventListener("click", () => void runWiFiScan());
   adiFileInput?.addEventListener("change", () => void importAdiFromSettings(adiFileInput.files?.[0]));
   qrzSyncButton?.addEventListener("click", () => void runSettingsQrzSync());
   window.addEventListener("freerig710-settings-changed", () => {
@@ -990,6 +1090,9 @@ function initStationSettings() {
     const winlinkCall = sameWinlinkCall ? call : normalizeStationCall(winlinkCallInput.value);
     const winlinkGrid = sameWinlinkGrid ? grid : normalizeGridSquare(winlinkGridInput.value);
     const winlinkPassword = winlinkPasswordInput.value;
+    const wifiEnabled = wifiEnableInput.checked;
+    const wifiSsid = wifiSsidInput.value.trim();
+    const wifiPassword = wifiPasswordInput.value;
     const backend = IS_LOCAL_GUI ? normalizeBackend(backendInput.value || DEFAULT_LOCAL_BACKEND) : "";
     const qrzKey = apiKeyInput.value.trim();
     const qrzEnabled = logQrzEnableInput.checked;
@@ -1017,6 +1120,14 @@ function initStationSettings() {
     }
     if (IS_LOCAL_GUI && !backend) {
       setStatus("ESP32 backend URL is invalid.", true);
+      return;
+    }
+    if (wifiEnabled && !wifiSsid) {
+      setStatus("Wi-Fi network name is required when Wi-Fi is enabled.", true);
+      return;
+    }
+    if (wifiPassword && wifiPassword.length < 8) {
+      setStatus("Wi-Fi password must be at least 8 characters, or leave it blank for an open network.", true);
       return;
     }
     if (qrzEnabled && !qrzKey && !qrzState.api_key_set) {
@@ -1048,6 +1159,7 @@ function initStationSettings() {
     if (backendChanged) API_BASE = backend;
 
     let qrzError = "";
+    let wifiError = "";
     let wireguardError = "";
     try {
       const payload = {
@@ -1069,8 +1181,21 @@ function initStationSettings() {
     } catch (error) {
       qrzError = error.message;
       setLogSettingsStatus(error.message, true);
-    } finally {
-      saveButton.disabled = false;
+    }
+
+    try {
+      const wifiPayload = {
+        enabled: wifiEnabled,
+        ssid: wifiSsid,
+      };
+      if (wifiPassword || wifiSsid !== (wifiState.ssid || "") || !wifiState.password_set) {
+        wifiPayload.password = wifiPassword;
+      }
+      const response = await post("/api/v1/wifi/config", wifiPayload);
+      applyWiFiStatus(response.wifi || response);
+    } catch (error) {
+      wifiError = error.message;
+      setWiFiStatus(error.message, true);
     }
 
     if (wireguardConfigInput && wireguardEnableInput) {
@@ -1090,6 +1215,7 @@ function initStationSettings() {
     if (backendStatus) backendStatus.textContent = backendDisplayName();
     const remoteErrors = [];
     if (qrzError) remoteErrors.push(`Log: ${qrzError}`);
+    if (wifiError) remoteErrors.push(`Wi-Fi: ${wifiError}`);
     if (wireguardError) remoteErrors.push(`WireGuard: ${wireguardError}`);
     if (remoteErrors.length) {
       setStatus(`Settings saved locally. ${remoteErrors.join(" · ")}`, true);
@@ -1099,6 +1225,7 @@ function initStationSettings() {
       showToast("Settings saved");
       if (!backendChanged) window.setTimeout(closeDialog, 350);
     }
+    saveButton.disabled = false;
     if (backendChanged) window.setTimeout(() => window.location.reload(), 450);
   });
 

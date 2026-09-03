@@ -37,6 +37,52 @@ static bool valid_gridtracker_host(const char *value)
     return has_alnum;
 }
 
+static bool valid_wifi_ssid(const char *value)
+{
+    if (value == NULL || value[0] == '\0') return true;
+    size_t n = strlen(value);
+    if (n >= FREERIG_WIFI_SSID_MAX) return false;
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = (unsigned char)value[i];
+        if (c < 0x20 || c == 0x7F) return false;
+    }
+    return true;
+}
+
+static bool valid_wifi_password(const char *value)
+{
+    if (value == NULL || value[0] == '\0') return true;
+    size_t n = strlen(value);
+    if (n >= FREERIG_WIFI_PASSWORD_MAX) return false;
+    return n >= 8 || n == 64;
+}
+
+static bool wifi_ssid_trim_copy(char *dst, size_t dst_size, const char *src)
+{
+    if (dst == NULL || dst_size == 0) return false;
+    dst[0] = '\0';
+    if (src == NULL) return true;
+    while (*src && isspace((unsigned char)*src)) src++;
+    const char *end = src + strlen(src);
+    while (end > src && isspace((unsigned char)*(end - 1))) end--;
+    size_t n = (size_t)(end - src);
+    if (n >= dst_size) return false;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+    return true;
+}
+
+static bool wifi_password_copy(char *dst, size_t dst_size, const char *src)
+{
+    if (dst == NULL || dst_size == 0) return false;
+    dst[0] = '\0';
+    if (src == NULL) return true;
+    size_t n = strlen(src);
+    if (n >= dst_size) return false;
+    memcpy(dst, src, n + 1);
+    return true;
+}
+
 static void uppercase_copy(char *dst, size_t dst_size, const char *src)
 {
     if (dst == NULL || dst_size == 0) return;
@@ -211,6 +257,66 @@ esp_err_t freerig_config_set_wireguard(const char *config_text_or_null, bool ena
         if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
     }
     if (err == ESP_OK) err = nvs_set_u8(h, "wg_boot", enable_on_boot ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t freerig_config_get_wifi(freerig_wifi_config_t *out)
+{
+    if (out == NULL) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    esp_err_t err = freerig_config_init();
+    if (err != ESP_OK) return err;
+    nvs_handle_t h;
+    err = nvs_open("freerig", NVS_READONLY, &h);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (err != ESP_OK) return err;
+    size_t size = sizeof(out->ssid);
+    if (nvs_get_str(h, "wifi_ssid", out->ssid, &size) != ESP_OK) out->ssid[0] = '\0';
+    size = sizeof(out->password);
+    if (nvs_get_str(h, "wifi_pass", out->password, &size) != ESP_OK) out->password[0] = '\0';
+    uint8_t enabled = 0;
+    if (nvs_get_u8(h, "wifi_enabled", &enabled) != ESP_OK) enabled = 0;
+    out->enabled = enabled != 0;
+    out->ssid_set = out->ssid[0] != '\0';
+    out->password_set = out->password[0] != '\0';
+    nvs_close(h);
+    return ESP_OK;
+}
+
+esp_err_t freerig_config_set_wifi(const char *ssid_or_null, const char *password_or_null, bool enabled)
+{
+    char ssid[FREERIG_WIFI_SSID_MAX];
+    char password[FREERIG_WIFI_PASSWORD_MAX];
+    if (!wifi_ssid_trim_copy(ssid, sizeof(ssid), ssid_or_null)) return ESP_ERR_INVALID_ARG;
+    if (!valid_wifi_ssid(ssid)) return ESP_ERR_INVALID_ARG;
+    if (enabled && ssid[0] == '\0') return ESP_ERR_INVALID_ARG;
+    if (password_or_null != NULL) {
+        if (!wifi_password_copy(password, sizeof(password), password_or_null)) return ESP_ERR_INVALID_ARG;
+        if (!valid_wifi_password(password)) return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = freerig_config_init();
+    if (err != ESP_OK) return err;
+    nvs_handle_t h;
+    err = nvs_open("freerig", NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    if (ssid[0]) {
+        err = nvs_set_str(h, "wifi_ssid", ssid);
+    } else {
+        err = nvs_erase_key(h, "wifi_ssid");
+        if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+    }
+    if (err == ESP_OK && password_or_null != NULL) {
+        if (password[0]) {
+            err = nvs_set_str(h, "wifi_pass", password);
+        } else {
+            err = nvs_erase_key(h, "wifi_pass");
+            if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+        }
+    }
+    if (err == ESP_OK) err = nvs_set_u8(h, "wifi_enabled", enabled ? 1 : 0);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     return err;

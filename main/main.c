@@ -8,6 +8,7 @@
 #include "esp_timer.h"
 
 #include "network_eth.h"
+#include "network_wifi.h"
 #include "ft710_usb.h"
 #include "ft710_cat.h"
 #include "ft710_audio.h"
@@ -230,6 +231,11 @@ void app_main(void)
     esp_err_t eth_err = network_eth_start();
     if (eth_err != ESP_OK) {
         ESP_LOGE(TAG, "Ethernet initialization failed: %s", esp_err_to_name(eth_err));
+    }
+
+    esp_err_t wifi_err = network_wifi_start();
+    if (wifi_err != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi initialization failed: %s", esp_err_to_name(wifi_err));
     }
 
     esp_err_t wg_err = freerig_wireguard_init();

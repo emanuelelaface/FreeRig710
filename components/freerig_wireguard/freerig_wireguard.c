@@ -21,6 +21,7 @@
 #include "lwip/tcpip.h"
 #include "lwip/udp.h"
 #include "network_eth.h"
+#include "network_wifi.h"
 #include "wireguard.h"
 #include "wireguardif.h"
 
@@ -474,6 +475,9 @@ static bool wait_for_network_ready(void)
         network_eth_status_t st;
         network_eth_get_status(&st);
         if (st.got_ip) return true;
+        network_wifi_status_t wifi;
+        network_wifi_get_status(&wifi);
+        if (wifi.got_ip) return true;
         vTaskDelay(pdMS_TO_TICKS(500));
         waited += 500;
     }
@@ -519,7 +523,7 @@ static void start_saved_task(void *arg)
         goto done;
     }
     if (!wait_for_network_ready()) {
-        set_last_status(ESP_ERR_TIMEOUT, "WireGuard waiting for Ethernet IP timed out");
+        set_last_status(ESP_ERR_TIMEOUT, "WireGuard waiting for network IP timed out");
         goto done;
     }
     if (!wait_for_time_sync()) {
