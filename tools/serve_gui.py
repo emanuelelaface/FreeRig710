@@ -14,7 +14,8 @@ import webbrowser
 def frontend_directory() -> Path:
     """Return the bundled or source-tree frontend directory."""
     if getattr(sys, "frozen", False):
-        bundle_root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+        meipass = getattr(sys, "_MEIPASS", None)
+        bundle_root = Path(meipass) if meipass else Path(sys.executable).resolve().parent
         return bundle_root / "frontend"
     return Path(__file__).resolve().parents[1] / "frontend"
 
