@@ -3,6 +3,7 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
@@ -202,6 +203,8 @@ void app_main(void)
     ESP_LOGI(TAG, "Target radio: Yaesu FT-710");
     ESP_LOGI(TAG, "FreeRig710 release 1.0 (FT8.6.5.22 lineage)");
     ESP_LOGI(TAG, "Full CAT control API enabled; UAC1 RX/TX normally full duplex; microphone and automatic FT8 TX suspend UAC RX and CAT BULK IN; latching browser PTT guarded by 1.5 s watchdog; FT8 Tune has a 12 s hard limit; FT8.5.16 automatic slot TX stages the complete 48 kHz waveform before RF; UAC1 OUT uses the 48 kHz mode with 32 one-millisecond 192-byte URBs queued; ESP32 SNTP scheduling + lease + CAT watchdog + hard slot deadline remain authoritative");
+    ESP_LOGI(TAG, "USB host control endpoint max transfer: %u bytes",
+             (unsigned)CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE);
     ESP_LOGI(TAG, "Expected FT-710 DVI-D external display mode: 800x480p60");
     ESP_LOGI(TAG, "Diagnostic startup delay: 2000 ms so idf.py monitor can reconnect after flashing");
     vTaskDelay(pdMS_TO_TICKS(2000));
