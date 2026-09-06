@@ -23,6 +23,18 @@ static bool valid_callsign(const char *value)
     return true;
 }
 
+static bool valid_station_grid(const char *value)
+{
+    if (value == NULL || value[0] == '\0') return true;
+    size_t n = strlen(value);
+    if (!(n == 4 || n == 6 || n == 8)) return false;
+    if (value[0] < 'A' || value[0] > 'R' || value[1] < 'A' || value[1] > 'R') return false;
+    if (!isdigit((unsigned char)value[2]) || !isdigit((unsigned char)value[3])) return false;
+    if (n >= 6 && (value[4] < 'A' || value[4] > 'X' || value[5] < 'A' || value[5] > 'X')) return false;
+    if (n == 8 && (!isdigit((unsigned char)value[6]) || !isdigit((unsigned char)value[7]))) return false;
+    return true;
+}
+
 static bool valid_gridtracker_host(const char *value)
 {
     if (value == NULL || value[0] == '\0') return true;
@@ -139,6 +151,8 @@ esp_err_t freerig_config_get_qrz(freerig_qrz_config_t *out)
     if (err != ESP_OK) return err;
     size_t size = sizeof(out->station_callsign);
     if (nvs_get_str(h, "qrz_call", out->station_callsign, &size) != ESP_OK) out->station_callsign[0] = '\0';
+    size = sizeof(out->station_grid);
+    if (nvs_get_str(h, "station_grid", out->station_grid, &size) != ESP_OK) out->station_grid[0] = '\0';
     size = sizeof(out->api_key);
     if (nvs_get_str(h, "qrz_key", out->api_key, &size) != ESP_OK) out->api_key[0] = '\0';
     out->api_key_set = out->api_key[0] != '\0';
@@ -179,15 +193,19 @@ esp_err_t freerig_config_set_qrz(const char *station_callsign, const char *api_k
     return err;
 }
 
-esp_err_t freerig_config_set_log(const char *station_callsign, const char *api_key_or_null,
+esp_err_t freerig_config_set_log(const char *station_callsign, const char *station_grid_or_null,
+                                 const char *api_key_or_null,
                                  bool qrz_enabled, bool gridtracker_enabled,
                                  const char *gridtracker_host_or_null, uint16_t gridtracker_port)
 {
     char call[FREERIG_QRZ_CALLSIGN_MAX];
+    char grid[FREERIG_STATION_GRID_MAX];
     char host[FREERIG_GRIDTRACKER_HOST_MAX];
     uppercase_copy(call, sizeof(call), station_callsign);
+    uppercase_copy(grid, sizeof(grid), station_grid_or_null);
     trim_copy(host, sizeof(host), gridtracker_host_or_null);
     if (!valid_callsign(call)) return ESP_ERR_INVALID_ARG;
+    if (station_grid_or_null != NULL && !valid_station_grid(grid)) return ESP_ERR_INVALID_ARG;
     if (api_key_or_null != NULL && strlen(api_key_or_null) >= FREERIG_QRZ_API_KEY_MAX) return ESP_ERR_INVALID_SIZE;
     if (!valid_gridtracker_host(host)) return ESP_ERR_INVALID_ARG;
     if (gridtracker_enabled && (host[0] == '\0' || gridtracker_port == 0)) return ESP_ERR_INVALID_ARG;
@@ -199,6 +217,13 @@ esp_err_t freerig_config_set_log(const char *station_callsign, const char *api_k
     err = nvs_open("freerig", NVS_READWRITE, &h);
     if (err != ESP_OK) return err;
     err = nvs_set_str(h, "qrz_call", call);
+    if (err == ESP_OK && station_grid_or_null != NULL) {
+        if (grid[0]) err = nvs_set_str(h, "station_grid", grid);
+        else {
+            err = nvs_erase_key(h, "station_grid");
+            if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+        }
+    }
     if (err == ESP_OK && api_key_or_null != NULL) {
         if (api_key_or_null[0] == '\0') err = nvs_erase_key(h, "qrz_key");
         else err = nvs_set_str(h, "qrz_key", api_key_or_null);

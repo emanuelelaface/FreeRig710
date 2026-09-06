@@ -1041,8 +1041,14 @@
       if (typeof window.FreeRig710API?.api !== "function") return;
       try {
         const result = await window.FreeRig710API.api("/api/v1/log/status");
-        const call = normalizeCall(result?.qrz?.station_callsign || result?.station_callsign);
-        if (call && window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ call });
+        const status = result?.qrz || result?.log || result || {};
+        const call = normalizeCall(status?.station_callsign || status?.callsign || "");
+        const grid = normalizeGrid(status?.station_grid || status?.grid || status?.grid_square || "");
+        const update = {};
+        if (call) update.call = call;
+        if (grid) update.grid = grid;
+        if (Object.keys(update).length && window.FreeRig710Settings?.set) window.FreeRig710Settings.set(update);
+        else if (call && window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ call, grid });
         else if (call && !this.myCall) this.myCall = call;
         this.applySharedStationSettings();
         this.renderQso();

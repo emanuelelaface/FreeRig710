@@ -1072,11 +1072,26 @@ static esp_err_t wifi_config_handler(httpd_req_t *req)
     bool enabled_present = false;
     bool enabled = json_bool(j, "enabled", current.enabled, &enabled_present);
     if (!enabled_present) enabled = current.enabled;
+    freerig_wireguard_config_t *wg_cfg = calloc(1, sizeof(*wg_cfg));
+    const bool have_wg_cfg = wg_cfg && freerig_config_get_wireguard(wg_cfg) == ESP_OK;
+    freerig_wireguard_status_t wg_status;
+    freerig_wireguard_get_status(&wg_status);
+    const bool restart_wireguard = have_wg_cfg
+        ? (wg_cfg->config_set && wg_cfg->enable_on_boot)
+        : (wg_status.configured && wg_status.enable_on_boot);
+    free(wg_cfg);
     esp_err_t e = freerig_config_set_wifi(ssid, password, enabled);
     cJSON_Delete(j);
     if (e != ESP_OK) return send_error(req, "422 Unprocessable Entity", "invalid Wi-Fi configuration");
+    if (wg_status.active || wg_status.starting) {
+        (void)freerig_wireguard_stop();
+    }
     e = network_wifi_apply_config();
     if (e != ESP_OK) return send_error(req, "500 Internal Server Error", esp_err_to_name(e));
+    if (restart_wireguard) {
+        e = freerig_wireguard_apply_saved_config_async();
+        if (e != ESP_OK) return send_error(req, "500 Internal Server Error", esp_err_to_name(e));
+    }
     return wifi_status_handler(req);
 }
 
@@ -1116,6 +1131,9 @@ static void log_config_json(cJSON *x, const freerig_qrz_config_t *q)
     cJSON_AddBoolToObject(x, "log_configured", log_ready);
     if (has_call) cJSON_AddStringToObject(x, "station_callsign", q->station_callsign);
     else cJSON_AddNullToObject(x, "station_callsign");
+    cJSON_AddStringToObject(x, "station_grid", q ? q->station_grid : "");
+    cJSON_AddStringToObject(x, "grid", q ? q->station_grid : "");
+    cJSON_AddStringToObject(x, "grid_square", q ? q->station_grid : "");
     cJSON_AddBoolToObject(x, "api_key_set", q && q->api_key_set);
     cJSON_AddBoolToObject(x, "qrz_enabled", q ? q->qrz_enabled : true);
     cJSON_AddBoolToObject(x, "qrz_configured", qrz_ready);
@@ -1151,6 +1169,9 @@ static esp_err_t qrz_config_handler(httpd_req_t *req)
     cJSON *j = read_json(req);
     if (!j) return send_error(req, "422 Unprocessable Entity", "invalid JSON");
     const char *call = json_string(j, "station_callsign", NULL);
+    const char *grid = json_string(j, "station_grid", NULL);
+    if (grid == NULL) grid = json_string(j, "grid", NULL);
+    if (grid == NULL) grid = json_string(j, "grid_square", current.station_grid);
     cJSON *kv = cJSON_GetObjectItemCaseSensitive(j, "api_key");
     const char *key = cJSON_IsString(kv) ? kv->valuestring : NULL;
     bool qrz_present = false;
@@ -1165,7 +1186,7 @@ static esp_err_t qrz_config_handler(httpd_req_t *req)
         cJSON_Delete(j);
         return send_error(req, "422 Unprocessable Entity", "invalid GridTracker UDP port");
     }
-    esp_err_t e = freerig_config_set_log(call, key, qrz_enabled, gridtracker_enabled,
+    esp_err_t e = freerig_config_set_log(call, grid, key, qrz_enabled, gridtracker_enabled,
                                          gridtracker_host, (uint16_t)gridtracker_port_in);
     cJSON_Delete(j);
     if (e != ESP_OK) return send_error(req, "422 Unprocessable Entity", "invalid Log configuration");
@@ -2419,7 +2440,7 @@ static esp_err_t qrz_log_handler(httpd_req_t *req)
     const char *comment = json_string(j, "comment", NULL);
     const char *my_rig = json_string(j, "my_rig", "Yaesu FT-710");
     qrz_copy_upper(job->grid, sizeof(job->grid), grid);
-    qrz_copy_upper(job->my_grid, sizeof(job->my_grid), my_grid);
+    qrz_copy_upper(job->my_grid, sizeof(job->my_grid), (my_grid && my_grid[0]) ? my_grid : q.station_grid);
     snprintf(job->rst_sent, sizeof(job->rst_sent), "%s", rst_sent ? rst_sent : "");
     snprintf(job->rst_rcvd, sizeof(job->rst_rcvd), "%s", rst_rcvd ? rst_rcvd : "");
     snprintf(job->comment, sizeof(job->comment), "%s", comment ? comment : "");

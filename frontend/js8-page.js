@@ -830,8 +830,12 @@ async function loadStationIdentity() {
     const status = response?.qrz || response;
     applyQrzStatus(status);
     const call = sanitizeCall(status?.station_callsign || status?.callsign || "");
-    const grid = sanitizeGrid(status?.grid || status?.grid_square || "");
-    if (window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ call, grid });
+    const grid = sanitizeGrid(status?.station_grid || status?.grid || status?.grid_square || "");
+    const update = {};
+    if (call) update.call = call;
+    if (grid) update.grid = grid;
+    if (Object.keys(update).length && window.FreeRig710Settings?.set) window.FreeRig710Settings.set(update);
+    else if (window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ call, grid });
     applySharedStationSettings();
   } catch (error) {
     setQrzStatus("ERROR", "is-bad");

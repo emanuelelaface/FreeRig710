@@ -278,6 +278,13 @@
     try {
       const response = await api("/api/v1/log/status");
       state.qrzState = response?.qrz || response?.log || response || state.qrzState;
+      const call = sanitizeCall(state.qrzState?.station_callsign || state.qrzState?.callsign || "");
+      const grid = sanitizeGrid(state.qrzState?.station_grid || state.qrzState?.grid || state.qrzState?.grid_square || "");
+      const update = {};
+      if (call) update.call = call;
+      if (grid) update.grid = grid;
+      if (Object.keys(update).length && window.FreeRig710Settings?.set) window.FreeRig710Settings.set(update);
+      else if (window.FreeRig710Settings?.seed) window.FreeRig710Settings.seed({ call, grid });
       if (isLogConfigured(state.qrzState)) {
         setLogStatus("READY", "is-ok");
         if (elements["rtty-log-result"] && /checking/i.test(elements["rtty-log-result"].textContent || "")) {
@@ -289,6 +296,7 @@
           elements["rtty-log-result"].textContent = "Configure QRZ and/or GridTracker in the main Settings panel.";
         }
       }
+      applySharedStationSettings();
       renderLogPreview();
     } catch (error) {
       setLogStatus("ERROR", "is-bad");

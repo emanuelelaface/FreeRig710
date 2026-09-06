@@ -109,6 +109,7 @@ let qrzState = {
   configured: false,
   log_configured: false,
   station_callsign: null,
+  station_grid: "",
   api_key_set: false,
   qrz_enabled: true,
   gridtracker_enabled: false,
@@ -412,6 +413,10 @@ function isLogConfigured(state = qrzState) {
   return Boolean(state?.configured);
 }
 
+function logStatusGrid(state = qrzState) {
+  return normalizeGridSquare(state?.station_grid || state?.grid || state?.grid_square || "");
+}
+
 function logQsoResultText(qso = {}, fallbackCall = "") {
   const modeText = qso.submode || qso.mode || "--";
   const qrzLogId = qso.destinations?.qrz?.logid || qso.logid || "";
@@ -467,7 +472,11 @@ function renderQrzPreview(state = lastState) {
 function applyQrzStatus(status, options = {}) {
   qrzState = status || qrzState;
   const stationCall = normalizeStationCall(qrzState.station_callsign || "");
-  if (stationCall && !stationSettings().call) saveStationSettings({ call: stationCall });
+  const stationGrid = logStatusGrid(qrzState);
+  const stationUpdate = {};
+  if (stationCall) stationUpdate.call = stationCall;
+  if (stationGrid) stationUpdate.grid = stationGrid;
+  if (Object.keys(stationUpdate).length) saveStationSettings(stationUpdate);
   const configState = byId("qrz-config-state");
   const resultElement = byId("qrz-log-result");
   if (configState) {
@@ -606,6 +615,8 @@ function initStationSettings() {
   const saveButton = byId("settings-save");
   const status = byId("settings-status");
   if (!button || !dialog || !form || !callInput || !gridInput || !winlinkCallSameInput || !winlinkGridSameInput || !winlinkCallInput || !winlinkGridInput || !winlinkPasswordInput || !logQrzEnableInput || !logGridTrackerEnableInput || !gridTrackerHostInput || !gridTrackerPortInput || !apiKeyInput || !wifiEnableInput || !wifiSsidInput || !wifiPasswordInput || !wifiScanButton || !wifiNetworksList || !wifiStatus || !backendInput || !saveButton || !status) return;
+  let wireguardSettingsLoaded = false;
+  let wireguardSettingsDirty = false;
 
   const setStatus = (message, isError = false) => {
     status.textContent = message;
@@ -705,6 +716,8 @@ function initStationSettings() {
   const applyWireGuardStatus = (wg) => {
     if (wireguardConfigInput && typeof wg?.config_text === "string") wireguardConfigInput.value = wg.config_text;
     if (wireguardEnableInput) wireguardEnableInput.checked = Boolean(wg?.enable_on_boot);
+    wireguardSettingsLoaded = true;
+    wireguardSettingsDirty = false;
     const isError = Boolean(wg?.last_error && wg.last_error !== "ESP_OK" && wg.configured && wg.enable_on_boot);
     setWireGuardStatus(describeWireGuard(wg), isError);
     if (wg?.starting) window.setTimeout(loadWireGuardSettings, 2500);
@@ -981,7 +994,7 @@ function initStationSettings() {
   const syncFields = () => {
     const settings = stationSettings();
     const mainCall = settings.call || normalizeStationCall(qrzState.station_callsign || "");
-    const mainGrid = settings.grid || "";
+    const mainGrid = settings.grid || logStatusGrid(qrzState);
     const winlinkCallOverride = normalizeStationCall(settings.winlinkCall || "");
     const winlinkGridOverride = normalizeGridSquare(settings.winlinkGrid || "");
     callInput.value = mainCall;
@@ -1010,6 +1023,8 @@ function initStationSettings() {
     setStatus("Settings are shared by Radio, FT8, JS8, RTTY and Winlink.");
     if (wireguardConfigInput) wireguardConfigInput.value = "";
     if (wireguardEnableInput) wireguardEnableInput.checked = false;
+    wireguardSettingsLoaded = false;
+    wireguardSettingsDirty = false;
     setWireGuardStatus("WireGuard settings are stored on the ESP32.");
   };
 
@@ -1066,6 +1081,8 @@ function initStationSettings() {
   wifiPasswordInput.addEventListener("input", () => {
     if (wifiPasswordInput.value) wifiEnableInput.checked = true;
   });
+  wireguardConfigInput?.addEventListener("input", () => { wireguardSettingsDirty = true; });
+  wireguardEnableInput?.addEventListener("change", () => { wireguardSettingsDirty = true; });
   wifiScanButton.addEventListener("click", () => void runWiFiScan());
   adiFileInput?.addEventListener("change", () => void importAdiFromSettings(adiFileInput.files?.[0]));
   qrzSyncButton?.addEventListener("click", () => void runSettingsQrzSync());
@@ -1164,6 +1181,7 @@ function initStationSettings() {
     try {
       const payload = {
         station_callsign: call,
+        station_grid: grid,
         qrz_enabled: qrzEnabled,
         gridtracker_enabled: gridTrackerEnabled,
         gridtracker_host: gridTrackerHost,
@@ -1183,6 +1201,21 @@ function initStationSettings() {
       setLogSettingsStatus(error.message, true);
     }
 
+    if (wireguardConfigInput && wireguardEnableInput && (wireguardSettingsLoaded || wireguardSettingsDirty)) {
+      try {
+        const response = await post("/api/v1/wireguard/config", {
+          config_text: wireguardConfigInput.value,
+          enable_on_boot: wireguardEnableInput.checked,
+        });
+        applyWireGuardStatus(response.wireguard || response);
+      } catch (error) {
+        wireguardError = error.message;
+        setWireGuardStatus(error.message, true);
+      }
+    } else if (wireguardConfigInput && wireguardEnableInput) {
+      setWireGuardStatus("WireGuard settings were not loaded; saved ESP32 config was left unchanged.");
+    }
+
     try {
       const wifiPayload = {
         enabled: wifiEnabled,
@@ -1196,19 +1229,6 @@ function initStationSettings() {
     } catch (error) {
       wifiError = error.message;
       setWiFiStatus(error.message, true);
-    }
-
-    if (wireguardConfigInput && wireguardEnableInput) {
-      try {
-        const response = await post("/api/v1/wireguard/config", {
-          config_text: wireguardConfigInput.value,
-          enable_on_boot: wireguardEnableInput.checked,
-        });
-        applyWireGuardStatus(response.wireguard || response);
-      } catch (error) {
-        wireguardError = error.message;
-        setWireGuardStatus(error.message, true);
-      }
     }
 
     const backendStatus = byId("status-backend");
