@@ -16,10 +16,11 @@ static const char *TAG = "video_jpeg";
 
 #define FREERIG_JPEG_WIDTH               800
 #define FREERIG_JPEG_HEIGHT              480
-#define FREERIG_JPEG_QUALITY            80
-#define FREERIG_JPEG_FPS_LIMIT          20
+#define FREERIG_JPEG_QUALITY            70
+#define FREERIG_JPEG_FPS_LIMIT          12
 #define FREERIG_JPEG_ENGINE_TIMEOUT_MS  100
 #define FREERIG_JPEG_OUTPUT_REQUEST     (1536U * 1024U)
+#define FREERIG_JPEG_SLOW_SEND_US       250000U
 
 static jpeg_encoder_handle_t s_encoder;
 static SemaphoreHandle_t s_encoder_lock;
@@ -33,6 +34,8 @@ static video_jpeg_status_t s_status = {
     .height = FREERIG_JPEG_HEIGHT,
     .quality = FREERIG_JPEG_QUALITY,
     .fps_limit = FREERIG_JPEG_FPS_LIMIT,
+    .stream_effective_quality = FREERIG_JPEG_QUALITY,
+    .stream_effective_fps_limit = FREERIG_JPEG_FPS_LIMIT,
     .last_error = ESP_ERR_INVALID_STATE,
 };
 
@@ -109,18 +112,24 @@ esp_err_t video_jpeg_init(void)
     status_store(&status);
 
     ESP_LOGI(TAG,
-             "ESP32-P4 hardware JPEG encoder ready: %ux%u RGB888/BGR input -> YUV420 JPEG, quality=%u, output PSRAM=%zu bytes",
+             "ESP32-P4 hardware JPEG encoder ready: %ux%u RGB888/BGR input -> YUV420 JPEG, quality=%u, max_fps=%u, output PSRAM=%zu bytes",
              FREERIG_JPEG_WIDTH, FREERIG_JPEG_HEIGHT, status.quality,
-             s_jpeg_capacity);
+             status.fps_limit, s_jpeg_capacity);
     return ESP_OK;
 }
 
-esp_err_t video_jpeg_encode_latest(video_jpeg_frame_view_t *out_view, uint32_t wait_ms)
+static esp_err_t video_jpeg_encode_latest_internal(video_jpeg_frame_view_t *out_view,
+                                                   uint32_t wait_ms,
+                                                   uint8_t quality_override,
+                                                   bool use_quality_override)
 {
     if (out_view == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
     memset(out_view, 0, sizeof(*out_view));
+    if (use_quality_override && (quality_override < 20 || quality_override > 95)) {
+        return ESP_ERR_INVALID_ARG;
+    }
     if (s_encoder == NULL || s_encoder_lock == NULL || s_jpeg_buffer == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -147,7 +156,7 @@ esp_err_t video_jpeg_encode_latest(video_jpeg_frame_view_t *out_view, uint32_t w
 
     video_jpeg_status_t status;
     status_load(&status);
-    const uint8_t encode_quality = status.quality;
+    const uint8_t encode_quality = use_quality_override ? quality_override : status.quality;
 
     jpeg_encode_cfg_t encode_cfg = {
         .height = raw.height,
@@ -199,8 +208,21 @@ esp_err_t video_jpeg_encode_latest(video_jpeg_frame_view_t *out_view, uint32_t w
     out_view->size = encoded_size;
     out_view->source_sequence = source_sequence;
     out_view->encode_us = encode_us;
+    out_view->quality = encode_quality;
     /* Keep s_encoder_lock held while the caller transmits this shared buffer. */
     return ESP_OK;
+}
+
+esp_err_t video_jpeg_encode_latest(video_jpeg_frame_view_t *out_view, uint32_t wait_ms)
+{
+    return video_jpeg_encode_latest_internal(out_view, wait_ms, 0, false);
+}
+
+esp_err_t video_jpeg_encode_latest_with_quality(video_jpeg_frame_view_t *out_view,
+                                                uint32_t wait_ms,
+                                                uint8_t quality)
+{
+    return video_jpeg_encode_latest_internal(out_view, wait_ms, quality, true);
 }
 
 void video_jpeg_release(video_jpeg_frame_view_t *view)
@@ -219,6 +241,8 @@ bool video_jpeg_try_open_stream(void)
     if (!s_stream_active && s_status.encoder_ready) {
         s_stream_active = true;
         s_status.active_stream_clients = 1;
+        s_status.stream_effective_quality = s_status.quality;
+        s_status.stream_effective_fps_limit = s_status.fps_limit;
         opened = true;
     }
     portEXIT_CRITICAL(&s_status_lock);
@@ -230,17 +254,31 @@ void video_jpeg_close_stream(bool disconnected)
     portENTER_CRITICAL(&s_status_lock);
     s_stream_active = false;
     s_status.active_stream_clients = 0;
+    s_status.stream_effective_quality = s_status.quality;
+    s_status.stream_effective_fps_limit = s_status.fps_limit;
     if (disconnected) {
         s_status.stream_disconnects++;
     }
     portEXIT_CRITICAL(&s_status_lock);
 }
 
-void video_jpeg_note_stream_frame(size_t jpeg_size)
+void video_jpeg_note_stream_frame(size_t jpeg_size,
+                                  uint32_t send_us,
+                                  uint8_t stream_quality,
+                                  uint8_t stream_fps_limit)
 {
     portENTER_CRITICAL(&s_status_lock);
     s_status.stream_frames_sent++;
     s_status.stream_bytes_sent += jpeg_size;
+    s_status.last_stream_send_us = send_us;
+    s_status.stream_effective_quality = stream_quality;
+    s_status.stream_effective_fps_limit = stream_fps_limit;
+    if (send_us > s_status.max_stream_send_us) {
+        s_status.max_stream_send_us = send_us;
+    }
+    if (send_us >= FREERIG_JPEG_SLOW_SEND_US) {
+        s_status.stream_slow_sends++;
+    }
     portEXIT_CRITICAL(&s_status_lock);
 }
 
@@ -261,6 +299,17 @@ esp_err_t video_jpeg_set_settings(uint8_t quality, uint8_t fps_limit)
     portENTER_CRITICAL(&s_status_lock);
     s_status.quality = quality;
     s_status.fps_limit = fps_limit;
+    if (!s_stream_active) {
+        s_status.stream_effective_quality = quality;
+        s_status.stream_effective_fps_limit = fps_limit;
+    } else {
+        if (s_status.stream_effective_quality == 0 || s_status.stream_effective_quality > quality) {
+            s_status.stream_effective_quality = quality;
+        }
+        if (s_status.stream_effective_fps_limit == 0 || s_status.stream_effective_fps_limit > fps_limit) {
+            s_status.stream_effective_fps_limit = fps_limit;
+        }
+    }
     portEXIT_CRITICAL(&s_status_lock);
     ESP_LOGI(TAG, "Runtime video settings: JPEG quality=%u max_fps=%u", quality, fps_limit);
     return ESP_OK;

@@ -33,6 +33,11 @@ typedef struct {
     uint32_t stream_frames_sent;
     uint64_t stream_bytes_sent;
     uint32_t stream_disconnects;
+    uint32_t stream_slow_sends;
+    uint32_t last_stream_send_us;
+    uint32_t max_stream_send_us;
+    uint8_t stream_effective_quality;
+    uint8_t stream_effective_fps_limit;
 
     esp_err_t last_error;
 } video_jpeg_status_t;
@@ -42,6 +47,7 @@ typedef struct {
     size_t size;
     uint32_t source_sequence;
     uint32_t encode_us;
+    uint8_t quality;
 } video_jpeg_frame_view_t;
 
 /* Initialize the ESP32-P4 hardware JPEG encoder and its PSRAM output buffer. */
@@ -49,12 +55,18 @@ esp_err_t video_jpeg_init(void);
 
 /* Encode the newest CSI RGB888 frame. The returned JPEG buffer is held until release. */
 esp_err_t video_jpeg_encode_latest(video_jpeg_frame_view_t *out_view, uint32_t wait_ms);
+esp_err_t video_jpeg_encode_latest_with_quality(video_jpeg_frame_view_t *out_view,
+                                                uint32_t wait_ms,
+                                                uint8_t quality);
 void video_jpeg_release(video_jpeg_frame_view_t *view);
 
 /* Milestone 6.1 intentionally supports one MJPEG client at a time. */
 bool video_jpeg_try_open_stream(void);
 void video_jpeg_close_stream(bool disconnected);
-void video_jpeg_note_stream_frame(size_t jpeg_size);
+void video_jpeg_note_stream_frame(size_t jpeg_size,
+                                  uint32_t send_us,
+                                  uint8_t stream_quality,
+                                  uint8_t stream_fps_limit);
 
 void video_jpeg_get_status(video_jpeg_status_t *out_status);
 

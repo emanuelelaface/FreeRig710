@@ -12,6 +12,8 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "lwip/sockets.h"
+#include "lwip/tcp.h"
 #include "freerig_board.h"
 #include "ft710_usb.h"
 #include "ft710_cat.h"
@@ -591,11 +593,98 @@ static esp_err_t video_bmp_handler(httpd_req_t *req)
 #define FREERIG_MJPEG_TASK_STACK 6144
 #define FREERIG_MJPEG_TASK_PRIORITY 4
 #define FREERIG_MJPEG_FRAME_STALL_MS 5000
+#define FREERIG_MJPEG_SEND_CHUNK_BYTES (12U * 1024U)
+#define FREERIG_MJPEG_SLOW_SEND_US 250000U
+#define FREERIG_MJPEG_SLOW_SEND_LOG_PERIOD_US 5000000LL
+#define FREERIG_MJPEG_MIN_ADAPTIVE_QUALITY 25U
+#define FREERIG_MJPEG_MIN_ADAPTIVE_FPS 2U
+#define FREERIG_MJPEG_FAST_SEND_US 80000U
+#define FREERIG_MJPEG_RECOVERY_FAST_US 10000000LL
 
 typedef struct {
     httpd_req_t *req;
     int fd;
 } mjpeg_task_ctx_t;
+
+static uint8_t mjpeg_min_u8(uint8_t a, uint8_t b)
+{
+    return a < b ? a : b;
+}
+
+static uint8_t mjpeg_clamp_u8(uint8_t value, uint8_t min_value, uint8_t max_value)
+{
+    if (value < min_value) return min_value;
+    if (value > max_value) return max_value;
+    return value;
+}
+
+static uint8_t mjpeg_sub_floor_u8(uint8_t value, uint8_t amount, uint8_t floor)
+{
+    if (value <= floor) return floor;
+    const uint8_t available = value - floor;
+    if (amount >= available) return floor;
+    return value - amount;
+}
+
+static uint8_t mjpeg_add_ceil_u8(uint8_t value, uint8_t amount, uint8_t ceiling)
+{
+    if (value >= ceiling) return ceiling;
+    const uint8_t available = ceiling - value;
+    if (amount >= available) return ceiling;
+    return value + amount;
+}
+
+static int64_t mjpeg_frame_period_us(uint8_t fps_limit)
+{
+    return 1000000LL / (fps_limit ? fps_limit : 1U);
+}
+
+static void mjpeg_refresh_adaptive_limits(uint8_t *stream_quality,
+                                          uint8_t *stream_fps_limit,
+                                          const video_jpeg_status_t *configured)
+{
+    const uint8_t configured_quality = mjpeg_clamp_u8(configured->quality, 20U, 95U);
+    const uint8_t configured_fps = mjpeg_clamp_u8(configured->fps_limit, 1U, 30U);
+    const uint8_t min_quality = mjpeg_min_u8(FREERIG_MJPEG_MIN_ADAPTIVE_QUALITY,
+                                             configured_quality);
+    const uint8_t min_fps = mjpeg_min_u8(FREERIG_MJPEG_MIN_ADAPTIVE_FPS,
+                                         configured_fps);
+
+    *stream_quality = mjpeg_clamp_u8(*stream_quality ? *stream_quality : configured_quality,
+                                     min_quality,
+                                     configured_quality);
+    *stream_fps_limit = mjpeg_clamp_u8(*stream_fps_limit ? *stream_fps_limit : configured_fps,
+                                       min_fps,
+                                       configured_fps);
+}
+
+static void mjpeg_configure_socket(int fd)
+{
+    const int one = 1;
+    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) != 0) {
+        ESP_LOGD(TAG, "TCP_NODELAY setup failed for MJPEG fd=%d", fd);
+    }
+}
+
+static esp_err_t mjpeg_send_jpeg_payload(httpd_req_t *req, int fd, const uint8_t *data, size_t size)
+{
+    for (size_t offset = 0; offset < size;) {
+        size_t count = size - offset;
+        if (count > FREERIG_MJPEG_SEND_CHUNK_BYTES) {
+            count = FREERIG_MJPEG_SEND_CHUNK_BYTES;
+        }
+
+        esp_err_t err = httpd_resp_send_chunk(req, (const char *)(data + offset), count);
+        if (err != ESP_OK) {
+            return err;
+        }
+
+        offset += count;
+        (void)httpd_sess_update_lru_counter(s_server, fd);
+        taskYIELD();
+    }
+    return ESP_OK;
+}
 
 static esp_err_t video_jpg_handler(httpd_req_t *req)
 {
@@ -610,13 +699,16 @@ static esp_err_t video_jpg_handler(httpd_req_t *req)
 
     char seq_hdr[32];
     char enc_hdr[32];
+    char quality_hdr[16];
     snprintf(seq_hdr, sizeof(seq_hdr), "%" PRIu32, jpeg.source_sequence);
     snprintf(enc_hdr, sizeof(enc_hdr), "%" PRIu32, jpeg.encode_us);
+    snprintf(quality_hdr, sizeof(quality_hdr), "%u", jpeg.quality);
     httpd_resp_set_type(req, "image/jpeg");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate");
     httpd_resp_set_hdr(req, "Content-Disposition", "inline; filename=freerig710.jpg");
     httpd_resp_set_hdr(req, "X-FreeRig710-Frame-Sequence", seq_hdr);
     httpd_resp_set_hdr(req, "X-FreeRig710-JPEG-Encode-Us", enc_hdr);
+    httpd_resp_set_hdr(req, "X-FreeRig710-JPEG-Quality", quality_hdr);
     err = httpd_resp_send(req, (const char *)jpeg.data, (ssize_t)jpeg.size);
     video_jpeg_release(&jpeg);
     return err;
@@ -632,15 +724,25 @@ static void mjpeg_stream_task(void *arg)
     esp_err_t err = httpd_resp_set_type(req,
         "multipart/x-mixed-replace; boundary=" FREERIG_MJPEG_BOUNDARY);
     if (err == ESP_OK) {
-        err = httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate");
+        err = httpd_resp_set_hdr(req, "Cache-Control", "no-store, no-cache, must-revalidate, no-transform");
     }
     if (err == ESP_OK) {
         err = httpd_resp_set_hdr(req, "Pragma", "no-cache");
+    }
+    if (err == ESP_OK) {
+        err = httpd_resp_set_hdr(req, "X-Accel-Buffering", "no");
     }
 
     uint32_t last_sequence = 0;
     int64_t next_due_us = esp_timer_get_time();
     int64_t last_frame_progress_us = next_due_us;
+    int64_t last_slow_send_log_us = 0;
+    int64_t fast_send_since_us = 0;
+    video_jpeg_status_t initial_cfg_status;
+    video_jpeg_get_status(&initial_cfg_status);
+    uint8_t stream_quality = initial_cfg_status.quality;
+    uint8_t stream_fps_limit = initial_cfg_status.fps_limit;
+    mjpeg_refresh_adaptive_limits(&stream_quality, &stream_fps_limit, &initial_cfg_status);
     bool disconnected = false;
 
     while (err == ESP_OK) {
@@ -671,8 +773,12 @@ static void mjpeg_stream_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(delay_ms));
         }
 
+        video_jpeg_status_t cfg_status;
+        video_jpeg_get_status(&cfg_status);
+        mjpeg_refresh_adaptive_limits(&stream_quality, &stream_fps_limit, &cfg_status);
+
         video_jpeg_frame_view_t jpeg = {0};
-        err = video_jpeg_encode_latest(&jpeg, 100);
+        err = video_jpeg_encode_latest_with_quality(&jpeg, 100, stream_quality);
         if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_TIMEOUT) {
             err = ESP_OK;
             vTaskDelay(pdMS_TO_TICKS(5));
@@ -695,51 +801,123 @@ static void mjpeg_stream_task(void *arg)
                 err = ESP_ERR_TIMEOUT;
                 break;
             }
-            video_jpeg_status_t cfg_status;
-            video_jpeg_get_status(&cfg_status);
-            const int64_t period_us = 1000000LL / (cfg_status.fps_limit ? cfg_status.fps_limit : 20U);
+            const int64_t period_us = mjpeg_frame_period_us(stream_fps_limit);
             next_due_us = esp_timer_get_time() + period_us;
             continue;
         }
 
-        char part_header[192];
+        char part_header[256];
         int header_len = snprintf(part_header, sizeof(part_header),
                                   "--" FREERIG_MJPEG_BOUNDARY "\r\n"
                                   "Content-Type: image/jpeg\r\n"
                                   "Content-Length: %zu\r\n"
                                   "X-FreeRig710-Frame-Sequence: %" PRIu32 "\r\n"
-                                  "X-FreeRig710-JPEG-Encode-Us: %" PRIu32 "\r\n\r\n",
-                                  jpeg.size, jpeg.source_sequence, jpeg.encode_us);
+                                  "X-FreeRig710-JPEG-Encode-Us: %" PRIu32 "\r\n"
+                                  "X-FreeRig710-JPEG-Quality: %u\r\n"
+                                  "X-FreeRig710-Stream-Fps-Limit: %u\r\n\r\n",
+                                  jpeg.size, jpeg.source_sequence, jpeg.encode_us,
+                                  jpeg.quality, stream_fps_limit);
         if (header_len <= 0 || header_len >= (int)sizeof(part_header)) {
             video_jpeg_release(&jpeg);
             err = ESP_FAIL;
             break;
         }
 
+        const int64_t send_start_us = esp_timer_get_time();
         err = httpd_resp_send_chunk(req, part_header, header_len);
         if (err == ESP_OK) {
-            err = httpd_resp_send_chunk(req, (const char *)jpeg.data, jpeg.size);
+            err = mjpeg_send_jpeg_payload(req, fd, jpeg.data, jpeg.size);
         }
         if (err == ESP_OK) {
             err = httpd_resp_send_chunk(req, "\r\n", 2);
         }
+        const int64_t send_end_us = esp_timer_get_time();
+        const uint32_t send_us = (uint32_t)(send_end_us - send_start_us);
         if (err == ESP_OK) {
             last_sequence = jpeg.source_sequence;
-            last_frame_progress_us = esp_timer_get_time();
-            video_jpeg_note_stream_frame(jpeg.size);
+            last_frame_progress_us = send_end_us;
             (void)httpd_sess_update_lru_counter(s_server, fd);
+
+            video_jpeg_status_t latest_cfg_status;
+            video_jpeg_get_status(&latest_cfg_status);
+            mjpeg_refresh_adaptive_limits(&stream_quality, &stream_fps_limit, &latest_cfg_status);
+            const uint8_t configured_quality = mjpeg_clamp_u8(latest_cfg_status.quality, 20U, 95U);
+            const uint8_t configured_fps = mjpeg_clamp_u8(latest_cfg_status.fps_limit, 1U, 30U);
+            const uint8_t min_quality = mjpeg_min_u8(FREERIG_MJPEG_MIN_ADAPTIVE_QUALITY,
+                                                     configured_quality);
+            const uint8_t min_fps = mjpeg_min_u8(FREERIG_MJPEG_MIN_ADAPTIVE_FPS,
+                                                 configured_fps);
+
+            if (send_us >= FREERIG_MJPEG_SLOW_SEND_US) {
+                fast_send_since_us = 0;
+                const uint8_t previous_quality = stream_quality;
+                const uint8_t previous_fps = stream_fps_limit;
+                uint8_t quality_drop = 5U;
+                uint8_t fps_drop = 1U;
+
+                if (send_us >= 1000000U) {
+                    quality_drop = 15U;
+                    fps_drop = stream_fps_limit > 4U ? (stream_fps_limit / 2U) : 1U;
+                } else if (send_us >= 500000U) {
+                    quality_drop = 10U;
+                    fps_drop = 3U;
+                }
+
+                stream_quality = mjpeg_sub_floor_u8(stream_quality, quality_drop, min_quality);
+                stream_fps_limit = mjpeg_sub_floor_u8(stream_fps_limit, fps_drop, min_fps);
+                if (stream_quality != previous_quality || stream_fps_limit != previous_fps) {
+                    ESP_LOGW(TAG,
+                             "MJPEG adaptive throttle fd=%d seq=%" PRIu32
+                             " send=%" PRIu32 " us size=%zu quality=%u->%u fps_limit=%u->%u",
+                             fd, jpeg.source_sequence, send_us, jpeg.size,
+                             previous_quality, stream_quality,
+                             previous_fps, stream_fps_limit);
+                }
+            } else if (send_us <= FREERIG_MJPEG_FAST_SEND_US &&
+                       (stream_quality < configured_quality ||
+                        stream_fps_limit < configured_fps)) {
+                if (fast_send_since_us == 0) {
+                    fast_send_since_us = send_end_us;
+                }
+                if ((send_end_us - fast_send_since_us) >= FREERIG_MJPEG_RECOVERY_FAST_US) {
+                    const uint8_t previous_quality = stream_quality;
+                    const uint8_t previous_fps = stream_fps_limit;
+                    stream_quality = mjpeg_add_ceil_u8(stream_quality, 5U, configured_quality);
+                    stream_fps_limit = mjpeg_add_ceil_u8(stream_fps_limit, 1U, configured_fps);
+                    fast_send_since_us = send_end_us;
+                    if (stream_quality != previous_quality || stream_fps_limit != previous_fps) {
+                        ESP_LOGI(TAG,
+                                 "MJPEG adaptive recovery fd=%d quality=%u->%u fps_limit=%u->%u",
+                                 fd, previous_quality, stream_quality,
+                                 previous_fps, stream_fps_limit);
+                    }
+                }
+            } else {
+                fast_send_since_us = 0;
+            }
+
+            video_jpeg_note_stream_frame(jpeg.size, send_us,
+                                         stream_quality, stream_fps_limit);
+            if (send_us >= FREERIG_MJPEG_SLOW_SEND_US &&
+                (send_end_us - last_slow_send_log_us) >= FREERIG_MJPEG_SLOW_SEND_LOG_PERIOD_US) {
+                ESP_LOGW(TAG,
+                         "MJPEG slow send fd=%d seq=%" PRIu32 " size=%zu encode=%" PRIu32
+                         " us send=%" PRIu32 " us quality=%u/%u fps_limit=%u/%u",
+                         fd, jpeg.source_sequence, jpeg.size, jpeg.encode_us, send_us,
+                         stream_quality, configured_quality,
+                         stream_fps_limit, configured_fps);
+                last_slow_send_log_us = send_end_us;
+            }
         } else {
             disconnected = true;
         }
         video_jpeg_release(&jpeg);
 
         const int64_t after_send_us = esp_timer_get_time();
-        video_jpeg_status_t cfg_status;
-        video_jpeg_get_status(&cfg_status);
-        const int64_t period_us = 1000000LL / (cfg_status.fps_limit ? cfg_status.fps_limit : 20U);
+        const int64_t period_us = mjpeg_frame_period_us(stream_fps_limit);
         next_due_us += period_us;
         if (next_due_us < after_send_us) {
-            next_due_us = after_send_us;
+            next_due_us = after_send_us + period_us;
         }
     }
 
@@ -755,6 +933,7 @@ static void mjpeg_stream_task(void *arg)
 static esp_err_t video_mjpeg_handler(httpd_req_t *req)
 {
     const int fd = httpd_req_to_sockfd(req);
+    mjpeg_configure_socket(fd);
     portENTER_CRITICAL(&s_mjpeg_mux);
     const int old_fd = s_mjpeg_fd;
     portEXIT_CRITICAL(&s_mjpeg_mux);
@@ -816,7 +995,10 @@ static esp_err_t video_mjpeg_handler(httpd_req_t *req)
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "MJPEG client opened: FT-710 800x480 quality=80 max_fps=20 (async HTTP task)");
+    video_jpeg_status_t jpeg_status;
+    video_jpeg_get_status(&jpeg_status);
+    ESP_LOGI(TAG, "MJPEG client opened: FT-710 800x480 quality=%u max_fps=%u (async HTTP task)",
+             jpeg_status.quality, jpeg_status.fps_limit);
     return ESP_OK;
 }
 
@@ -861,9 +1043,14 @@ static esp_err_t jpeg_status_handler(httpd_req_t *req)
             "\"uri\":\"/video.mjpeg\","
             "\"active_clients\":%" PRIu32 ","
             "\"max_clients\":1,"
+            "\"effective_quality\":%u,"
+            "\"effective_fps_limit\":%u,"
             "\"frames_sent\":%" PRIu32 ","
             "\"bytes_sent\":%" PRIu64 ","
-            "\"disconnects\":%" PRIu32
+            "\"disconnects\":%" PRIu32 ","
+            "\"slow_sends\":%" PRIu32 ","
+            "\"last_send_us\":%" PRIu32 ","
+            "\"max_send_us\":%" PRIu32
         "},"
         "\"memory\":{"
             "\"psram_free_before\":%zu,"
@@ -887,9 +1074,14 @@ static esp_err_t jpeg_status_handler(httpd_req_t *req)
         jpeg.last_encode_us,
         jpeg.max_encode_us,
         jpeg.active_stream_clients,
+        jpeg.stream_effective_quality,
+        jpeg.stream_effective_fps_limit,
         jpeg.stream_frames_sent,
         jpeg.stream_bytes_sent,
         jpeg.stream_disconnects,
+        jpeg.stream_slow_sends,
+        jpeg.last_stream_send_us,
+        jpeg.max_stream_send_us,
         jpeg.psram_free_before,
         jpeg.psram_free_after,
         (int)jpeg.last_error);
