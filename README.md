@@ -30,8 +30,8 @@ FreeRig710 is not affiliated with or endorsed by Yaesu. "Yaesu" and "FT-710" ide
 
 ## Demo Videos
 
-- [Main radio console walkthrough](docs/videos/FreeRig710-Main.mp4?raw=1)
-- [Digital modes walkthrough](docs/videos/FreeRig710-DigitalModes.mp4?raw=1)
+- [Main radio console walkthrough](https://raw.githubusercontent.com/emanuelelaface/FreeRig710/main/docs/videos/FreeRig710-Main.mp4)
+- [Digital modes walkthrough](https://raw.githubusercontent.com/emanuelelaface/FreeRig710/main/docs/videos/FreeRig710-DigitalModes.mp4)
 
 ## Documentation
 
