@@ -28,6 +28,11 @@ FreeRig710 is not affiliated with or endorsed by Yaesu. "Yaesu" and "FT-710" ide
 
 ![FreeRig710 Winlink ARDOP operating console](docs/images/winlink-console.png)
 
+## Demo Videos
+
+- [Main radio console walkthrough](docs/videos/FreeRig710-Main.mp4?raw=1)
+- [Digital modes walkthrough](docs/videos/FreeRig710-DigitalModes.mp4?raw=1)
+
 ## Documentation
 
 - [Hardware](docs/HARDWARE.md) - reference wiring, ESP32-P4-NANO board, HDMI-to-CSI capture and FT-710 USB path.
