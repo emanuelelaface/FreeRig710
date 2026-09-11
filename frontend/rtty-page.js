@@ -12,8 +12,8 @@
   const DEFAULT_BAUD = 45.45;
   const DEFAULT_TX_LEVEL_DBFS = -28;
   const DEFAULT_SQUELCH_DB = 9;
-  const DEFAULT_RADIO_MODE = "DATA-U";
-  const RADIO_MODE_STORAGE_KEY = "freerig710-rtty-radio-mode-v2";
+  const DEFAULT_RADIO_MODE = "DATA-L";
+  const RADIO_MODE_STORAGE_KEY = "freerig710-rtty-radio-mode-v3";
   const MAX_STAGED_BYTES = 12 * 1024 * 1024;
   const AUDIO_OWNER_CHANNEL = "freerig710-audio-owner-v1";
   const OWNER_ID = `rtty-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -440,12 +440,23 @@
     }
   }
 
+  function rttyToneOptions(options = {}) {
+    const radioMode = selectedRadioModeForValue(options.radioMode);
+    const upper = radioMode === "DATA-U";
+    const requestedShift = clamp(Math.abs(Number(options.shiftHz) || DEFAULT_SHIFT_HZ), 40, 1200);
+    const defaultMark = DEFAULT_MARK_HZ + (upper ? requestedShift : 0);
+    const markHz = clamp(Number(options.markHz) || defaultMark, DF_LOW + (upper ? 40 : 0), DF_HIGH - (upper ? 0 : 40));
+    const shiftHz = Math.min(requestedShift, upper ? markHz - DF_LOW : DF_HIGH - markHz);
+    // LSB reverses the audio spectrum: normal RTTY always has Mark above Space on RF.
+    const spaceHz = markHz + (upper ? -shiftHz : shiftHz);
+    return { radioMode, markHz, shiftHz, spaceHz };
+  }
+
   class RTTYEncoder {
     constructor(options = {}) {
       this.sampleRate = SAMPLE_RATE;
       this.baud = clamp(Number(options.baud) || DEFAULT_BAUD, 20, 300);
-      this.markHz = clamp(Number(options.markHz) || DEFAULT_MARK_HZ, DF_LOW, DF_HIGH - 40);
-      this.shiftHz = clamp(Math.abs(Number(options.shiftHz) || DEFAULT_SHIFT_HZ), 40, Math.max(40, DF_HIGH - this.markHz));
+      Object.assign(this, rttyToneOptions(options));
       this.txReverse = Boolean(options.txReverse);
       this.levelDbfs = clamp(Number(options.levelDbfs) || DEFAULT_TX_LEVEL_DBFS, -50, -1);
       this.amplitude = clamp(Math.round(32767 * Math.pow(10, this.levelDbfs / 20)), 1, 32767);
@@ -477,7 +488,7 @@
     toneForBit(bit) {
       const logicalMark = bit ? 1 : 0;
       const physicalMark = this.txReverse ? 1 - logicalMark : logicalMark;
-      return physicalMark ? this.markHz : this.markHz + this.shiftHz;
+      return physicalMark ? this.markHz : this.spaceHz;
     }
 
     ensureRoom(count) {
@@ -598,8 +609,11 @@
 
     configure(options = {}) {
       this.baud = clamp(Number(options.baud) || this.baud || DEFAULT_BAUD, 20, 300);
-      this.markHz = clamp(Number(options.markHz) || this.markHz || DEFAULT_MARK_HZ, DF_LOW, DF_HIGH - 40);
-      this.shiftHz = clamp(Math.abs(Number(options.shiftHz) || this.shiftHz || DEFAULT_SHIFT_HZ), 40, Math.max(40, DF_HIGH - this.markHz));
+      Object.assign(this, rttyToneOptions({
+        radioMode: options.radioMode ?? this.radioMode,
+        markHz: options.markHz ?? this.markHz,
+        shiftHz: options.shiftHz ?? this.shiftHz,
+      }));
       this.rxReverse = options.rxReverse === undefined ? Boolean(this.rxReverse) : Boolean(options.rxReverse);
       this.squelchDb = clamp(Number(options.squelchDb) || this.squelchDb || DEFAULT_SQUELCH_DB, 3, 24);
       if (options.unshiftOnSpace !== undefined) this.codec.unshiftOnSpace = options.unshiftOnSpace !== false;
@@ -612,7 +626,7 @@
       this.powerAlpha = 1 - Math.exp(-2 * Math.PI * 8 / this.sampleRate);
       const bandwidth = clamp(this.baud * 1.85, 70, 240);
       this.markTracker = new ToneTracker(this.markHz, this.sampleRate, bandwidth);
-      this.spaceTracker = new ToneTracker(this.markHz + this.shiftHz, this.sampleRate, bandwidth);
+      this.spaceTracker = new ToneTracker(this.spaceHz, this.sampleRate, bandwidth);
       this.diffSmooth = 0;
       this.decisionSmooth = 0;
       this.powerSmooth = 0;
@@ -863,8 +877,7 @@
     if (!(samples instanceof Int16Array) || samples.length < Math.max(8000, sampleRate * 1.5)) return null;
     const current = {
       baud: Number(baseOptions.baud) || DEFAULT_BAUD,
-      markHz: Number(baseOptions.markHz) || DEFAULT_MARK_HZ,
-      shiftHz: Number(baseOptions.shiftHz) || DEFAULT_SHIFT_HZ,
+      ...rttyToneOptions(baseOptions),
       rxReverse: Boolean(baseOptions.rxReverse),
       unshiftOnSpace: baseOptions.unshiftOnSpace !== false,
       squelchDb: Math.min(Number(baseOptions.squelchDb) || DEFAULT_SQUELCH_DB, 8),
@@ -879,11 +892,14 @@
         .filter((pair) => Math.abs(Number(pair.shiftHz) - shiftHz) < 2)
         .map((pair) => pair.markHz);
       const marks = uniqueNumbers([current.markHz, ...pairMarks], 0)
-        .filter((markHz) => markHz >= DF_LOW && markHz + shiftHz <= DF_HIGH);
+        .filter((markHz) => {
+          const spaceHz = markHz + (current.radioMode === "DATA-U" ? -shiftHz : shiftHz);
+          return Math.min(markHz, spaceHz) >= DF_LOW && Math.max(markHz, spaceHz) <= DF_HIGH;
+        });
       for (const markHz of marks) {
         for (const baud of bauds) {
           for (const rxReverse of reverses) {
-            const options = { ...current, baud, markHz, shiftHz, rxReverse };
+            const options = { ...current, ...rttyToneOptions({ radioMode: current.radioMode, markHz, shiftHz }), baud, rxReverse };
             const decoded = decodeRttyBufferForOptions(samples, sampleRate, options);
             const score = decodedTextScore(decoded.text, decoded.frames, decoded.errors);
             candidates.push({ ...options, ...decoded, score });
@@ -898,6 +914,7 @@
   const elements = {};
   const state = {
     activeBand: "",
+    modemRadioMode: DEFAULT_RADIO_MODE,
     dialHz: NaN,
     radio: null,
     socket: null,
@@ -966,16 +983,17 @@
     });
   }
 
-  function modemOptions() {
-    const markHz = clamp(Number(elements["rtty-mark"]?.value) || DEFAULT_MARK_HZ, DF_LOW, DF_HIGH - 40);
-    const maxShift = Math.max(40, DF_HIGH - markHz);
-    const shiftHz = clamp(Math.abs(Number(elements["rtty-shift"]?.value) || DEFAULT_SHIFT_HZ), 40, maxShift);
+  function modemOptions(radioMode = selectedRadioMode()) {
+    const tones = rttyToneOptions({
+      radioMode,
+      markHz: elements["rtty-mark"]?.value,
+      shiftHz: elements["rtty-shift"]?.value,
+    });
     const baud = clamp(Number(elements["rtty-baud"]?.value) || DEFAULT_BAUD, 20, 300);
     const squelchDb = clamp(Number(elements["rtty-squelch"]?.value) || DEFAULT_SQUELCH_DB, 3, 24);
     const levelDbfs = clamp(Number(elements["rtty-tx-level"]?.value) || DEFAULT_TX_LEVEL_DBFS, -40, -12);
     return {
-      markHz,
-      shiftHz,
+      ...tones,
       baud,
       squelchDb,
       levelDbfs,
@@ -986,13 +1004,12 @@
   }
 
   function selectedRadioMode() {
-    const mode = String(elements["rtty-radio-mode"]?.value || DEFAULT_RADIO_MODE).toUpperCase();
-    return mode === "RTTY-L" || mode === "DATA-U" || mode === "RTTY-U" ? mode : DEFAULT_RADIO_MODE;
+    return selectedRadioModeForValue(elements["rtty-radio-mode"]?.value);
   }
 
   function selectedRadioModeForValue(value) {
     const mode = String(value || "").toUpperCase();
-    return mode === "RTTY-L" || mode === "DATA-U" || mode === "RTTY-U" ? mode : DEFAULT_RADIO_MODE;
+    return mode === "DATA-L" || mode === "DATA-U" ? mode : DEFAULT_RADIO_MODE;
   }
 
   function saveModemSettings() {
@@ -1009,6 +1026,7 @@
       localStorage.setItem("freerig710-rtty-tx-level-v1", String(options.levelDbfs));
       localStorage.setItem(RADIO_MODE_STORAGE_KEY, selectedRadioMode());
       localStorage.removeItem("freerig710-rtty-radio-mode-v1");
+      localStorage.removeItem("freerig710-rtty-radio-mode-v2");
     } catch {
       // localStorage is optional.
     }
@@ -1017,14 +1035,14 @@
   function loadModemSettings() {
     if (typeof localStorage === "undefined") return;
     try {
-      const mark = Number(localStorage.getItem("freerig710-rtty-mark-hz-v1"));
-      const shift = Number(localStorage.getItem("freerig710-rtty-shift-hz-v1"));
-      const baud = Number(localStorage.getItem("freerig710-rtty-baud-v1"));
-      const squelch = Number(localStorage.getItem("freerig710-rtty-squelch-db-v1"));
-      const level = Number(localStorage.getItem("freerig710-rtty-tx-level-v1"));
+      const mark = Number(localStorage.getItem("freerig710-rtty-mark-hz-v1") ?? NaN);
+      const shift = Number(localStorage.getItem("freerig710-rtty-shift-hz-v1") ?? NaN);
+      const baud = Number(localStorage.getItem("freerig710-rtty-baud-v1") ?? NaN);
+      const squelch = Number(localStorage.getItem("freerig710-rtty-squelch-db-v1") ?? NaN);
+      const level = Number(localStorage.getItem("freerig710-rtty-tx-level-v1") ?? NaN);
       const radioMode = String(localStorage.getItem(RADIO_MODE_STORAGE_KEY) || "").toUpperCase();
       if (radioMode && elements["rtty-radio-mode"]) elements["rtty-radio-mode"].value = selectedRadioModeForValue(radioMode);
-      if (Number.isFinite(mark) && elements["rtty-mark"]) elements["rtty-mark"].value = String(clamp(mark, DF_LOW, DF_HIGH - 40));
+      if (Number.isFinite(mark) && elements["rtty-mark"]) elements["rtty-mark"].value = String(mark);
       if (Number.isFinite(shift) && elements["rtty-shift"]) elements["rtty-shift"].value = String(clamp(shift, 40, 1200));
       if (Number.isFinite(baud) && elements["rtty-baud"]) elements["rtty-baud"].value = String(baud);
       if (Number.isFinite(squelch) && elements["rtty-squelch"]) elements["rtty-squelch"].value = String(clamp(squelch, 3, 24));
@@ -1049,23 +1067,28 @@
 
   function updateToneUi() {
     const options = modemOptions();
+    state.modemRadioMode = options.radioMode;
     const range = waterfallRangeForOptions(options);
     const low = Math.round(range.low);
     const high = Math.round(range.high);
     const rangeChanged = state.wfDisplayLow !== low || state.wfDisplayHigh !== high;
     state.wfDisplayLow = low;
     state.wfDisplayHigh = high;
-    if (elements["rtty-mark"]) elements["rtty-mark"].value = String(Math.round(options.markHz));
+    if (elements["rtty-mark"]) {
+      elements["rtty-mark"].min = String(DF_LOW + (options.radioMode === "DATA-U" ? 40 : 0));
+      elements["rtty-mark"].max = String(DF_HIGH - (options.radioMode === "DATA-U" ? 0 : 40));
+      elements["rtty-mark"].value = String(Math.round(options.markHz));
+    }
     if (elements["rtty-shift"]) elements["rtty-shift"].value = String(Math.round(options.shiftHz));
     if (elements["rtty-baud"]) elements["rtty-baud"].value = String(options.baud);
     if (elements["rtty-squelch"]) elements["rtty-squelch"].value = String(Math.round(options.squelchDb));
     if (elements["rtty-tx-level"]) elements["rtty-tx-level"].value = String(Math.round(options.levelDbfs));
-    if (elements["rtty-tone-label"]) elements["rtty-tone-label"].textContent = `Mark ${Math.round(options.markHz)} Hz - Space ${Math.round(options.markHz + options.shiftHz)} Hz`;
-    if (elements["rtty-mark-space"]) elements["rtty-mark-space"].textContent = `${Math.round(options.markHz)}/${Math.round(options.markHz + options.shiftHz)}`;
+    if (elements["rtty-tone-label"]) elements["rtty-tone-label"].textContent = `Mark ${Math.round(options.markHz)} Hz - Space ${Math.round(options.spaceHz)} Hz`;
+    if (elements["rtty-mark-space"]) elements["rtty-mark-space"].textContent = `${Math.round(options.markHz)}/${Math.round(options.spaceHz)}`;
     if (elements["rtty-baud-readout"]) elements["rtty-baud-readout"].textContent = String(options.baud);
     renderWaterfallAxis(range);
     const markLeft = (options.markHz - range.low) * 100 / range.span;
-    const spaceLeft = (options.markHz + options.shiftHz - range.low) * 100 / range.span;
+    const spaceLeft = (options.spaceHz - range.low) * 100 / range.span;
     if (elements["rtty-mark-cursor"]) elements["rtty-mark-cursor"].style.left = `${clamp(markLeft, 0, 100)}%`;
     if (elements["rtty-space-cursor"]) elements["rtty-space-cursor"].style.left = `${clamp(spaceLeft, 0, 100)}%`;
     if (rangeChanged && state.wfCtx) buildWaterfall();
@@ -1165,7 +1188,7 @@
 
   function waterfallRangeForOptions(options = modemOptions()) {
     const span = Math.min(RTTY_WATERFALL_SPAN_HZ, DF_HIGH - DF_LOW);
-    const center = Number(options.markHz) + Number(options.shiftHz) / 2;
+    const center = (options.markHz + options.spaceHz) / 2;
     const low = clamp(Math.round((center - span / 2) / 5) * 5, DF_LOW, DF_HIGH - span);
     return { low, high: low + span, span };
   }
@@ -1596,13 +1619,6 @@
       showToast("Select an RTTY band before TX", true);
       return;
     }
-    const radioMode = selectedRadioMode();
-    if (radioMode !== "DATA-U") {
-      const message = "RTTY TX uses AFSK audio: select DATA-U for transmit. RTTY-U/RTTY-L need native FSK keying.";
-      showToast(message, true);
-      log(message, "warn");
-      return;
-    }
     state.txBusy = true;
     state.txAbort = false;
     const resumeRx = state.rxEnabled;
@@ -1868,16 +1884,19 @@
     const floor = waterfallBandFloorDb(spectrum);
     if (!Number.isFinite(floor)) return null;
     const range = currentWaterfallRange();
+    const upper = selectedRadioMode() === "DATA-U";
     let best = null;
-    for (let markHz = Math.ceil(range.low / 5) * 5; markHz <= range.high - shift; markHz += 5) {
+    for (let lowHz = Math.ceil(range.low / 5) * 5; lowHz <= range.high - shift; lowHz += 5) {
+      const markHz = lowHz + (upper ? shift : 0);
+      const spaceHz = lowHz + (upper ? 0 : shift);
       const markDb = spectrumDbAt(markHz, spectrum);
-      const spaceDb = spectrumDbAt(markHz + shift, spectrum);
+      const spaceDb = spectrumDbAt(spaceHz, spectrum);
       if (!Number.isFinite(markDb) || !Number.isFinite(spaceDb)) continue;
       const low = Math.min(markDb, spaceDb) - floor;
       const high = Math.max(markDb, spaceDb) - floor;
       const score = low * 1.35 + high * 0.45;
       if (!best || score > best.score) {
-        best = { markHz, shiftHz: shift, score, floorDb: floor, markDb, spaceDb };
+        best = { markHz, spaceHz, shiftHz: shift, score, floorDb: floor, markDb, spaceDb };
       }
     }
     if (!best || Math.max(best.markDb, best.spaceDb) < floor + 8 || Math.min(best.markDb, best.spaceDb) < floor + 3) return null;
@@ -1938,7 +1957,7 @@
       state.rxText = "";
       appendTerminalText(best.text);
     }
-    showToast(`Auto RX ${best.baud} baud ${Math.round(best.markHz)}/${Math.round(best.markHz + best.shiftHz)} Hz${best.rxReverse ? " reverse" : ""}`);
+    showToast(`Auto RX ${best.baud} baud ${Math.round(best.markHz)}/${Math.round(best.spaceHz)} Hz${best.rxReverse ? " reverse" : ""}`);
   }
 
   function txAudioHzFromWaterfallEvent(event) {
@@ -1946,9 +1965,11 @@
     if (!hitbox) return DEFAULT_MARK_HZ;
     const rect = hitbox.getBoundingClientRect();
     const ratio = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
-    const shift = modemOptions().shiftHz;
+    const options = modemOptions();
     const range = currentWaterfallRange();
-    return clamp(Math.round((range.low + ratio * range.span) / 5) * 5, range.low, range.high - shift);
+    const upper = options.radioMode === "DATA-U";
+    return clamp(Math.round((range.low + ratio * range.span) / 5) * 5,
+      range.low + (upper ? options.shiftHz : 0), range.high - (upper ? 0 : options.shiftHz));
   }
 
   function bindEvents() {
@@ -1960,7 +1981,11 @@
       updateToneUi();
     });
     elements["rtty-radio-mode"]?.addEventListener("change", () => {
-      saveModemSettings();
+      if (selectedRadioMode() !== state.modemRadioMode && elements["rtty-mark"]) {
+        const previous = modemOptions(state.modemRadioMode);
+        elements["rtty-mark"].value = String(previous.spaceHz);
+      }
+      applyModemSettingsChanged("RTTY radio mode changed");
       if (state.activeBand) void configureRadioForRtty();
     });
     elements["rtty-tune-dial"]?.addEventListener("click", tuneRttyDialInput);
