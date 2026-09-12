@@ -16,7 +16,7 @@ The ESP32 validates radio state, synchronizes UTC, owns PTT/deadlines, receives 
 
 ## Waterfall
 
-The operating waterfall covers approximately 200–3000 Hz. Clicking it moves the TX audio cursor/DF. The display shows current TX DF and the resulting VFO-B RF placement.
+The operating waterfall covers approximately 200–3000 Hz. Clicking it moves the TX audio cursor/DF. **TX VFO B** mirrors the frequency shown on the FT-710 display. The transmitted FT8 tone remains at `dial + TX DF`; the staged waveform is centered at 1500 Hz, so the VFO-B dial is intentionally `dial + TX DF - 1500 Hz`.
 
 ## Band Activity
 
@@ -30,7 +30,11 @@ UTC | SNR | MESSAGE | CALL | LOCATION | WORKED
 
 A single click on **any valid decoded message**, not only `CQ`, selects the transmitter callsign and starts a QSO attempt. FreeRig710 prepares `DXCALL MYCALL GRID`, arms TX when allowed, and continues with the normal report/R-report/RR73/73 sequence when the selected DX replies.
 
-A different callsign cannot steal an already-active QSO.
+An automatically decoded callsign cannot steal an already-active QSO. An explicit operator click on another Band Activity row safely halts the old automatic sequence before selecting and arming the new station.
+
+When a Chromium-based browser restores FT8 after leaving the tab in the background, the page first reconciles the ESP32 TX state, reconnects stale audio and probes the codec Web Worker. A Band Activity click waits for that recovery to finish; an unresponsive Worker or a stale decode operation is recreated automatically, without requiring a forced page reload.
+
+Band Activity selection tracks a press on the stable table body through pointer release. Consequently a physical trackpad click remains valid even if an incoming decode or QSO update redraws the row while the button is held; pointer movement beyond the click tolerance is treated as scrolling and does not select a station.
 
 ## Location
 
@@ -53,7 +57,7 @@ Country names from QRZ/ADIF/offline geography are normalized before comparison. 
 
 ## Band selection
 
-Choosing a band configures the FT-710 for integrated FT8 operation and sets the standard dial frequency stored in `ft8.html`. 60 m and 4 m are explicitly marked regional.
+Choosing a band configures the FT-710 for integrated FT8 operation and sets the standard dial frequency stored in `ft8.html`. The page reports the band ready only after it has observed the requested VFO A, VFO B, DATA-U modes and A→B split in the radio state; a failed first application is retried once. 60 m and 4 m are explicitly marked regional.
 
 ## Receiver controls
 

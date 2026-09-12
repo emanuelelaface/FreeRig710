@@ -94,8 +94,11 @@
     encoderError: "",
     encodeRequestSeq: 1,
     encodeWaiters: new Map(),
+    workerProbeSeq: 1,
+    workerProbeWaiters: new Map(),
     decodeBusy: false,
     decodeBusySlotIndex: null,
+    decodeBusySinceMs: 0,
     captureSlotIndex: null,
     captureSlotStartedUnixMs: 0,
     captureBuffer: new Float32Array(SLOT_SAMPLES),
@@ -103,6 +106,9 @@
     captureArmed: false,
     decodeRows: [],
     txActivityRows: [],
+    activityPointers: new Map(),
+    activitySuppressClickKey: "",
+    activitySuppressClickUntilMs: 0,
     logbookReady: false,
     qrzSyncRunning: false,
     qsoCompletionPromise: null,
@@ -166,6 +172,7 @@
         this.renderStatus();
       });
       id("ft8-clear-decodes")?.addEventListener("click", () => { this.decodeRows = []; this.txActivityRows = []; this.renderDecodeRows(); });
+      this.setupActivityPointerSelection();
       this.initLogbook();
       this.initQsoLogging();
       this.initDecodeRules();
@@ -203,23 +210,98 @@
     ensureWorker() {
       if (this.worker) return;
       try {
-        this.worker = new Worker("ft8-worker.js?v=1.0", { type: "module" });
-        this.worker.onmessage = (event) => this.handleWorkerMessage(event.data);
-        this.worker.onerror = (event) => {
-          this.decoderReady = false;
-          this.decoderError = event.message || "worker error";
-          id("ft8-decoder-state").textContent = `ERROR · ${this.decoderError}`;
+        const worker = new Worker("ft8-worker.js?v=1.0-resume2", { type: "module" });
+        this.worker = worker;
+        worker.onmessage = (event) => {
+          if (this.worker === worker) this.handleWorkerMessage(event.data);
+        };
+        worker.onerror = (event) => {
+          if (this.worker !== worker) return;
+          this.restartWorker(event.message || "FT8 Worker error", false);
         };
         id("ft8-decoder-state").textContent = "loading ft8_lib/WASM…";
-        this.worker.postMessage({ type: "init" });
+        worker.postMessage({ type: "init" });
       } catch (error) {
         this.decoderError = String(error?.message || error);
         id("ft8-decoder-state").textContent = `ERROR · ${this.decoderError}`;
       }
     },
 
+    rejectWorkerWaiters(error) {
+      for (const waiter of this.encodeWaiters.values()) waiter.reject(error);
+      this.encodeWaiters.clear();
+      for (const waiter of this.workerProbeWaiters.values()) waiter.resolve(false);
+      this.workerProbeWaiters.clear();
+    },
+
+    restartWorker(reason = "FT8 Worker restart", recreate = true) {
+      const oldWorker = this.worker;
+      this.worker = null;
+      if (oldWorker) {
+        oldWorker.onmessage = null;
+        oldWorker.onerror = null;
+        try { oldWorker.terminate(); } catch (_) {}
+      }
+      this.rejectWorkerWaiters(new Error(reason));
+      this.decoderReady = false;
+      this.decoderError = recreate ? "" : String(reason);
+      this.encoderReady = false;
+      this.encoderError = recreate ? "" : String(reason);
+      this.decodeBusy = false;
+      this.decodeBusySlotIndex = null;
+      this.decodeBusySinceMs = 0;
+      this.resetSlotCapture();
+      if (recreate) {
+        this.ensureWorker();
+        this.worker?.postMessage({ type: "init-encoder" });
+      } else {
+        id("ft8-decoder-state").textContent = `ERROR · ${this.decoderError}`;
+        id("ft8-encoder-state") && (id("ft8-encoder-state").textContent = `ERROR · ${this.encoderError}`);
+        window.FT710_FT8_PAGE?.encoderStateChanged?.({ ready: false, detail: this.encoderError });
+      }
+    },
+
+    probeWorker(timeoutMs = 1500) {
+      this.ensureWorker();
+      if (!this.worker) return Promise.resolve(false);
+      const worker = this.worker;
+      const requestId = this.workerProbeSeq++;
+      if (this.workerProbeSeq > 0x7fffffff) this.workerProbeSeq = 1;
+      return new Promise((resolve) => {
+        const timeout = window.setTimeout(() => {
+          this.workerProbeWaiters.delete(requestId);
+          resolve(false);
+        }, Math.max(250, Number(timeoutMs) || 1500));
+        this.workerProbeWaiters.set(requestId, {
+          resolve: (responsive) => { window.clearTimeout(timeout); resolve(Boolean(responsive)); },
+        });
+        try {
+          worker.postMessage({ type: "ping", requestId });
+        } catch (_) {
+          window.clearTimeout(timeout);
+          this.workerProbeWaiters.delete(requestId);
+          resolve(false);
+        }
+      });
+    },
+
+    async recoverFromSuspension(reason = "FT8 page resumed") {
+      const staleDecode = this.decodeBusy && (!this.decodeBusySinceMs || Date.now() - this.decodeBusySinceMs > 20_000);
+      const responsive = staleDecode ? false : await this.probeWorker();
+      if (!responsive) this.restartWorker(staleDecode ? `${reason}: stale FT8 decode` : `${reason}: unresponsive FT8 Worker`);
+      return responsive;
+    },
+
     handleWorkerMessage(message) {
       if (!message) return;
+      if (message.type === "pong") {
+        const waiter = this.workerProbeWaiters.get(Number(message.requestId));
+        if (waiter) {
+          this.workerProbeWaiters.delete(Number(message.requestId));
+          waiter.resolve(true);
+        }
+        return;
+      }
       if (message.type === "decoder-ready") {
         this.decoderReady = true;
         this.decoderError = "";
@@ -280,6 +362,7 @@
       if (message.type === "decode-result") {
         this.decodeBusy = false;
         this.decodeBusySlotIndex = null;
+        this.decodeBusySinceMs = 0;
         const slotIndex = Number(message.slotIndex);
         const slotStart = slotIndex * SLOT_MS;
         const results = Array.isArray(message.results) ? message.results : [];
@@ -293,6 +376,7 @@
       if (message.type === "decode-error") {
         this.decodeBusy = false;
         this.decodeBusySlotIndex = null;
+        this.decodeBusySinceMs = 0;
         id("ft8-decode-state").textContent = `ERROR · ${message.error || "decode failed"}`;
       }
     },
@@ -579,6 +663,7 @@
       samples.set(this.captureBuffer.subarray(0, validSamples));
       this.decodeBusy = true;
       this.decodeBusySlotIndex = slotIndex;
+      this.decodeBusySinceMs = Date.now();
       this.slotsSubmitted += 1;
       id("ft8-decode-state").textContent = `${early ? "early " : ""}decoding ${slotIndex % 2 === 0 ? "EVEN" : "ODD"} · ${(validSamples / TARGET_RATE).toFixed(2)} s…`;
       this.worker.postMessage({ type: "decode", slotIndex, validSamples, early, samples: samples.buffer }, [samples.buffer]);
@@ -986,12 +1071,10 @@
           if(isTx)tr.classList.add("ft8-row-local-tx");
           if(!isTx){const rule=rulesApi?.winningRule(row,this.colorRules,context,filters); if(rule){tr.dataset.rule=rule.id;tr.style.color=rule.fg;tr.style.backgroundColor=rule.bg;tr.title += ` · ${rule.label}`;}}
           if(!isTx){
+            tr.dataset.ft8RowKey = row.key;
             const select = () => {
-              const accepted=this.selectDecode(row);
-              if(accepted) window.FT710_FT8_PAGE?.rearmAutoTxFromSelection?.();
-              return accepted;
+              void this.selectDecodeFromActivity(row);
             };
-            tr.addEventListener("click", select);
             tr.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); } });
           }
           const workedText=isTx?"--":(worked ? `${worked.count}×${meta.workedBand?" · band":""}` : (meta.newDxcc?"NEW DXCC":(meta.newCountry?"NEW COUNTRY":(meta.call?"NEW CALL":"--"))));
@@ -1037,6 +1120,54 @@
       }
     },
 
+    setupActivityPointerSelection() {
+      const selectKey = (key) => {
+        const row = this.decodeRows.find((candidate) => candidate.key === key);
+        if (row) void this.selectDecodeFromActivity(row);
+      };
+      for (const bodyId of ["ft8-decodes-body", "ft8-rx-decodes-body"]) {
+        const body = id(bodyId);
+        if (!body || body.dataset.ft8PointerSelection === "1") continue;
+        body.dataset.ft8PointerSelection = "1";
+        body.addEventListener("pointerdown", (event) => {
+          if (!event.isPrimary || event.button !== 0) return;
+          const tr = event.target.closest?.("tr[data-ft8-row-key]");
+          if (!tr || !body.contains(tr)) return;
+          this.activityPointers.set(event.pointerId, {
+            key: tr.dataset.ft8RowKey,
+            x: Number(event.clientX),
+            y: Number(event.clientY),
+          });
+          try { body.setPointerCapture(event.pointerId); } catch (_) {}
+        });
+        body.addEventListener("pointerup", (event) => {
+          const pressed = this.activityPointers.get(event.pointerId);
+          if (!pressed) return;
+          this.activityPointers.delete(event.pointerId);
+          try { body.releasePointerCapture(event.pointerId); } catch (_) {}
+          const moved = Math.hypot(Number(event.clientX) - pressed.x, Number(event.clientY) - pressed.y);
+          if (moved > 12) return;
+          this.activitySuppressClickKey = pressed.key;
+          this.activitySuppressClickUntilMs = Date.now() + 500;
+          selectKey(pressed.key);
+        });
+        body.addEventListener("pointercancel", (event) => {
+          this.activityPointers.delete(event.pointerId);
+          try { body.releasePointerCapture(event.pointerId); } catch (_) {}
+        });
+        // Keyboard/assistive-technology clicks and browsers without Pointer
+        // Events retain the normal click path. The click synthesized after a
+        // handled pointerup is suppressed so one press cannot select twice.
+        body.addEventListener("click", (event) => {
+          const tr = event.target.closest?.("tr[data-ft8-row-key]");
+          if (!tr || !body.contains(tr)) return;
+          const key = tr.dataset.ft8RowKey;
+          if (key === this.activitySuppressClickKey && Date.now() < this.activitySuppressClickUntilMs) return;
+          selectKey(key);
+        });
+      }
+    },
+
     async refreshStationIdentity() {
       if (typeof window.FreeRig710API?.api !== "function") return;
       try {
@@ -1053,6 +1184,18 @@
         this.applySharedStationSettings();
         this.renderQso();
       } catch (_) {}
+    },
+
+    async selectDecodeFromActivity(row) {
+      const page=window.FT710_FT8_PAGE;
+      const p=row?.parsed||this.parseMessage(row?.text);
+      const dx=normalizeCall(p.kind==="CQ"?p.call:(p.from!==this.myCall?p.from:p.to));
+      const before=this.qsoMachine?.snapshot?.()||this.qso||{};
+      const switchingDx=Boolean(isCall(dx)&&before.dxCall&&before.dxCall!==dx);
+      if(page?.prepareForActivitySelection && !await page.prepareForActivitySelection({switchingDx}))return false;
+      const accepted=this.selectDecode(row);
+      if(accepted)page?.rearmAutoTxFromSelection?.();
+      return accepted;
     },
 
     selectDecode(row) {

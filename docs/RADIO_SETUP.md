@@ -29,6 +29,8 @@ Selecting a band on the FT8 page applies the radio state required by the integra
 - digital filters used by the normal UI disabled for the FT8 receive path;
 - receive width set to 3.2 kHz.
 
+The main **TX VFO B** readout mirrors the FT-710 display. Because the staged FT8 waveform is centered at 1500 Hz, VFO B is set to `dial + TX DF - 1500 Hz`; the emitted tone is still at `dial + TX DF`. A band is shown as ready only after both VFO frequencies, both DATA-U modes and A→B split have been observed and verified.
+
 The default dial-frequency table in `frontend/ft8.html` is:
 
 | Band | Dial frequency |

@@ -329,6 +329,10 @@ async function encodeTx(message, frequency, levelDbfs) {
 
 self.onmessage = async (event) => {
   const message = event.data || {};
+  if (message.type === "ping") {
+    self.postMessage({ type: "pong", requestId: Number(message.requestId) });
+    return;
+  }
   if (message.type === "init") {
     try { await ensureDecoder(); }
     catch (error) { self.postMessage({ type: "decoder-error", error: String(error?.message || error) }); }

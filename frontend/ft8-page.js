@@ -156,6 +156,7 @@
     autoTxLastStartDelayMs: null,
     autoTxBackend: null,
     autoTxHaltPromise: null,
+    autoTxEnableGeneration: 0,
     autoTxPreparePromise: null,
     autoTxPreparePromiseKey: "",
     staleArmCancelPromise: null,
@@ -169,10 +170,16 @@
     txVfoApplyPromise: null,
     txVfoApplyGeneration: 0,
     txVfoAppliedGeneration: 0,
+    radioConfigPromise: null,
+    radioConfigGeneration: 0,
     autoTxStagePromise: null,
     autoTxStagePromiseKey: "",
     qsoFinishPromise: null,
     lastLoggedQsoKey: "",
+    lastAudioMessageAt: 0,
+    hiddenSinceMs: 0,
+    suspensionRecoveryRequired: false,
+    resumeRecoveryPromise: null,
 
     init() {
       window.FT710_FT8?.init();
@@ -263,18 +270,29 @@
       id("ft8-halt-tx")?.addEventListener("click", () => { window.FT710_FT8?.abortQso?.("Halt TX"); void this.haltAutoTx("operator halt"); });
       window.FT710_FT8?.preloadEncoder?.();
 
-      if (typeof BroadcastChannel !== "undefined") {
-        this.audioChannel = new BroadcastChannel(AUDIO_CHANNEL_NAME);
-        this.audioChannel.onmessage = (event) => {
-          const msg = event.data;
-          if (!msg || msg.type !== "claim" || msg.owner === OWNER_ID) return;
-          if (this.socket || this.audioStarting) {
-            this.closeAudio(`Audio moved to ${msg.source || "another FreeRig710 tab"}`);
-            toast("Audio moved to another FreeRig710 tab", true);
-          }
-        };
-      }
+      this.setupAudioChannel();
+      this.startRuntimeTimers();
+      this.renderAutoTxState();
+      void this.pollState();
+    },
 
+    setupAudioChannel() {
+      if (typeof BroadcastChannel === "undefined" || this.audioChannel) return;
+      this.audioChannel = new BroadcastChannel(AUDIO_CHANNEL_NAME);
+      this.audioChannel.onmessage = (event) => {
+        const msg = event.data;
+        if (!msg || msg.type !== "claim" || msg.owner === OWNER_ID) return;
+        if (this.socket || this.audioStarting) {
+          this.closeAudio(`Audio moved to ${msg.source || "another FreeRig710 tab"}`);
+          toast("Audio moved to another FreeRig710 tab", true);
+        }
+      };
+    },
+
+    startRuntimeTimers() {
+      clearInterval(this.stateTimer);
+      clearInterval(this.autoGainTimer);
+      clearInterval(this.autoTxSchedulerTimer);
       this.stateTimer = setInterval(() => void this.pollState(), 750);
       this.autoGainTimer = setInterval(() => void this.autoAdjustRfGain(), 300);
       this.autoTxSchedulerTimer = setInterval(() => {
@@ -288,8 +306,17 @@
           })
           .finally(() => { this.autoTxSchedulerBusy = false; });
       }, 100);
-      this.renderAutoTxState();
-      void this.pollState();
+    },
+
+    stopRuntimeTimers() {
+      clearInterval(this.stateTimer);
+      clearInterval(this.autoGainTimer);
+      clearInterval(this.autoTxSchedulerTimer);
+      clearInterval(this.autoTxKeepaliveTimer);
+      this.stateTimer = null;
+      this.autoGainTimer = null;
+      this.autoTxSchedulerTimer = null;
+      this.autoTxKeepaliveTimer = null;
     },
 
     claimAudio() {
@@ -377,7 +404,15 @@
 
     async selectBand(select) {
       if (this.tuneRunning) { toast("Stop TX Tune before changing band", true); return; }
-      if (this.autoTxEnabled || this.autoTxArming || this.autoTxSessionActive) await this.haltAutoTx("band changed");
+      if (this.hasAutoTxOperation()) {
+        await this.haltAutoTx("band changed");
+        if (!await this.waitForFt8BackendIdle()) {
+          select.value = this.activeBand || "";
+          this.syncBandButtons(this.activeBand || "");
+          toast("FT8 backend is still stopping; band change cancelled", true);
+          return;
+        }
+      }
       const option = select.selectedOptions[0];
       const band = select.value;
       const dialHz = Number(option?.dataset?.hz);
@@ -504,44 +539,115 @@
     },
 
     async configureRadioForFt8(recovery = false) {
-      if (!this.activeBand || !Number.isFinite(this.dialHz) || this.configuring) return;
+      if (!this.activeBand || !Number.isFinite(this.dialHz)) return false;
+      const generation = ++this.radioConfigGeneration;
+      const target = {
+        generation,
+        band: String(this.activeBand),
+        dialHz: Math.round(Number(this.dialHz)),
+        txVfoBHz: Math.round(Number(this.txVfoBDialHz())),
+      };
+      const previous = this.radioConfigPromise || Promise.resolve(false);
+      const task = previous.catch(() => false).then(() => this.runRadioConfiguration(target, recovery));
+      this.radioConfigPromise = task;
+      try { return await task; }
+      finally {
+        if (this.radioConfigPromise === task) this.radioConfigPromise = null;
+      }
+    },
+
+    radioConfigurationStillCurrent(target) {
+      return Boolean(target && target.generation === this.radioConfigGeneration &&
+        target.band === this.activeBand && Number(target.dialHz) === Number(this.dialHz));
+    },
+
+    radioConfigurationMatches(state, target) {
+      return Boolean(
+        state && target && state.radio_power === "ON" &&
+        state.rx_vfo === "A" && state.tx_vfo === "B" && state.split_enabled &&
+        state.vfo_a_mode === "DATA-U" && state.vfo_b_mode === "DATA-U" &&
+        Math.abs(Number(state.vfo_a_hz) - Number(target.dialHz)) <= 5 &&
+        Math.abs(Number(state.vfo_b_hz) - Number(target.txVfoBHz)) <= 5
+      );
+    },
+
+    async applyFt8VfoConfiguration(target) {
+      const current = () => this.radioConfigurationStillCurrent(target);
+      const send = async (path, payload) => {
+        if (!current()) return false;
+        await post(path, payload);
+        return current();
+      };
+      // Safe RX-only preparation. No PTT/TX command is sent here. Modes are
+      // applied before FA/FB because the FT-710 can shift its displayed dial
+      // while changing from CW to DATA-U.
+      if (!await send("/api/v1/radio/vfo/split", { mode: "OFF" })) return false;
+      if (!await send("/api/v1/radio/vfo/select", { vfo: "A" })) return false;
+      if (!await send("/api/v1/radio/mode", { mode: "DATA-U", vfo: "A" })) return false;
+      if (!await send("/api/v1/radio/mode", { mode: "DATA-U", vfo: "B" })) return false;
+      if (!await send("/api/v1/radio/frequency", { frequency_hz: target.dialHz, vfo: "A" })) return false;
+      if (!await send("/api/v1/radio/frequency", { frequency_hz: target.txVfoBHz, vfo: "B" })) return false;
+      if (!await send("/api/v1/radio/vfo/select", { vfo: "A" })) return false;
+      return send("/api/v1/radio/vfo/split", { mode: "A_TO_B" });
+    },
+
+    async verifyFt8RadioConfiguration(target) {
+      // Setter responses contain the normal CAT cache, which is polled at 1 Hz
+      // and can still describe the old band. Wait for an observed match, then
+      // retry the critical A/B setup once if the radio did not follow it.
+      for (let pass = 0; pass < 2; pass += 1) {
+        for (let attempt = 0; attempt < 7; attempt += 1) {
+          if (!this.radioConfigurationStillCurrent(target)) return false;
+          const state = await api("/api/v1/state");
+          this.state = state;
+          if (this.radioConfigurationMatches(state, target)) return true;
+          if (attempt < 6) await new Promise((resolve) => setTimeout(resolve, 180));
+        }
+        if (pass === 0 && !await this.applyFt8VfoConfiguration(target)) return false;
+      }
+      return false;
+    },
+
+    async runRadioConfiguration(target, recovery = false) {
+      if (!this.radioConfigurationStillCurrent(target)) return false;
       this.configuring = true;
       this.radioRearmPending = false;
       const status = id("ft8-radio-config-state");
-      status.textContent = recovery ? "Radio returned: re-applying FT8 configuration…" : `Configuring ${this.activeBand} FT8…`;
+      status.textContent = recovery ? "Radio returned: re-applying FT8 configuration…" : `Configuring ${target.band} FT8…`;
       try {
         const state = await api("/api/v1/state");
         if (state?.radio_power !== "ON") throw new Error("Radio must be ON before selecting an FT8 band");
+        if (!await this.applyFt8VfoConfiguration(target)) return false;
+        if (!this.radioConfigurationStillCurrent(target)) return false;
 
-        // Safe RX-only preparation. No PTT/TX command is sent here.
-        await post("/api/v1/radio/vfo/split", { mode: "OFF" });
-        await post("/api/v1/radio/vfo/select", { vfo: "A" });
-        // Put both VFOs in DATA-U before writing their FT8 dial frequencies.
-        // On the FT-710 a mode transition (notably CW -> DATA-U) can preserve
-        // the tuned carrier by shifting the displayed dial by the CW pitch
-        // (commonly 700 Hz). Writing FA/FB only after both mode changes makes
-        // the very first FT8 band selection deterministic from any radio state.
-        await post("/api/v1/radio/mode", { mode: "DATA-U", vfo: "A" });
-        await post("/api/v1/radio/mode", { mode: "DATA-U", vfo: "B" });
-        await post("/api/v1/radio/frequency", { frequency_hz: this.dialHz, vfo: "A" });
-        await post("/api/v1/radio/frequency", { frequency_hz: this.txVfoBDialHz(), vfo: "B" });
-        await post("/api/v1/radio/vfo/select", { vfo: "A" });
-        await post("/api/v1/radio/vfo/split", { mode: "A_TO_B" });
         await post("/api/v1/radio/rf-sql-vr", { value: "RF" });
+        if (!this.radioConfigurationStillCurrent(target)) return false;
         await post("/api/v1/radio/dnr", { enabled: false });
+        if (!this.radioConfigurationStillCurrent(target)) return false;
         await post("/api/v1/radio/noise-blanker", { enabled: false });
+        if (!this.radioConfigurationStillCurrent(target)) return false;
         await post("/api/v1/radio/auto-notch", { enabled: false });
+        if (!this.radioConfigurationStillCurrent(target)) return false;
         await post("/api/v1/radio/filter", { width_code: 19, shift_hz: 0, manual_notch_enabled: false, contour_enabled: false });
+        if (!await this.verifyFt8RadioConfiguration(target)) {
+          if (!this.radioConfigurationStillCurrent(target)) return false;
+          throw new Error(`radio did not confirm VFO A ${target.dialHz} and VFO B ${target.txVfoBHz}`);
+        }
 
-        status.textContent = `${this.activeBand} ready · VFO A RX ${formatHz(this.dialHz)} · DATA-U · split A→B · digital filters OFF · 3.2 kHz RX width`;
+        status.textContent = `${target.band} ready · VFO A RX ${formatHz(target.dialHz)} · VFO B TX ${formatHz(target.txVfoBHz)} · DATA-U · split A→B · verified`;
         await this.ensureAudio();
+        if (!this.radioConfigurationStillCurrent(target)) return false;
         window.FT710_FT8?.enableDecode(true);
-        toast(`${this.activeBand} FT8 RX ready`);
+        toast(`${target.band} FT8 RX ready · both VFOs verified`);
+        return true;
       } catch (error) {
-        status.textContent = `FT8 setup failed: ${error.message || error}`;
-        toast(error.message || String(error), true);
+        if (this.radioConfigurationStillCurrent(target)) {
+          status.textContent = `FT8 setup failed: ${error.message || error}`;
+          toast(error.message || String(error), true);
+        }
+        return false;
       } finally {
-        this.configuring = false;
+        if (target.generation === this.radioConfigGeneration) this.configuring = false;
       }
     },
 
@@ -566,7 +672,9 @@
 
     updateTxPlan(pushRadio = false) {
       id("ft8-rx-dial").textContent = formatHz(this.dialHz);
-      id("ft8-tx-rf").textContent = formatHz(this.txRfHz());
+      // The operator-facing TX readout mirrors the FT-710 display. The actual
+      // emitted FT8 tones remain dial + DF and are kept in txRfHz() for ADIF.
+      id("ft8-tx-rf").textContent = formatHz(this.txVfoBDialHz());
       id("ft8-vfo-b").textContent = formatHz(this.txVfoBDialHz());
       id("ft8-tx-df-label").textContent = `TX DF ${Math.round(this.txDfHz)} Hz · future audio center ${TX_AUDIO_CENTER_HZ} Hz`;
       id("ft8-tx-cursor-label").textContent = String(Math.round(this.txDfHz));
@@ -703,6 +811,7 @@
       await new Promise((resolve) => setTimeout(resolve, 120));
       return new Promise((resolve, reject) => {
         const ws = new WebSocket(websocketUrl("/api/v1/audio/ws"));
+        let handshakeReady = false;
         ws.binaryType = "arraybuffer";
         this.socket = ws;
         const timeout = setTimeout(() => {
@@ -712,11 +821,13 @@
           }
         }, 6500);
         ws.onmessage = (event) => {
+          this.lastAudioMessageAt = Date.now();
           if (typeof event.data === "string") {
             let message;
             try { message = JSON.parse(event.data); } catch (_) { return; }
             if (message.type === "ready") {
               clearTimeout(timeout);
+              handshakeReady = true;
               // A staged waveform is owned by one concrete audio WebSocket fd on
               // the ESP32.  Every new WS handshake therefore invalidates any
               // browser-side cached staging id, even if the encoded PCM itself
@@ -727,6 +838,7 @@
               this.stagedWaveformRevision = 0;
               this.audioReady = true;
               this.audioStarting = false;
+              this.lastAudioMessageAt = Date.now();
               if (this.autoTxEnabled) this.txAbortRequested = false;
               this.audioRate = Number(message.sample_rate) || 48000;
               this.txSource = String(message.tx_source || "NONE");
@@ -763,11 +875,15 @@
           if (event.data instanceof ArrayBuffer) window.FT710_FT8?.feedAudio(event.data, this.audioRate);
         };
         ws.onerror = () => {
-          if (!this.audioReady) { clearTimeout(timeout); this.audioStarting = false; reject(new Error("FT8 RX audio WebSocket failed")); }
+          if (this.socket === ws && !handshakeReady) { clearTimeout(timeout); this.audioStarting = false; reject(new Error("FT8 RX audio WebSocket failed")); }
         };
         ws.onclose = () => {
           clearTimeout(timeout);
-          const wasReady = this.audioReady;
+          if (this.socket !== ws) {
+            if (!handshakeReady) reject(new Error("FT8 RX audio WebSocket was replaced"));
+            return;
+          }
+          const wasReady = handshakeReady && this.audioReady;
           // ESP32 clears staged QSO PCM when the owning audio WebSocket goes
           // away.  Mirror that immediately; otherwise an automatic reconnect
           // could reuse a stale waveform id and /ft8/tx/arm would correctly
@@ -783,6 +899,7 @@
           this.socket = null;
           this.audioReady = false;
           this.audioStarting = false;
+          this.lastAudioMessageAt = 0;
           badge.textContent = "AUDIO OFF";
           badge.className = "ft8-page-pill";
           window.FT710_FT8?.setAudioReady(false);
@@ -794,6 +911,7 @@
     },
 
     closeAudio(reason = "FT8 audio closed") {
+      this.autoTxEnableGeneration += 1;
       this.txAbortRequested = true;
       this.txStreaming = false;
       this.tuneAbortRequested = true;
@@ -832,6 +950,7 @@
       this.socket = null;
       this.audioReady = false;
       this.audioStarting = false;
+      this.lastAudioMessageAt = 0;
       window.FT710_FT8?.enableDecode(false);
       window.FT710_FT8?.setAudioReady(false);
       if (ws && ws.readyState < WebSocket.CLOSING) try { ws.close(1000, reason); } catch (_) {}
@@ -862,6 +981,126 @@
 
     canReplanQso() {
       return !this.autoTxSessionActive && !this.tuneRunning;
+    },
+
+    hasAutoTxOperation() {
+      return Boolean(this.autoTxEnabled || this.autoTxPreparing || this.autoTxArming ||
+        this.autoTxSessionActive || this.txStreaming);
+    },
+
+    async waitForFt8BackendIdle(timeoutMs = 2200) {
+      const deadline = performance.now() + Math.max(250, Number(timeoutMs) || 2200);
+      do {
+        const f = await this.refreshTxDiagnostics();
+        if (f && !f?.tx?.running && !f?.tune?.running) return true;
+        if (performance.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 60));
+      } while (performance.now() < deadline);
+      return false;
+    },
+
+    async prepareForActivitySelection({ switchingDx = false } = {}) {
+      // Never let a click race the asynchronous visibility/BFCache recovery:
+      // recovery would otherwise halt the brand-new QSO a few milliseconds
+      // after it was selected. This path is also a direct fallback for Brave
+      // page freezes that do not deliver lifecycle events in the usual order.
+      if (this.resumeRecoveryPromise) await this.resumeRecoveryPromise;
+      const socketDormant = this.activeBand && (!this.socket || this.socket.readyState !== WebSocket.OPEN ||
+        !this.audioReady || !this.lastAudioMessageAt || Date.now() - this.lastAudioMessageAt > 3000);
+      if (this.suspensionRecoveryRequired || socketDormant) {
+        if (!await this.recoverFromSuspension("FT8 activity click recovered a suspended page", true)) return false;
+      }
+
+      // A Band Activity click is an explicit operator action. If it targets a
+      // different station, safely stop the old automatic sequence before the
+      // QSO machine tries to replace it.
+      if (switchingDx && this.hasAutoTxOperation()) {
+        await this.haltAutoTx("new Band Activity selection");
+        if (!await this.waitForFt8BackendIdle()) {
+          toast("The previous FT8 transmission is still stopping", true);
+          return false;
+        }
+      }
+      if (this.canReplanQso()) return true;
+
+      // A suspended tab can miss the final IDLE WebSocket notification. Read
+      // the authoritative ESP32 state and clear only latches that no longer
+      // correspond to a running backend operation.
+      const f = await this.refreshTxDiagnostics();
+      const backendTxRunning = Boolean(f?.tx?.running);
+      const backendTuneRunning = Boolean(f?.tune?.running);
+      if (!backendTxRunning && this.hasAutoTxOperation()) {
+        await this.haltAutoTx("recovered stale browser TX state");
+      }
+      if (!backendTuneRunning && this.tuneRunning) {
+        this.tuneRunning = false;
+        this.tuneAbortRequested = false;
+        this.setTuneControls(false);
+      }
+      if (this.canReplanQso()) return true;
+      toast(backendTuneRunning ? "Stop TX Tune before selecting a decode" : "Wait for the current FT8 transmission to stop", true);
+      return false;
+    },
+
+    async recoverFromSuspension(reason = "FT8 page resumed", forceAudioReconnect = false) {
+      if (this.resumeRecoveryPromise) return this.resumeRecoveryPromise;
+      this.renderAutoTxState("recovering browser-suspended FT8 state");
+      this.resumeRecoveryPromise = (async () => {
+        await this.pollState();
+        const f = await this.refreshTxDiagnostics();
+        const backendTxRunning = Boolean(f?.tx?.running);
+        const backendTuneRunning = Boolean(f?.tune?.running);
+
+        // Browser scheduling and lease keepalives cannot be trusted across a
+        // frozen/backgrounded page. Always return an orphaned operation to RX
+        // and expose a clean one-click QSO state on resume.
+        if (backendTxRunning || this.hasAutoTxOperation()) {
+          await this.haltAutoTx(reason);
+        }
+        if (backendTuneRunning || this.tuneRunning || this.tuneToneActive) {
+          try { await api("/api/v1/ft8/tune/stop", { method: "POST" }); } catch (_) {}
+          this.tuneRunning = false;
+          this.tuneToneActive = false;
+          this.tuneAbortRequested = false;
+          this.setTuneControls(false);
+        }
+        if ((backendTxRunning || backendTuneRunning) && !await this.waitForFt8BackendIdle()) {
+          throw new Error("ESP32 FT8 operation did not return to idle");
+        }
+
+        // Chromium may freeze the codec Worker independently of the DOM. A
+        // stale decode-busy latch blocks the slot scheduler and a suspended
+        // encoder leaves QSO arming waiting forever, so probe/recreate it as
+        // part of the same recovery barrier awaited by Band Activity clicks.
+        await window.FT710_FT8?.recoverFromSuspension?.(reason);
+
+        const socketStale = !this.socket || this.socket.readyState !== WebSocket.OPEN ||
+          !this.audioReady || !this.lastAudioMessageAt || Date.now() - this.lastAudioMessageAt > 3000;
+        if (forceAudioReconnect || socketStale) {
+          this.closeAudio(reason);
+          if (this.activeBand && this.state?.radio_power === "ON") {
+            try { await this.ensureAudio(); } catch (error) { toast(`FT8 audio reconnect failed: ${error.message || error}`, true); }
+          }
+        }
+
+        if (this.activeBand && this.state?.radio_power === "ON") {
+          const target = {
+            generation: this.radioConfigGeneration,
+            band: String(this.activeBand),
+            dialHz: Math.round(Number(this.dialHz)),
+            txVfoBHz: Math.round(Number(this.txVfoBDialHz())),
+          };
+          if (!this.radioConfigurationMatches(this.state, target) && !await this.configureRadioForFt8(true)) {
+            throw new Error("radio VFOs could not be restored for the selected FT8 band");
+          }
+        }
+        this.suspensionRecoveryRequired = false;
+        this.renderAutoTxState("page state recovered");
+        return true;
+      })().catch((error) => {
+        toast(`FT8 resume recovery failed: ${error.message || error}`, true);
+        return false;
+      }).finally(() => { this.resumeRecoveryPromise = null; });
+      return this.resumeRecoveryPromise;
     },
 
     canTakeOverStoppedQso() {
@@ -1502,8 +1741,6 @@
     async enableAutoTx() {
       if (this.autoTxEnabled || this.autoTxPreparing || this.autoTxArming || this.autoTxSessionActive) return;
       if (this.tuneRunning || this.txStreaming) { toast("Stop TX Tune/audio test before enabling FT8 TX", true); return; }
-      this.txAbortRequested = false;
-      this.autoTxArmingSinceMs = 0;
       if (!this.activeBand || !Number.isFinite(this.dialHz)) { toast("Select an FT8 band first", true); return; }
       if (!this.txPlanMessage) {
         const qso = window.FT710_FT8?.getQsoSnapshot?.() || {};
@@ -1513,17 +1750,29 @@
       }
       if (!this.txLevelTuned || !Number.isFinite(this.txLevelDbfs)) { toast("Run Tune TX first to calibrate FT8 audio", true); return; }
 
+      const enableGeneration = ++this.autoTxEnableGeneration;
+      const assertEnableCurrent = () => {
+        if (enableGeneration === this.autoTxEnableGeneration) return;
+        const error = new Error("FT8 TX enable superseded");
+        error.code = "FT8_ENABLE_CANCELLED";
+        throw error;
+      };
+      this.txAbortRequested = false;
+      this.autoTxArmingSinceMs = 0;
       this.autoTxPreparing = true;
       this.renderAutoTxState("validating current QSO plan");
       try {
         await this.ensureAudio();
+        assertEnableCurrent();
         const timing = window.FT710_FT8?.getTimingEstimate?.() || {};
         if (!timing.valid) throw new Error("ESP32 UTC timing is not synchronized yet");
 
         if (this.txVfoApplyPromise) await this.txVfoApplyPromise;
         else await this.applyTxVfoB();
+        assertEnableCurrent();
 
         const state = await api("/api/v1/state");
+        assertEnableCurrent();
         this.state = state;
         if (state?.radio_power !== "ON" || state?.ptt_active || state?.tx_state === "TX") {
           throw new Error("radio must be stably ON and in RX");
@@ -1536,6 +1785,7 @@
         // buffer' race where a correct newer plan invalidated an older encode.
         let stable = null;
         for (let attempt = 0; attempt < 4 && !stable; attempt += 1) {
+          assertEnableCurrent();
           if (this.txAbortRequested) throw new Error("FT8 TX enable cancelled");
           const plan = window.FT710_FT8?.getTxPlan?.() || {};
           const message = String(plan.message || "").trim();
@@ -1546,9 +1796,12 @@
             if (!(await this.prepareAutoTxWaveform(message, revision)) || !this.preparedWaveformMatches(message)) {
               throw new Error(`FT8 encoder did not produce the expected 48 kHz buffer for ${message}`);
             }
+            assertEnableCurrent();
             const waveformId = await this.ensureAutoTxWaveformStaged(message, revision, { requireEnabled: false });
+            assertEnableCurrent();
             if (!this.txPlanStillCurrent(message, revision)) throw this.stalePlanError(message, revision);
             const stagedOk = await this.verifyAutoTxWaveformStaged(waveformId, this.txStageWaveform.byteLength, 3);
+            assertEnableCurrent();
             // A decode can advance Auto Seq while /ft8/status is in flight.
             // Re-check after the final READY verification as well, otherwise
             // an obsolete waveform can win the enable race by a few ms.
@@ -1564,6 +1817,7 @@
           }
         }
         if (!stable) throw new Error("QSO changed repeatedly while arming; click the latest decode again");
+        assertEnableCurrent();
         if (!this.txPlanStillCurrent(stable.message, stable.revision)) throw this.stalePlanError(stable.message, stable.revision);
 
         this.autoTxEnabled = true;
@@ -1573,15 +1827,20 @@
         id("ft8-tx-progress").textContent = `AUTO TX ready · ${stable.message} · waveform ${stable.waveformId} · waiting ${this.txSlotParity ? "ODD" : "EVEN"} slot`;
         toast("FT8 automatic TX armed");
       } catch (error) {
-        if (error?.code !== "FT8_STALE_PLAN") toast(`FT8 TX not armed: ${error?.message || error}`, true);
+        if (enableGeneration === this.autoTxEnableGeneration && error?.code !== "FT8_STALE_PLAN" && error?.code !== "FT8_ENABLE_CANCELLED") {
+          toast(`FT8 TX not armed: ${error?.message || error}`, true);
+        }
       } finally {
-        this.autoTxPreparing = false;
-        this.renderAutoTxState();
+        if (enableGeneration === this.autoTxEnableGeneration) {
+          this.autoTxPreparing = false;
+          this.renderAutoTxState();
+        }
       }
     },
 
     async haltAutoTx(reason = "operator halt", fromBackend = false) {
       if (this.autoTxHaltPromise) return this.autoTxHaltPromise;
+      this.autoTxEnableGeneration += 1;
       this.autoTxHaltPromise = (async () => {
         this.autoTxEnabled = false;
         this.autoTxPreparing = false;
@@ -2044,18 +2303,58 @@
   };
 
   window.FT710_FT8_PAGE = page;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      page.hiddenSinceMs = Date.now();
+      page.suspensionRecoveryRequired = true;
+      return;
+    }
+    const hiddenForMs = page.hiddenSinceMs ? Math.max(0, Date.now() - page.hiddenSinceMs) : 0;
+    page.hiddenSinceMs = 0;
+    page.startRuntimeTimers();
+    const socketStale = !page.socket || page.socket.readyState !== WebSocket.OPEN ||
+      !page.audioReady || !page.lastAudioMessageAt || Date.now() - page.lastAudioMessageAt > 3000;
+    if (hiddenForMs > 3000 || socketStale) {
+      void page.recoverFromSuspension("FT8 page resumed after suspension", hiddenForMs > 3000);
+    } else {
+      page.suspensionRecoveryRequired = false;
+    }
+  });
+  document.addEventListener("freeze", () => {
+    page.hiddenSinceMs ||= Date.now();
+    page.suspensionRecoveryRequired = true;
+    page.stopRuntimeTimers();
+    if (page.socket?.readyState === WebSocket.OPEN) page.sendAudioControl({ type: "tx_source", source: "NONE" });
+    page.closeAudio("FT8 page frozen by browser");
+  });
+  document.addEventListener("resume", () => {
+    page.startRuntimeTimers();
+    void page.recoverFromSuspension("FT8 page resumed after browser freeze", true);
+  });
   window.addEventListener("pagehide", () => {
-    clearInterval(page.stateTimer);
-    clearInterval(page.autoGainTimer);
-    clearInterval(page.autoTxSchedulerTimer);
-    clearInterval(page.autoTxKeepaliveTimer);
+    page.hiddenSinceMs = Date.now();
+    page.suspensionRecoveryRequired = true;
+    page.stopRuntimeTimers();
     if (page.socket?.readyState === WebSocket.OPEN) {
       if (page.tuneRunning || page.tuneToneActive) page.sendAudioControl({ type: "ptt", enabled: false });
       if (page.autoTxEnabled || page.autoTxArming || page.autoTxSessionActive) page.sendAudioControl({ type: "tx_source", source: "NONE" });
       page.sendAudioControl({ type: "tx_source", source: "NONE" });
     }
-    page.closeAudio("FT8 tab closed");
+    page.closeAudio("FT8 page suspended");
     page.audioChannel?.close();
+    page.audioChannel = null;
+  });
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    page.setupAudioChannel();
+    page.startRuntimeTimers();
+    void page.recoverFromSuspension("FT8 page restored from browser cache", true);
+  });
+  window.addEventListener("focus", () => {
+    if (!document.hidden && page.suspensionRecoveryRequired && !page.resumeRecoveryPromise) {
+      page.startRuntimeTimers();
+      void page.recoverFromSuspension("FT8 page recovered on focus", true);
+    }
   });
   page.init();
 })();

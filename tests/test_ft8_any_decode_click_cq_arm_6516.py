@@ -5,8 +5,18 @@ css=(root/'frontend/ft8-page.css').read_text()
 js=(root/'frontend/ft8.js').read_text()
 page=(root/'frontend/ft8-page.js').read_text()
 
-# Band Activity click calls any parseable decoded station and attempts Auto TX.
-assert 'if(accepted&&!rxFrequency) window.FT710_FT8_PAGE?.enableAutoTxFromSelection?.();' in js
+# Band Activity pointer/click calls any parseable decoded station and attempts
+# Auto TX. Pointer state lives on the stable tbody so a DOM redraw between a
+# physical trackpad press and release cannot swallow the selection.
+render=js[js.index('const renderBody ='):js.index('renderBody(id("ft8-decodes-body")')]
+assert 'tr.dataset.ft8RowKey = row.key;' in render
+pointer=js[js.index('    setupActivityPointerSelection() {'):js.index('    async refreshStationIdentity() {')]
+for token in ('"pointerdown"','"pointerup"','setPointerCapture','releasePointerCapture','moved > 12','selectKey(pressed.key)','"click"'):
+    assert token in pointer
+operator_select=js[js.index('    async selectDecodeFromActivity(row) {'):js.index('    selectDecode(row) {')]
+assert 'await page.prepareForActivitySelection({switchingDx})' in operator_select
+assert 'const accepted=this.selectDecode(row);' in operator_select
+assert 'if(accepted)page?.rearmAutoTxFromSelection?.();' in operator_select
 assert 'row.parsed?.kind==="CQ"' not in js[js.index('const renderBody ='):js.index('renderBody(id("ft8-decodes-body")')]
 assert 'return true;' in js[js.index('    selectDecode(row) {'):js.index('    updateTxReportFromRow(row) {')]
 assert 'return false;' in js[js.index('    selectDecode(row) {'):js.index('    updateTxReportFromRow(row) {')]
@@ -19,7 +29,7 @@ assert 'snap.state==="CALLING_CQ"' in cq_handler
 assert 'getTxSlotParity?.()' in cq_handler
 assert 'page?.enableAutoTxFromSelection?.();' in cq_handler
 assert 'getTxDf()' in page and 'getTxSlotParity()' in page
-assert 'void this.enableAutoTx();' in page[page.index('enableAutoTxFromSelection()'):page.index('txPlanStillCurrent')]
+assert 'await this.enableAutoTx();' in page[page.index('enableAutoTxFromSelection()'):page.index('    txPlanStillCurrent(')]
 
 # The small CQ label is gone; button and preview bar have the same explicit height.
 cq=html[html.index('<div class="ft8-cq-box"'):html.index('</div>',html.index('<div class="ft8-cq-box"'))]
