@@ -5,6 +5,12 @@ page = (ROOT / "frontend" / "ft8-page.js").read_text()
 engine = (ROOT / "frontend" / "ft8.js").read_text()
 html = (ROOT / "frontend" / "ft8.html").read_text()
 
+# Every resume/abort path calls this cleanup method; it must exist on the page
+# object rather than failing only when a suspended tab is recovered.
+clock_cleanup = page[page.index("    stopTxClockSource() {"):page.index("    claimAudio() {")]
+for token in ("txClockCaptureEnabled = false", "source.stop()", "source.disconnect()", "context.close()"):
+    assert token in clock_cleanup
+
 # The main TX readout must mirror the frequency shown by the radio for VFO B.
 assert '<span>TX VFO B</span><strong id="ft8-tx-rf">' in html
 tx_plan = page[page.index("    updateTxPlan(pushRadio = false) {"):page.index("    async selectWaterfallDf(event) {")]
@@ -58,7 +64,7 @@ for token in (
     assert token in engine
 assert 'if (message.type === "ping")' in worker
 assert 'type: "pong"' in worker
-assert "v=1.0-resume3" in html
+assert "v=1.0-resume4" in html
 
 # A new row click can safely stop/take over an old automatic QSO instead of
 # being silently ignored by stale browser TX flags.

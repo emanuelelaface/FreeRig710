@@ -319,6 +319,37 @@
       this.autoTxKeepaliveTimer = null;
     },
 
+    stopTxClockSource() {
+      // The current staged/lossless TX path does not normally create these
+      // legacy browser-clock nodes, but every abort/resume path must still be
+      // able to clean them up safely if a partially initialized node exists.
+      this.txClockCaptureEnabled = false;
+      const source = this.txClockSourceNode;
+      this.txClockSourceNode = null;
+      if (source) {
+        try { source.stop(); } catch (_) {}
+        try { source.disconnect(); } catch (_) {}
+      }
+      for (const name of ["txClockGainNode", "txCaptureNode", "txSilentGain"]) {
+        const node = this[name];
+        this[name] = null;
+        if (!node) continue;
+        try { if (node.port) node.port.onmessage = null; } catch (_) {}
+        try { node.disconnect(); } catch (_) {}
+      }
+      const context = this.txAudioContext;
+      this.txAudioContext = null;
+      if (context && context.state !== "closed") {
+        try {
+          const closing = context.close();
+          if (closing?.catch) void closing.catch(() => {});
+        } catch (_) {}
+      }
+      this.txClockFramesSent = 0;
+      this.txClockBytesSent = 0;
+      this.txClockBacklogFault = false;
+    },
+
     claimAudio() {
       this.audioChannel?.postMessage({ type: "claim", owner: OWNER_ID, source: "FT8" });
     },
