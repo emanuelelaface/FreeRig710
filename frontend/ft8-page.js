@@ -50,12 +50,50 @@
   async function api(path, options = {}) {
     const method = String(options.method || "GET").toUpperCase();
     const headers = new Headers(options.headers || {});
+    const { timeoutMs: requestedTimeoutMs, signal: externalSignal, ...fetchOptions } = options;
+    const timeoutMs = Math.max(0, Number(requestedTimeoutMs ?? 10_000) || 0);
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    let timedOut = false;
+    let timeout = null;
+    let removeExternalAbort = null;
+    if (controller && externalSignal) {
+      const abort = () => controller.abort(externalSignal.reason);
+      if (externalSignal.aborted) abort();
+      else {
+        externalSignal.addEventListener("abort", abort, { once: true });
+        removeExternalAbort = () => externalSignal.removeEventListener("abort", abort);
+      }
+    }
+    if (controller && timeoutMs > 0) {
+      timeout = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+    }
     if (options.body != null && !headers.has("Content-Type")) headers.set("Content-Type", "text/plain;charset=UTF-8");
-    const response = await fetch(apiUrl(path), { ...options, method, headers, cache: method === "GET" ? "no-store" : options.cache });
-    let payload = null;
-    try { payload = await response.json(); } catch (_) {}
-    if (!response.ok) throw new Error(payload?.detail || `HTTP ${response.status}`);
-    return payload;
+    try {
+      const response = await fetch(apiUrl(path), {
+        ...fetchOptions,
+        method,
+        headers,
+        signal: controller?.signal || externalSignal,
+        cache: method === "GET" ? "no-store" : options.cache,
+      });
+      let payload = null;
+      try { payload = await response.json(); } catch (_) {}
+      if (!response.ok) throw new Error(payload?.detail || `HTTP ${response.status}`);
+      return payload;
+    } catch (error) {
+      if (timedOut) {
+        const timeoutError = new Error(`Request timed out after ${timeoutMs} ms`);
+        timeoutError.code = "REQUEST_TIMEOUT";
+        throw timeoutError;
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+      removeExternalAbort?.();
+    }
   }
   const post = (path, payload, options = {}) => api(path, { method: "POST", body: JSON.stringify(payload), ...options });
   window.FreeRig710API = Object.freeze({ api, post, apiUrl, websocketUrl });
@@ -80,6 +118,7 @@
     txSlotParity: 0,
     state: null,
     stateTimer: null,
+    statePollPromise: null,
     autoGainTimer: null,
     autoGainBusy: false,
     rfGainSlopeDbPerStep: null,
@@ -180,6 +219,7 @@
     hiddenSinceMs: 0,
     suspensionRecoveryRequired: false,
     resumeRecoveryPromise: null,
+    resumeRetryTimer: null,
 
     init() {
       window.FT710_FT8?.init();
@@ -354,7 +394,17 @@
       this.audioChannel?.postMessage({ type: "claim", owner: OWNER_ID, source: "FT8" });
     },
 
-    async pollState() {
+    pollState() {
+      if (this.statePollPromise) return this.statePollPromise;
+      const task = this.pollStateOnce();
+      const wrapped = task.finally(() => {
+        if (this.statePollPromise === wrapped) this.statePollPromise = null;
+      });
+      this.statePollPromise = wrapped;
+      return wrapped;
+    },
+
+    async pollStateOnce() {
       try {
         const result = await api("/api/v1/state");
         this.state = result;
@@ -877,7 +927,6 @@
               badge.textContent = `AUDIO RX ${this.audioRate / 1000}K`;
               badge.className = "ft8-page-pill live";
               window.FT710_FT8?.setAudioReady(true);
-              window.FT710_FT8?.enableDecode(true);
               if (id("ft8-send-wave")) id("ft8-send-wave").disabled = true;
               this.setTuneControls(false);
               resolve();
@@ -927,6 +976,11 @@
             const waiter = this[name];
             if (waiter) { clearTimeout(waiter.timeout); waiter.reject(new Error("audio WebSocket closed during waveform staging")); this[name] = null; }
           }
+          const disconnected = this.cancellationError("audio WebSocket closed", "FT8_AUDIO_CLOSED");
+          for (const name of ["autoTxActiveWaiter", "autoTxIdleWaiter"]) {
+            const waiter = this[name];
+            if (waiter) { clearTimeout(waiter.timeout); waiter.reject(disconnected); this[name] = null; }
+          }
           this.socket = null;
           this.audioReady = false;
           this.audioStarting = false;
@@ -942,6 +996,7 @@
     },
 
     closeAudio(reason = "FT8 audio closed") {
+      const cancelled = this.cancellationError(reason, "FT8_AUDIO_CLOSED");
       this.autoTxEnableGeneration += 1;
       this.txAbortRequested = true;
       this.txStreaming = false;
@@ -959,17 +1014,17 @@
       this.autoTxKeepaliveTimer = null;
       if (this.autoTxActiveWaiter) {
         clearTimeout(this.autoTxActiveWaiter.timeout);
-        this.autoTxActiveWaiter.reject(new Error("audio WebSocket closed"));
+        this.autoTxActiveWaiter.reject(cancelled);
         this.autoTxActiveWaiter = null;
       }
       if (this.autoTxIdleWaiter) {
         clearTimeout(this.autoTxIdleWaiter.timeout);
-        this.autoTxIdleWaiter.reject(new Error("audio WebSocket closed"));
+        this.autoTxIdleWaiter.reject(cancelled);
         this.autoTxIdleWaiter = null;
       }
       for (const name of ["waveBeginWaiter", "waveReadyWaiter"]) {
         const waiter = this[name];
-        if (waiter) { clearTimeout(waiter.timeout); waiter.reject(new Error("audio WebSocket closed")); this[name] = null; }
+        if (waiter) { clearTimeout(waiter.timeout); waiter.reject(cancelled); this[name] = null; }
       }
       this.stagedWaveformId = 0;
       this.stagedWaveformKey = "";
@@ -982,7 +1037,6 @@
       this.audioReady = false;
       this.audioStarting = false;
       this.lastAudioMessageAt = 0;
-      window.FT710_FT8?.enableDecode(false);
       window.FT710_FT8?.setAudioReady(false);
       if (ws && ws.readyState < WebSocket.CLOSING) try { ws.close(1000, reason); } catch (_) {}
       const badge = id("ft8-audio-state");
@@ -1002,6 +1056,22 @@
       return true;
     },
 
+    async waitForFreshAudio(timeoutMs = 1200) {
+      const socket = this.socket;
+      if (!socket || socket.readyState !== WebSocket.OPEN || !this.audioReady) return false;
+      const startedAt = Date.now();
+      const previousMessageAt = this.lastAudioMessageAt;
+      if (previousMessageAt && startedAt - previousMessageAt < 1000) return true;
+      window.FT710_FT8?.sendTimingProbe?.();
+      const deadline = performance.now() + Math.max(250, Number(timeoutMs) || 1200);
+      while (performance.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        if (this.socket !== socket || socket.readyState !== WebSocket.OPEN || !this.audioReady) return false;
+        if (this.lastAudioMessageAt > previousMessageAt || Date.now() - this.lastAudioMessageAt < 1000) return true;
+      }
+      return false;
+    },
+
     getTxDf() {
       return Number(this.txDfHz);
     },
@@ -1017,6 +1087,12 @@
     hasAutoTxOperation() {
       return Boolean(this.autoTxEnabled || this.autoTxPreparing || this.autoTxArming ||
         this.autoTxSessionActive || this.txStreaming);
+    },
+
+    cancellationError(reason, code = "FT8_TX_CANCELLED") {
+      const error = new Error(String(reason || "FT8 operation cancelled"));
+      error.code = code;
+      return error;
     },
 
     async waitForFt8BackendIdle(timeoutMs = 2200) {
@@ -1038,7 +1114,7 @@
       const socketDormant = this.activeBand && (!this.socket || this.socket.readyState !== WebSocket.OPEN ||
         !this.audioReady || !this.lastAudioMessageAt || Date.now() - this.lastAudioMessageAt > 3000);
       if (this.suspensionRecoveryRequired || socketDormant) {
-        if (!await this.recoverFromSuspension("FT8 activity click recovered a suspended page", true)) return false;
+        if (!await this.recoverFromSuspension("FT8 activity click recovered a suspended page")) return false;
       }
 
       // A Band Activity click is an explicit operator action. If it targets a
@@ -1076,26 +1152,27 @@
       if (this.resumeRecoveryPromise) return this.resumeRecoveryPromise;
       this.renderAutoTxState("recovering browser-suspended FT8 state");
       this.resumeRecoveryPromise = (async () => {
+        const transportHealthy = !forceAudioReconnect && await this.waitForFreshAudio();
         await this.pollState();
         const f = await this.refreshTxDiagnostics();
         const backendTxRunning = Boolean(f?.tx?.running);
         const backendTuneRunning = Boolean(f?.tune?.running);
 
-        // Browser scheduling and lease keepalives cannot be trusted across a
-        // frozen/backgrounded page. Always return an orphaned operation to RX
-        // and expose a clean one-click QSO state on resume.
-        if (backendTxRunning || this.hasAutoTxOperation()) {
-          await this.haltAutoTx(reason);
-        }
-        if (backendTuneRunning || this.tuneRunning || this.tuneToneActive) {
-          try { await api("/api/v1/ft8/tune/stop", { method: "POST" }); } catch (_) {}
-          this.tuneRunning = false;
-          this.tuneToneActive = false;
-          this.tuneAbortRequested = false;
-          this.setTuneControls(false);
-        }
-        if ((backendTxRunning || backendTuneRunning) && !await this.waitForFt8BackendIdle()) {
-          throw new Error("ESP32 FT8 operation did not return to idle");
+        // A normal background-tab throttle leaves the WebSocket alive. In
+        // that case preserve waterfall, Monitor and the QSO/Auto Seq state.
+        // Only a confirmed transport loss needs the safety teardown below.
+        if (!transportHealthy) {
+          if (backendTxRunning || this.hasAutoTxOperation()) await this.haltAutoTx(reason);
+          if (backendTuneRunning || this.tuneRunning || this.tuneToneActive) {
+            try { await api("/api/v1/ft8/tune/stop", { method: "POST" }); } catch (_) {}
+            this.tuneRunning = false;
+            this.tuneToneActive = false;
+            this.tuneAbortRequested = false;
+            this.setTuneControls(false);
+          }
+          if ((backendTxRunning || backendTuneRunning) && !await this.waitForFt8BackendIdle()) {
+            throw new Error("ESP32 FT8 operation did not return to idle");
+          }
         }
 
         // Chromium may freeze the codec Worker independently of the DOM. A
@@ -1104,12 +1181,10 @@
         // part of the same recovery barrier awaited by Band Activity clicks.
         await window.FT710_FT8?.recoverFromSuspension?.(reason);
 
-        const socketStale = !this.socket || this.socket.readyState !== WebSocket.OPEN ||
-          !this.audioReady || !this.lastAudioMessageAt || Date.now() - this.lastAudioMessageAt > 3000;
-        if (forceAudioReconnect || socketStale) {
+        if (!transportHealthy) {
           this.closeAudio(reason);
           if (this.activeBand && this.state?.radio_power === "ON") {
-            try { await this.ensureAudio(); } catch (error) { toast(`FT8 audio reconnect failed: ${error.message || error}`, true); }
+            await this.ensureAudio();
           }
         }
 
@@ -1125,10 +1200,20 @@
           }
         }
         this.suspensionRecoveryRequired = false;
+        clearTimeout(this.resumeRetryTimer);
+        this.resumeRetryTimer = null;
         this.renderAutoTxState("page state recovered");
         return true;
       })().catch((error) => {
+        this.suspensionRecoveryRequired = true;
         toast(`FT8 resume recovery failed: ${error.message || error}`, true);
+        clearTimeout(this.resumeRetryTimer);
+        if (!document.hidden) {
+          this.resumeRetryTimer = setTimeout(() => {
+            this.resumeRetryTimer = null;
+            void this.recoverFromSuspension("retrying FT8 recovery after browser suspension");
+          }, 1800);
+        }
         return false;
       }).finally(() => { this.resumeRecoveryPromise = null; });
       return this.resumeRecoveryPromise;
@@ -1873,6 +1958,7 @@
       if (this.autoTxHaltPromise) return this.autoTxHaltPromise;
       this.autoTxEnableGeneration += 1;
       this.autoTxHaltPromise = (async () => {
+        const cancelled = this.cancellationError(reason);
         this.autoTxEnabled = false;
         this.autoTxPreparing = false;
         this.autoTxArming = false;
@@ -1883,12 +1969,12 @@
         this.autoTxKeepaliveTimer = null;
         if (this.autoTxActiveWaiter) {
           clearTimeout(this.autoTxActiveWaiter.timeout);
-          this.autoTxActiveWaiter.reject(new Error(reason));
+          this.autoTxActiveWaiter.reject(cancelled);
           this.autoTxActiveWaiter = null;
         }
         if (this.autoTxIdleWaiter) {
           clearTimeout(this.autoTxIdleWaiter.timeout);
-          this.autoTxIdleWaiter.reject(new Error(reason));
+          this.autoTxIdleWaiter.reject(cancelled);
           this.autoTxIdleWaiter = null;
         }
         if (!fromBackend) {
@@ -2208,6 +2294,11 @@
         const reason = error?.message || String(error);
         if (error?.code === "FT8_STALE_PLAN") {
           id("ft8-tx-progress") && (id("ft8-tx-progress").textContent = `stale armed TX cancelled · waiting correct message`);
+        } else if (["FT8_TX_CANCELLED", "FT8_AUDIO_CLOSED", "FT8_WORKER_RESTARTED"].includes(error?.code)) {
+          // Lifecycle/transport teardown is not a QSO protocol failure. Keep
+          // the state-machine sequence visible so recovery never turns a
+          // backgrounded tab into an artificial ERROR/refresh-like reset.
+          id("ft8-tx-progress") && (id("ft8-tx-progress").textContent = `AUTO TX paused · ${reason}`);
         } else if (this.autoTxEnabled && this.isRecoverableAutoTxError(error)) {
           // A missed timing window, lost staged buffer or WS reconnect before
           // PTT is recoverable.  Skip this slot, keep the QSO armed and let the
@@ -2338,15 +2429,19 @@
     if (document.hidden) {
       page.hiddenSinceMs = Date.now();
       page.suspensionRecoveryRequired = true;
+      clearTimeout(page.resumeRetryTimer);
+      page.resumeRetryTimer = null;
       return;
     }
     const hiddenForMs = page.hiddenSinceMs ? Math.max(0, Date.now() - page.hiddenSinceMs) : 0;
     page.hiddenSinceMs = 0;
     page.startRuntimeTimers();
-    const socketStale = !page.socket || page.socket.readyState !== WebSocket.OPEN ||
-      !page.audioReady || !page.lastAudioMessageAt || Date.now() - page.lastAudioMessageAt > 3000;
-    if (hiddenForMs > 3000 || socketStale) {
-      void page.recoverFromSuspension("FT8 page resumed after suspension", hiddenForMs > 3000);
+    const socketUnavailable = !page.socket || page.socket.readyState !== WebSocket.OPEN || !page.audioReady;
+    if (hiddenForMs > 0 || socketUnavailable) {
+      // Do not classify an old timestamp as a dead WebSocket immediately:
+      // backgrounded Chromium queues delivery. Recovery first waits for a
+      // fresh audio/control frame and is destructive only if none arrives.
+      void page.recoverFromSuspension("FT8 page resumed after suspension");
     } else {
       page.suspensionRecoveryRequired = false;
     }
@@ -2354,17 +2449,21 @@
   document.addEventListener("freeze", () => {
     page.hiddenSinceMs ||= Date.now();
     page.suspensionRecoveryRequired = true;
+    clearTimeout(page.resumeRetryTimer);
+    page.resumeRetryTimer = null;
     page.stopRuntimeTimers();
     if (page.socket?.readyState === WebSocket.OPEN) page.sendAudioControl({ type: "tx_source", source: "NONE" });
     page.closeAudio("FT8 page frozen by browser");
   });
   document.addEventListener("resume", () => {
     page.startRuntimeTimers();
-    void page.recoverFromSuspension("FT8 page resumed after browser freeze", true);
+    void page.recoverFromSuspension("FT8 page resumed after browser freeze");
   });
   window.addEventListener("pagehide", () => {
     page.hiddenSinceMs = Date.now();
     page.suspensionRecoveryRequired = true;
+    clearTimeout(page.resumeRetryTimer);
+    page.resumeRetryTimer = null;
     page.stopRuntimeTimers();
     if (page.socket?.readyState === WebSocket.OPEN) {
       if (page.tuneRunning || page.tuneToneActive) page.sendAudioControl({ type: "ptt", enabled: false });
@@ -2379,13 +2478,23 @@
     if (!event.persisted) return;
     page.setupAudioChannel();
     page.startRuntimeTimers();
-    void page.recoverFromSuspension("FT8 page restored from browser cache", true);
+    void page.recoverFromSuspension("FT8 page restored from browser cache");
+  });
+  window.addEventListener("blur", () => {
+    page.hiddenSinceMs ||= Date.now();
+    page.suspensionRecoveryRequired = true;
   });
   window.addEventListener("focus", () => {
     if (!document.hidden && page.suspensionRecoveryRequired && !page.resumeRecoveryPromise) {
       page.startRuntimeTimers();
-      void page.recoverFromSuspension("FT8 page recovered on focus", true);
+      void page.recoverFromSuspension("FT8 page recovered on focus");
     }
+  });
+  window.addEventListener("online", () => {
+    if (document.hidden) return;
+    page.startRuntimeTimers();
+    page.suspensionRecoveryRequired = true;
+    void page.recoverFromSuspension("FT8 network returned after suspension");
   });
   page.init();
 })();

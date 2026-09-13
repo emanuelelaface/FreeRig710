@@ -38,10 +38,11 @@ for token in (
     'document.addEventListener("freeze"',
     'document.addEventListener("resume"',
     'window.addEventListener("pageshow"',
+    'window.addEventListener("blur"',
     'window.addEventListener("focus"',
-    'recoverFromSuspension("FT8 page restored from browser cache", true)',
+    'recoverFromSuspension("FT8 page restored from browser cache")',
     "await this.refreshTxDiagnostics();",
-    "Date.now() - this.lastAudioMessageAt > 3000",
+    "await this.waitForFreshAudio()",
     'this.renderAutoTxState("recovering browser-suspended FT8 state");',
     "radio VFOs could not be restored for the selected FT8 band",
     "suspensionRecoveryRequired",
@@ -64,7 +65,19 @@ for token in (
     assert token in engine
 assert 'if (message.type === "ping")' in worker
 assert 'type: "pong"' in worker
-assert "v=1.0-resume4" in html
+assert "v=1.0-resume5" in html
+
+# A simple background-tab throttle is checked before any destructive recovery.
+# If audio is still flowing, preserve the waterfall, Monitor preference and
+# current QSO sequence.
+assert 'recoverFromSuspension("FT8 page resumed after suspension", hiddenForMs > 3000)' not in page
+assert "async waitForFreshAudio(timeoutMs = 1200)" in page
+assert "if (!transportHealthy)" in page
+close_audio = page[page.index('    closeAudio(reason = "FT8 audio closed")'):page.index("    sendAudioControl(payload)")]
+assert "enableDecode(false)" not in close_audio
+assert 'this.cancellationError(reason, "FT8_AUDIO_CLOSED")' in close_audio
+assert "resetAudioMetrics(false)" in engine
+assert '"FT8_WORKER_RESTARTED"' in engine
 
 # A new row click can safely stop/take over an old automatic QSO instead of
 # being silently ignored by stale browser TX flags.

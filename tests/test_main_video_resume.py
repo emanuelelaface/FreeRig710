@@ -15,5 +15,19 @@ assert 'retryTimer = setTimeout(load, VIDEO_ERROR_RETRY_MS);' in app
 assert 'retryTimer = setTimeout(load, VIDEO_STALL_RETRY_MS);' in app
 assert '}, VIDEO_FIRST_FRAME_TIMEOUT_MS);' in app
 assert 'window.addEventListener("pageshow"' in app
-assert 'app.js?v=1.0' in index
+assert 'document.addEventListener("resume", recoverAfterSystemWake);' in app
+assert 'if (blurredForMs > VIDEO_HIDDEN_GRACE_MS) recoverAfterSystemWake();' in app
+assert 'window.addEventListener("online", recoverAfterSystemWake);' in app
+
+# CAT polling and optional radio audio are explicitly restarted after a frozen
+# page or network sleep instead of requiring a browser reload.
+assert 'timeoutMs: 5000' in app
+assert 'window.addEventListener("pageshow", start);' in app
+assert 'document.addEventListener("resume", start);' in app
+assert 'window.addEventListener("focus", start);' in app
+assert 'window.addEventListener("online", start);' in app
+assert 'const recoverAudioAfterWake = async () =>' in app
+assert 'scheduleAudioRecovery(250)' in app
+assert 'audioOwnerChannel = null;' in app
+assert 'app.js?v=1.0-wake1' in index
 print("main video resume contract: OK")

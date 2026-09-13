@@ -242,7 +242,9 @@
         oldWorker.onerror = null;
         try { oldWorker.terminate(); } catch (_) {}
       }
-      this.rejectWorkerWaiters(new Error(reason));
+      const restartError = new Error(reason);
+      restartError.code = "FT8_WORKER_RESTARTED";
+      this.rejectWorkerWaiters(restartError);
       this.decoderReady = false;
       this.decoderError = recreate ? "" : String(reason);
       this.encoderReady = false;
@@ -494,7 +496,7 @@
         try { wanted = localStorage.getItem("freerig710-ft8-rx-enabled-v1") === "1"; } catch (_) {}
         this.enabled = wanted;
         checkbox.checked = wanted;
-        if (wanted) { this.resetAudioMetrics(); this.resetSlotCapture(); this.ensureWorker(); }
+        if (wanted) { this.resetAudioMetrics(false); this.resetSlotCapture(); this.ensureWorker(); }
       } else {
         this.enabled = false;
         checkbox.checked = false;
@@ -506,12 +508,15 @@
     enableDecode(enabled) {
       const checkbox = id("ft8-enabled");
       const wanted = Boolean(enabled && this.audioReady);
+      const wasEnabled = this.enabled;
       this.enabled = wanted;
       if (checkbox) checkbox.checked = wanted;
       try { localStorage.setItem("freerig710-ft8-rx-enabled-v1", wanted ? "1" : "0"); } catch (_) {}
       if (wanted) {
-        this.resetAudioMetrics();
-        this.resetSlotCapture();
+        if (!wasEnabled) {
+          this.resetAudioMetrics();
+          this.resetSlotCapture();
+        }
         this.ensureWorker();
       } else {
         this.resetSlotCapture();
@@ -526,12 +531,12 @@
 
     setControlSender(sender) { this.controlSender = typeof sender === "function" ? sender : null; },
 
-    resetAudioMetrics() {
+    resetAudioMetrics(clearWaterfall = true) {
       this.fftFill = 0; this.downsamplePhase = 0; this.downsampleAccum = 0; this.downsampleCount = 0;
       this.totalInputSamples = 0; this.firstAudioPerf = null; this.lastChunkPerf = null; this.chunkIntervals = []; this.lastLevelDb = -120;
       this.displayLevelDb = -120; this.meterSumSq = 0; this.meterSampleCount = 0; this.meterDisplayLastPerf = null;
       const canvas = id("ft8-waterfall");
-      if (canvas) { const ctx = canvas.getContext("2d"); ctx.fillStyle = "#070b10"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+      if (clearWaterfall && canvas) { const ctx = canvas.getContext("2d"); ctx.fillStyle = "#070b10"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
     },
 
     resetSlotCapture() {
