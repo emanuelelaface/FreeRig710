@@ -63,7 +63,7 @@ Controls TX power, tuner enable/disable and tune.
 
 ## Settings And Log
 
-The Settings dialog stores the shared station callsign, grid, ESP32 backend, QRZ Logbook destination and GridTracker UDP destination used by the main page, FT8, JS8, RTTY and Winlink.
+The Settings dialog stores the shared station callsign, grid, ESP32 backend, QRZ Logbook destination and GridTracker WSJT-X UDP destination used by the main page, FT8, JS8, RTTY and Winlink.
 
 The **Log** section also contains ADI file import and QRZ Sync for the shared local worked/QSO database. The main Log panel provides manual QSO submission from the current radio context to the enabled destinations. See `QRZ_LOGBOOK.md`.
 

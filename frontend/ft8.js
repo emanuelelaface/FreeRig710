@@ -127,6 +127,13 @@
     lastQsoSlotTick: null,
     earlyDecodeSlotIndex: null,
     earlyDecodeSubmitted: false,
+    gridTrackerConfigured: null,
+    gridTrackerQueue: [],
+    gridTrackerSending: false,
+    gridTrackerLastHeartbeatMs: 0,
+    gridTrackerLastStatusSignature: "",
+    gridTrackerTimer: null,
+    gridTrackerCommandBusy: false,
     myCall: "",
     myGrid: "",
     txReport: "+00",
@@ -171,7 +178,12 @@
         }
         this.renderStatus();
       });
-      id("ft8-clear-decodes")?.addEventListener("click", () => { this.decodeRows = []; this.txActivityRows = []; this.renderDecodeRows(); });
+      id("ft8-clear-decodes")?.addEventListener("click", () => {
+        this.decodeRows = [];
+        this.txActivityRows = [];
+        this.renderDecodeRows();
+        this.queueGridTrackerEvent({ type: "clear" });
+      });
       this.setupActivityPointerSelection();
       this.initLogbook();
       this.initQsoLogging();
@@ -179,6 +191,8 @@
       id("ft8-reset-qso")?.addEventListener("click", () => this.resetQso());
       this.applySharedStationSettings();
       window.addEventListener("freerig710-settings-changed", () => {
+        this.gridTrackerConfigured = null;
+        this.gridTrackerLastStatusSignature = "";
         this.applySharedStationSettings();
         void this.refreshStationIdentity();
         this.recomputeQsoNext();
@@ -201,10 +215,180 @@
       this.renderQso();
       this.statusTimer = window.setInterval(() => { if (this.enabled) void this.refreshServerStatus(); }, 2000);
       this.probeTimer = window.setInterval(() => { if (this.enabled) this.sendTimingProbe(); }, 3000);
+      this.gridTrackerTimer = window.setInterval(() => void this.gridTrackerPulse(), 2000);
+      window.addEventListener("pagehide", () => this.closeGridTrackerSession());
       this.animationFrame = window.requestAnimationFrame(() => this.animateClock());
       this.renderStatus();
       this.renderDecodeRows();
       void this.refreshServerStatus();
+      void this.gridTrackerPulse(true);
+    },
+
+    gridTrackerStatusPayload() {
+      const page = window.FT710_FT8_PAGE;
+      const context = page?.getOperatingContext?.() || {};
+      const qso = this.qsoMachine?.snapshot?.() || this.qso || {};
+      const rxDf = Number.isFinite(Number(qso.df)) ? Math.round(Number(qso.df)) : Math.round(Number(page?.getTxDf?.()) || 0);
+      const txDf = Math.round(Number(page?.getTxDf?.()) || 0);
+      return {
+        type: "status",
+        dial_frequency_hz: Math.round(Number(context.dialHz) || 0),
+        mode: "FT8",
+        dx_call: String(qso.dxCall || ""),
+        report: String(qso.txReport || this.txReport || ""),
+        tx_mode: "FT8",
+        tx_enabled: Boolean(page?.autoTxEnabled),
+        transmitting: Boolean(page?.txStreaming || page?.tuneRunning),
+        decoding: Boolean(this.decodeBusy),
+        rx_df_hz: rxDf,
+        tx_df_hz: txDf,
+        de_call: this.myCall,
+        de_grid: this.myGrid,
+        dx_grid: String(qso.dxGrid || ""),
+        tx_watchdog: false,
+        sub_mode: "",
+        fast_mode: false,
+        special_operation_mode: 0,
+        frequency_tolerance_hz: 4294967295,
+        tr_period_seconds: 15,
+        configuration_name: "Default",
+        tx_message: String(this.getTxPlan?.().message || ""),
+      };
+    },
+
+    gridTrackerDecodePayload(row, isNew = true) {
+      const slotTimestamp = Number(row?.slotIndex) * SLOT_MS;
+      const timestamp = new Date(Number.isFinite(slotTimestamp) && slotTimestamp > 0 ? slotTimestamp : (Number(row?.unixMs) || this.getServerUnixMs()));
+      const milliseconds = ((timestamp.getUTCHours() * 60 + timestamp.getUTCMinutes()) * 60 + timestamp.getUTCSeconds()) * 1000 + timestamp.getUTCMilliseconds();
+      return {
+        type: "decode",
+        new: Boolean(isNew),
+        milliseconds_since_midnight: milliseconds,
+        snr: Math.round(Number(row?.snr) || 0),
+        delta_time_seconds: Number(row?.dt) || 0,
+        delta_frequency_hz: Math.max(0, Math.round(Number(row?.df) || 0)),
+        mode: "~",
+        message: String(row?.text || ""),
+        low_confidence: false,
+        off_air: false,
+      };
+    },
+
+    queueGridTrackerEvent(event) {
+      if (this.gridTrackerConfigured === false || !event) return;
+      if (event.type === "status") {
+        const signature = JSON.stringify(event);
+        if (signature === this.gridTrackerLastStatusSignature) return;
+        this.gridTrackerLastStatusSignature = signature;
+      }
+      if (this.gridTrackerQueue.length >= 192) this.gridTrackerQueue.splice(0, this.gridTrackerQueue.length - 191);
+      this.gridTrackerQueue.push(event);
+      void this.drainGridTrackerQueue();
+    },
+
+    queueGridTrackerStatus(force = false) {
+      const status = this.gridTrackerStatusPayload();
+      if (!status.dial_frequency_hz) return;
+      if (force) this.gridTrackerLastStatusSignature = "";
+      this.queueGridTrackerEvent(status);
+    },
+
+    async drainGridTrackerQueue() {
+      if (this.gridTrackerSending || this.gridTrackerConfigured === false) return;
+      const post = window.FreeRig710API?.post;
+      if (typeof post !== "function") return;
+      this.gridTrackerSending = true;
+      try {
+        while (this.gridTrackerQueue.length && this.gridTrackerConfigured !== false) {
+          const event = this.gridTrackerQueue.shift();
+          try {
+            await post("/api/v1/gridtracker/wsjtx/event", event, { timeoutMs: 4000 });
+            this.gridTrackerConfigured = true;
+          } catch (error) {
+            if (/disabled|incomplete|503/i.test(String(error?.message || error))) {
+              this.gridTrackerConfigured = false;
+              this.gridTrackerQueue.length = 0;
+            }
+            break;
+          }
+        }
+      } finally {
+        this.gridTrackerSending = false;
+      }
+    },
+
+    async gridTrackerPulse(forceHeartbeat = false) {
+      if (this.gridTrackerConfigured === false) return;
+      const now = Date.now();
+      if (forceHeartbeat || now - this.gridTrackerLastHeartbeatMs >= 15000) {
+        this.gridTrackerLastHeartbeatMs = now;
+        this.queueGridTrackerEvent({ type: "heartbeat" });
+        this.queueGridTrackerStatus(true);
+      } else {
+        this.queueGridTrackerStatus(false);
+      }
+      await this.pollGridTrackerCommands();
+    },
+
+    async pollGridTrackerCommands() {
+      if (this.gridTrackerCommandBusy || this.gridTrackerConfigured !== true) return;
+      const api = window.FreeRig710API?.api;
+      if (typeof api !== "function") return;
+      this.gridTrackerCommandBusy = true;
+      try {
+        const result = await api("/api/v1/gridtracker/wsjtx/commands", { timeoutMs: 3000 });
+        for (const command of result?.commands || []) await this.handleGridTrackerCommand(command);
+      } catch (_) {
+      } finally {
+        this.gridTrackerCommandBusy = false;
+      }
+    },
+
+    async handleGridTrackerCommand(command) {
+      if (command?.type === "replay") {
+        for (const row of [...this.decodeRows].reverse()) this.queueGridTrackerEvent(this.gridTrackerDecodePayload(row, false));
+        this.queueGridTrackerStatus(true);
+        return;
+      }
+      if (command?.type === "reply") {
+        const row = this.decodeRows.find((candidate) => {
+          const sent = this.gridTrackerDecodePayload(candidate, true);
+          return sent.message.trim().toUpperCase() === String(command.message || "").trim().toUpperCase()
+            && sent.milliseconds_since_midnight === Number(command.milliseconds_since_midnight)
+            && sent.snr === Number(command.snr)
+            && Math.abs(sent.delta_time_seconds - Number(command.delta_time_seconds)) < 1e-9
+            && sent.delta_frequency_hz === Number(command.delta_frequency_hz)
+            && sent.mode === String(command.mode || "")
+            && sent.low_confidence === Boolean(command.low_confidence);
+        });
+        if (row && ["CQ", "QRZ"].includes(row.parsed?.kind || this.parseMessage(row.text).kind)) await this.selectDecodeFromActivity(row);
+        return;
+      }
+      if (command?.type === "halt_tx") {
+        await window.FT710_FT8_PAGE?.haltAutoTx?.("GridTracker Halt Tx", false);
+        return;
+      }
+      if (command?.type === "clear" && (Number(command.window) === 0 || Number(command.window) === 2)) {
+        this.decodeRows = [];
+        this.txActivityRows = [];
+        this.renderDecodeRows();
+      }
+    },
+
+    notifyBandChanged() {
+      this.queueGridTrackerEvent({ type: "clear" });
+      this.queueGridTrackerStatus(true);
+    },
+
+    closeGridTrackerSession() {
+      if (this.gridTrackerConfigured !== true) return;
+      const url = window.FreeRig710API?.apiUrl?.("/api/v1/gridtracker/wsjtx/event");
+      if (!url) return;
+      const body = JSON.stringify({ type: "close" });
+      try {
+        if (navigator.sendBeacon) navigator.sendBeacon(url, new Blob([body], { type: "text/plain;charset=UTF-8" }));
+        else fetch(url, { method: "POST", body, keepalive: true, headers: { "Content-Type": "text/plain;charset=UTF-8" } });
+      } catch (_) {}
     },
 
     ensureWorker() {
@@ -371,8 +555,10 @@
         id("ft8-decode-state").textContent = `${results.length} msg · ${Number(message.elapsedMs || 0).toFixed(0)} ms`;
         const decodedRows=[];
         for (const result of results) { const row=this.addDecode(slotStart, result, slotIndex); if(row)decodedRows.push(row); }
+        for (const row of decodedRows) this.queueGridTrackerEvent(this.gridTrackerDecodePayload(row, true));
         this.advanceQsoFromDecodeBatch(decodedRows);
         this.renderDecodeRows();
+        this.queueGridTrackerStatus(true);
         return;
       }
       if (message.type === "decode-error") {
@@ -380,6 +566,7 @@
         this.decodeBusySlotIndex = null;
         this.decodeBusySinceMs = 0;
         id("ft8-decode-state").textContent = `ERROR · ${message.error || "decode failed"}`;
+        this.queueGridTrackerStatus(true);
       }
     },
 
@@ -466,12 +653,14 @@
     notifyTxStarted(info = {}) {
       const message=String(info?.message||"").trim().toUpperCase();if(!message)return;
       this.recordTxActivity({message,slotIndex:info?.slotIndex,df:this.qso?.df,waveformId:info?.waveformId});
+      this.queueGridTrackerStatus(true);
     },
 
     notifyTxComplete(info = {}) {
       const message = String(info?.message || "").trim().toUpperCase();
       if (!message) return;
       this.recordTxActivity({message,slotIndex:info?.slotIndex,df:this.qso?.df,waveformId:info?.waveformId});
+      this.queueGridTrackerStatus(true);
       if(this.qsoMachine){const snap=this.qsoMachine.onTxComplete({message,slotIndex:info?.slotIndex,unixMs:this.getServerUnixMs()});this.syncQsoFromMachine(snap);if(snap.state==="ERROR")void window.FT710_FT8_PAGE?.haltAutoTx?.("QSO TX sequence mismatch",false);else if(!this.autoSeq&&!snap.state.startsWith("COMPLETE"))void window.FT710_FT8_PAGE?.haltAutoTx?.("Auto Seq off",false);return;}
     },
 
@@ -671,6 +860,7 @@
       this.decodeBusySinceMs = Date.now();
       this.slotsSubmitted += 1;
       id("ft8-decode-state").textContent = `${early ? "early " : ""}decoding ${slotIndex % 2 === 0 ? "EVEN" : "ODD"} · ${(validSamples / TARGET_RATE).toFixed(2)} s…`;
+      this.queueGridTrackerStatus(true);
       this.worker.postMessage({ type: "decode", slotIndex, validSamples, early, samples: samples.buffer }, [samples.buffer]);
       return true;
     },
@@ -713,6 +903,7 @@
       }
       this.qso={state:snapshot.state,dxCall:snapshot.dxCall,dxGrid:snapshot.dxGrid,df:snapshot.df,rxSlotParity:snapshot.rxSlotParity,txSlotParity:snapshot.txSlotParity,lastHeard:snapshot.lastHeard,lastHeardUnixMs:snapshot.lastHeardUnixMs,startedUnixMs:snapshot.startedUnixMs,completedUnixMs:snapshot.completedUnixMs,rstRcvd:snapshot.rstRcvd,txReport:snapshot.txReport,nextMessage:snapshot.nextMessage,attempts:snapshot.attempts,retryAttempts:snapshot.retryAttempts,history:snapshot.history};
       this.renderDecodeRows(); this.renderQso();
+      this.queueGridTrackerStatus(false);
       if(snapshot.state==="COMPLETE") void this.handleCompletedQso(snapshot);
     },
 
@@ -996,8 +1187,8 @@
       const tokens = raw.split(" ").filter(Boolean);
       const parsed = { raw, kind: "OTHER", from: "", to: "", call: "", grid: "", payload: "", cqModifier: "" };
       if (!tokens.length) return parsed;
-      if (tokens[0] === "CQ") {
-        parsed.kind = "CQ";
+      if (tokens[0] === "CQ" || tokens[0] === "QRZ") {
+        parsed.kind = tokens[0];
         const last = tokens[tokens.length - 1];
         if (GRID_RE.test(last) && tokens.length >= 3) { parsed.grid = last; parsed.call = normalizeCall(tokens[tokens.length - 2]); }
         else if (tokens.length >= 2) parsed.call = normalizeCall(tokens[tokens.length - 1]);
@@ -1178,6 +1369,9 @@
       try {
         const result = await window.FreeRig710API.api("/api/v1/log/status");
         const status = result?.qrz || result?.log || result || {};
+        this.gridTrackerConfigured = Boolean(status?.gridtracker_enabled && status?.gridtracker_configured);
+        if (this.gridTrackerConfigured) void this.gridTrackerPulse(true);
+        else this.gridTrackerQueue.length = 0;
         const call = normalizeCall(status?.station_callsign || status?.callsign || "");
         const grid = normalizeGrid(status?.station_grid || status?.grid || status?.grid_square || "");
         const update = {};

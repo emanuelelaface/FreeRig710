@@ -8,17 +8,20 @@ main_html=(root/'frontend/index.html').read_text()
 for field in ['CALL','STATION_CALLSIGN','QSO_DATE','TIME_ON','TIME_OFF','BAND','FREQ','FREQ_RX','MODE','RST_SENT','RST_RCVD','GRIDSQUARE','MY_GRIDSQUARE','TX_PWR','COMMENT','MY_RIG']:
     assert f'"{field}"' in c, field
 assert 'KEY=%s&ACTION=INSERT&ADIF=%s' in c
-assert 'gridtracker_send_adif' in c
-assert 'adif_find_eor' in c
-assert 'sendto(sock, record' in c
-assert 'GridTracker UDP sent %u record' in c
+assert 'gridtracker_send_logged_qso' in c
+assert 'wsjtx_build_qso_logged' in c
+assert 'wsjtx_build_logged_adif' in c
+assert 'gridtracker_send_adif' not in c
+assert 'adif_find_eor' not in c
 assert '/api/v1/log/config' in c
 assert '/api/v1/log/qso' in c
 assert '/api/v1/log/qso/status' in c
-assert '/api/v1/log/gridtracker/adif' in c
+assert '/api/v1/gridtracker/wsjtx/event' in c
+assert '/api/v1/gridtracker/wsjtx/commands' in c
+assert '/api/v1/log/gridtracker/adif' not in c
 assert '"destinations"' in c
 assert 'FREERIG_GRIDTRACKER_DEFAULT_PORT' in c
-assert '#define FREERIG_GRIDTRACKER_DEFAULT_PORT 2333U' in (root/'components/freerig_config/include/freerig_config.h').read_text()
+assert '#define FREERIG_GRIDTRACKER_DEFAULT_PORT 2237U' in (root/'components/freerig_config/include/freerig_config.h').read_text()
 # Automatic duplicate replacement is forbidden: no outgoing INSERT request uses OPTION=REPLACE.
 insert_window=c[c.index('static void qrz_log_task'):c.index('static esp_err_t qrz_log_handler')]
 assert 'OPTION=REPLACE' not in insert_window
@@ -37,6 +40,9 @@ for token in ['ft8-log-dialog','ft8-log-qso','ft8-auto-log-qrz']:
     assert token in html, token
 for token in ['settings-log-qrz-enable','settings-log-gridtracker-enable','settings-gridtracker-host','settings-gridtracker-port','settings-adi-file','settings-qrz-sync']:
     assert token in main_html, token
+main_js=(root/'frontend/app.js').read_text()
 for token in ['/api/v1/log/gridtracker/adif','createGridTrackerAdifQueue','broadcastGridTrackerChunks']:
-    assert token in (root/'frontend/app.js').read_text(), token
+    assert token not in main_js, token
+for token in ['gridTrackerPulse','gridTrackerDecodePayload','handleGridTrackerCommand','/api/v1/gridtracker/wsjtx/event','/api/v1/gridtracker/wsjtx/commands']:
+    assert token in js, token
 print('Shared QSO logging static contract tests: OK')

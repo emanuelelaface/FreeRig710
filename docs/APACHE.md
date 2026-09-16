@@ -75,4 +75,4 @@ sudo systemctl reload apache2
 - Use a real TLS certificate.
 - Keep the form-login password file and session crypto key outside the repository.
 - QRZ credentials and GridTracker targets are not stored on the Apache server; they live in ESP32 NVS.
-- The ESP32 needs outbound DNS/NTP for UTC sync, outbound HTTPS to QRZ when QRZ features are used, and UDP reachability to the configured GridTracker host when GridTracker logging is enabled.
+- The ESP32 needs outbound DNS/NTP for UTC sync, outbound HTTPS to QRZ when QRZ features are used, and bidirectional UDP reachability to the configured GridTracker WSJT-X endpoint when the integration is enabled.

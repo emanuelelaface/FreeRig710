@@ -14,7 +14,11 @@ assert 'QRZ reported %lu QSO but ADIF contained no parsable records' in c
 assert 'qrz_response_value_alloc(response, "ADIF")' not in c
 assert 'Parsed ${p.parsed}' in main_js and 'worked calls' in main_js and 'countries' in main_js
 assert 'settings-adi-file' in main_html and 'settings-qrz-sync' in main_html
-assert '/api/v1/log/gridtracker/adif' in main_js
+assert '/api/v1/log/gridtracker/adif' not in main_js
+assert 'createGridTrackerAdifQueue' not in main_js
+assert 'broadcastGridTrackerChunks' not in main_js
+assert '/api/v1/gridtracker/wsjtx/event' in js
+assert 'gridTrackerDecodePayload' in js
 assert 'if(dialog?.open)dialog.close()' in js
 assert 'NEW DXCC' in js and 'NEW COUNTRY' in js and 'NEW CALL' in js
 assert '{id:"new-country"' in rules

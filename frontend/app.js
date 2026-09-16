@@ -114,7 +114,7 @@ let qrzState = {
   qrz_enabled: true,
   gridtracker_enabled: false,
   gridtracker_host: "",
-  gridtracker_port: 2333,
+  gridtracker_port: 2237,
 };
 let wifiState = {
   enabled: false,
@@ -784,97 +784,9 @@ function initStationSettings() {
     }
   };
 
-  const adifValueLength = (value) => {
-    const textValue = String(value ?? "");
-    try {
-      return new TextEncoder().encode(textValue).length;
-    } catch (_) {
-      return textValue.length;
-    }
-  };
-
-  const adifRecordText = (record) => {
-    const raw = String(record?.raw || "").trim();
-    if (raw) return /<\s*EOR\s*>/i.test(raw) ? raw : `${raw}<EOR>`;
-    const fields = record?.fields || {};
-    let out = "";
-    for (const [name, value] of Object.entries(fields)) {
-      const key = String(name || "").trim().toUpperCase().replace(/[^A-Z0-9_]/g, "");
-      const textValue = String(value ?? "");
-      if (!key || !textValue || key === "EOR" || key === "EOH") continue;
-      out += `<${key}:${adifValueLength(textValue)}>${textValue}`;
-    }
-    return out ? `${out}<EOR>` : "";
-  };
-
-  const createGridTrackerAdifQueue = () => {
-    const chunks = [];
-    const maxChunk = 1200;
-    let current = "";
-    let recordCount = 0;
-    const push = (textValue) => {
-      const adif = String(textValue || "");
-      if (!adif) return;
-      if (current && current.length + adif.length > maxChunk) {
-        chunks.push(current);
-        current = "";
-      }
-      if (adif.length > maxChunk) chunks.push(adif);
-      else current += adif;
-      recordCount += 1;
-    };
-    return {
-      addRecords(records) {
-        for (const record of records || []) push(adifRecordText(record));
-      },
-      finish() {
-        if (current) {
-          chunks.push(current);
-          current = "";
-        }
-        return { chunks, recordCount };
-      },
-    };
-  };
-
-  const broadcastGridTrackerChunks = async (queued, label) => {
-    const chunks = queued?.chunks || [];
-    const recordCount = Number(queued?.recordCount || 0);
-    if (!chunks.length) return { sentRecords: 0, sentChunks: 0, skipped: false };
-    let state = qrzState;
-    try {
-      const response = await api("/api/v1/log/status");
-      state = response.qrz || response.log || response;
-    } catch (error) {
-      return { sentRecords: 0, sentChunks: 0, skipped: false, error: error?.message || String(error) };
-    }
-    if (!state?.gridtracker_enabled || !state?.gridtracker_configured) {
-      return { sentRecords: 0, sentChunks: 0, skipped: true };
-    }
-    let lastDetail = "";
-    for (let i = 0; i < chunks.length; i += 1) {
-      if (logbookStatus) logbookStatus.textContent = `${label} · GridTracker UDP ${i + 1}/${chunks.length}`;
-      try {
-        const response = await post("/api/v1/log/gridtracker/adif", { adif: chunks[i] });
-        lastDetail = response?.detail || lastDetail;
-      } catch (error) {
-        return { sentRecords: 0, sentChunks: i, skipped: false, error: error?.message || String(error) };
-      }
-    }
-    return { sentRecords: recordCount, sentChunks: chunks.length, skipped: false, detail: lastDetail };
-  };
-
-  const gridTrackerBroadcastSuffix = (result) => {
-    if (!result || result.skipped) return "";
-    if (result.error) return ` · GridTracker failed: ${result.error}`;
-    if (result.sentChunks) return ` · GridTracker ${result.sentRecords} ADIF QSO sent`;
-    return "";
-  };
-
   const importAdiFromSettings = async (file) => {
     const lb = window.FreeRig710FT8Logbook;
     if (!file || !lb || !logbookStatus) return;
-    const gtQueue = createGridTrackerAdifQueue();
     logbookStatus.dataset.importing = "1";
     logbookStatus.textContent = `Importing ${file.name}…`;
     if (adiProgress) adiProgress.value = 0;
@@ -882,12 +794,11 @@ function initStationSettings() {
       const result = await lb.importAdiFile(file, { onProgress: (p) => {
         if (adiProgress) adiProgress.value = p.total ? Math.min(100, Math.round(p.bytes * 100 / p.total)) : 0;
         logbookStatus.textContent = `Parsed ${p.parsed} · new ${p.imported} · duplicates ${p.duplicates} · errors ${p.errors}`;
-      }, onRecords: (records) => gtQueue.addRecords(records) });
+      } });
       if (adiProgress) adiProgress.value = 100;
-      const gtResult = await broadcastGridTrackerChunks(gtQueue.finish(), "ADI import");
       window.dispatchEvent(new CustomEvent("freerig-ft8-logbook-updated"));
       const counts = await renderLogbookSettingsStatus();
-      logbookStatus.textContent = `Done · ${result.imported} new · ${result.duplicates} duplicates · ${result.errors} errors · ${counts?.calls || 0} worked calls${gridTrackerBroadcastSuffix(gtResult)}`;
+      logbookStatus.textContent = `Done · ${result.imported} new · ${result.duplicates} duplicates · ${result.errors} errors · ${counts?.calls || 0} worked calls`;
     } catch (error) {
       logbookStatus.textContent = `Import failed: ${error?.message || error}`;
     } finally {
@@ -935,17 +846,6 @@ function initStationSettings() {
     let totalErrors = 0;
     let pages = 0;
     const stagedRecords = [];
-    const gtBroadcast = { sentRecords: 0, sentChunks: 0, skipped: false, detail: "", error: "" };
-    let gridTrackerBroadcastStopped = false;
-    const mergeGridTrackerBroadcast = (result) => {
-      if (!result) return;
-      gtBroadcast.sentRecords += Number(result.sentRecords || 0);
-      gtBroadcast.sentChunks += Number(result.sentChunks || 0);
-      gtBroadcast.detail = result.detail || gtBroadcast.detail;
-      if (result.skipped) gtBroadcast.skipped = true;
-      if (result.error && !gtBroadcast.error) gtBroadcast.error = result.error;
-      if (result.skipped || result.error) gridTrackerBroadcastStopped = true;
-    };
     try {
       const qrz = await api("/api/v1/qrz/status");
       if (!qrz?.qrz?.configured) throw new Error("Configure station callsign and QRZ Logbook API key first");
@@ -984,11 +884,6 @@ function initStationSettings() {
         }
         const pageRecords = parsed?.records || [];
         stagedRecords.push(...pageRecords);
-        if (pageRecords.length && !gridTrackerBroadcastStopped) {
-          const pageQueue = createGridTrackerAdifQueue();
-          pageQueue.addRecords(pageRecords);
-          mergeGridTrackerBroadcast(await broadcastGridTrackerChunks(pageQueue.finish(), `QRZ page ${pages + 1}`));
-        }
         pages += 1;
         totalFetched += pageCount;
         totalParsed += pageParsed;
@@ -1002,7 +897,7 @@ function initStationSettings() {
       await lb.setSyncState("qrz", { nextAfterLogId: after, lastPageCount: pages ? Number(stagedRecords.length) : 0, lastSyncAt: new Date().toISOString(), complete: true, authoritative: true, qsoCount: Number(replaced?.stored || 0) });
       const counts = await renderLogbookSettingsStatus();
       window.dispatchEvent(new CustomEvent("freerig-ft8-logbook-updated"));
-      logbookStatus.textContent = `QRZ complete · ${pages} page${pages === 1 ? "" : "s"} · ${totalFetched} fetched · ${replaced?.stored || 0} QRZ QSO stored · ${counts?.calls || 0} worked calls · ${counts?.dxcc || 0} DXCC · ${counts?.countries || 0} countries${totalErrors ? ` · ${totalErrors} ADIF warnings` : ""}${gridTrackerBroadcastSuffix(gtBroadcast)}`;
+      logbookStatus.textContent = `QRZ complete · ${pages} page${pages === 1 ? "" : "s"} · ${totalFetched} fetched · ${replaced?.stored || 0} QRZ QSO stored · ${counts?.calls || 0} worked calls · ${counts?.dxcc || 0} DXCC · ${counts?.countries || 0} countries${totalErrors ? ` · ${totalErrors} ADIF warnings` : ""}`;
     } catch (error) {
       logbookStatus.textContent = `QRZ sync failed: ${error?.message || error} · local log unchanged`;
     } finally {
@@ -1044,7 +939,7 @@ function initStationSettings() {
     logQrzEnableInput.checked = qrzState.api_key_set ? qrzState.qrz_enabled !== false : false;
     logGridTrackerEnableInput.checked = Boolean(qrzState.gridtracker_enabled);
     gridTrackerHostInput.value = qrzState.gridtracker_host || "";
-    gridTrackerPortInput.value = String(Number(qrzState.gridtracker_port) || 2333);
+    gridTrackerPortInput.value = String(Number(qrzState.gridtracker_port) || 2237);
     apiKeyInput.value = "";
     apiKeyInput.placeholder = qrzState.api_key_set ? "Saved on ESP32; leave blank to keep it" : "Paste QRZ Logbook API key";
     setLogSettingsStatus(isLogConfigured(qrzState) ? `Log destinations: ${logDestinationLabel(qrzState)}` : "Enable QRZ and/or GridTracker to log QSOs.");
@@ -1148,7 +1043,7 @@ function initStationSettings() {
     const qrzEnabled = logQrzEnableInput.checked;
     const gridTrackerEnabled = logGridTrackerEnableInput.checked;
     const gridTrackerHost = gridTrackerHostInput.value.trim();
-    const gridTrackerPort = Number(gridTrackerPortInput.value || 2333);
+    const gridTrackerPort = Number(gridTrackerPortInput.value || 2237);
     const gridOk = !grid || /^[A-R]{2}\d{2}(?:[A-X]{2}(?:\d{2})?)?$/.test(grid);
     const winlinkGridOk = !winlinkGrid || /^[A-R]{2}\d{2}(?:[A-X]{2}(?:\d{2})?)?$/.test(winlinkGrid);
 
@@ -1185,7 +1080,7 @@ function initStationSettings() {
       return;
     }
     if (gridTrackerEnabled && !gridTrackerHost) {
-      setStatus("GridTracker IP is required when GridTracker logging is enabled.", true);
+      setStatus("GridTracker IP is required when WSJT-X integration is enabled.", true);
       return;
     }
     if (!Number.isInteger(gridTrackerPort) || gridTrackerPort < 1 || gridTrackerPort > 65535) {

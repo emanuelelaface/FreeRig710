@@ -75,7 +75,7 @@
               <input id="settings-qrz-api-key" type="password" maxlength="128" autocomplete="new-password" placeholder="Leave blank to keep saved key">
             </label>
             <label class="settings-check-row">
-              <span>Log to GridTracker</span>
+              <span>GridTracker WSJT-X integration</span>
               <input id="settings-log-gridtracker-enable" type="checkbox">
             </label>
             <div class="settings-two-column">
@@ -84,8 +84,8 @@
                 <input id="settings-gridtracker-host" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="192.168.1.50">
               </label>
               <label>
-                <span class="control-label">GridTracker UDP port</span>
-                <input id="settings-gridtracker-port" type="number" min="1" max="65535" step="1" value="2333">
+                <span class="control-label">WSJT-X UDP port</span>
+                <input id="settings-gridtracker-port" type="number" min="1" max="65535" step="1" value="2237">
               </label>
             </div>
             <div class="settings-log-tools">
@@ -658,7 +658,7 @@
           <h2>Log</h2>
           <span id="qrz-log-status" class="qrz-status">CHECKING</span>
         </div>
-        <p class="help">The browser captures the current QSO context and asks the ESP32 to submit it to the enabled log destinations. QRZ credentials and GridTracker UDP target are stored on the ESP32.</p>
+        <p class="help">The browser captures the current QSO context and asks the ESP32 to submit it to QRZ and publish WSJT-X QSO Logged/Logged ADIF events to GridTracker.</p>
 
         <p id="qrz-config-state" class="help">Reading Log configuration from ESP32…</p>
 

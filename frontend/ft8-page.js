@@ -510,6 +510,7 @@
       try { localStorage.setItem("freerig710-ft8-band-v1", band); } catch (_) {}
       if (bandChanged) {
         window.FT710_FT8?.resetQso?.();
+        window.FT710_FT8?.notifyBandChanged?.();
         this.invalidateTxWaveform("band changed");
       }
       this.updateTxPlan(false);

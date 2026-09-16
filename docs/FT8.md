@@ -96,7 +96,7 @@ The FT8 logbook is local-first:
 
 The **Auto log completed QSO** checkbox keeps the existing automatic prompt behavior after an FT8 QSO closes. Manual **Log QSO** is also available from the FT8 Log section.
 
-Use the main page **Settings > Log** section for ADI file import and QRZ Sync. Those tools update the shared browser logbook/worked cache used by FT8 and the other logging panels; when GridTracker is enabled they also forward imported/synced ADIF records to GridTracker by UDP through the ESP32.
+Use the main page **Settings > Log** section for ADI file import and QRZ Sync. Those tools update the shared browser logbook/worked cache used by FT8 and the other logging panels. When GridTracker integration is enabled, the live FT8 console publishes WSJT-X heartbeat, status, decode, clear and logging messages through the ESP32.
 
 ## External FT8 runtime dependencies
 

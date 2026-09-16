@@ -166,6 +166,12 @@ esp_err_t freerig_config_get_qrz(freerig_qrz_config_t *out)
     if (nvs_get_str(h, "gt_host", out->gridtracker_host, &size) != ESP_OK) out->gridtracker_host[0] = '\0';
     uint16_t port = FREERIG_GRIDTRACKER_DEFAULT_PORT;
     if (nvs_get_u16(h, "gt_port", &port) != ESP_OK || port == 0) port = FREERIG_GRIDTRACKER_DEFAULT_PORT;
+    uint8_t protocol_version = 0;
+    if (nvs_get_u8(h, "gt_proto", &protocol_version) != ESP_OK && port == 2333U) {
+        /* 2333 was the old raw-ADIF default. Existing installs move once to
+         * GridTracker's WSJT-X default unless the user had chosen another port. */
+        port = FREERIG_GRIDTRACKER_DEFAULT_PORT;
+    }
     out->gridtracker_port = port;
     nvs_close(h);
     return ESP_OK;
@@ -239,6 +245,7 @@ esp_err_t freerig_config_set_log(const char *station_callsign, const char *stati
         }
     }
     if (err == ESP_OK) err = nvs_set_u16(h, "gt_port", gridtracker_port);
+    if (err == ESP_OK) err = nvs_set_u8(h, "gt_proto", 1U);
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
     return err;

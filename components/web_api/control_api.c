@@ -33,6 +33,8 @@
 #include "network_eth.h"
 #include "network_wifi.h"
 #include "video_jpeg.h"
+#include "wsjtx_protocol.h"
+#include "wsjtx_udp.h"
 
 static const char *TAG = "control_api";
 
@@ -350,6 +352,12 @@ static int json_int(cJSON *root, const char *key, int def)
 {
     cJSON *v = cJSON_GetObjectItemCaseSensitive(root, key);
     return cJSON_IsNumber(v) ? v->valueint : def;
+}
+
+static double json_number(cJSON *root, const char *key, double def)
+{
+    cJSON *v = cJSON_GetObjectItemCaseSensitive(root, key);
+    return cJSON_IsNumber(v) ? v->valuedouble : def;
 }
 
 static bool json_bool(cJSON *root, const char *key, bool def, bool *present)
@@ -1340,6 +1348,7 @@ typedef struct {
     char mode[16];
     char submode[16];
     char date[9];
+    char date_off[9];
     char time_on[7];
     char time_off[7];
     char grid[9];
@@ -1506,83 +1515,234 @@ static bool qrz_adif_int(char *buf, size_t cap, size_t *used, const char *name, 
     return qrz_adif_field(buf, cap, used, name, text);
 }
 
-static const char *adif_find_eor(const char *text)
+static esp_err_t gridtracker_send_packet(const freerig_qrz_config_t *cfg,
+                                         const wsjtx_packet_t *packet,
+                                         char *detail, size_t detail_size)
 {
-    if (!text) return NULL;
-    for (const char *p = text; (p = strchr(p, '<')) != NULL; p++) {
-        if (!strncasecmp(p, "<EOR>", 5)) return p;
+    if (!cfg || !cfg->gridtracker_enabled || !cfg->gridtracker_host[0] || cfg->gridtracker_port == 0) {
+        if (detail && detail_size) snprintf(detail, detail_size, "GridTracker WSJT-X integration is not configured");
+        return ESP_ERR_INVALID_STATE;
     }
-    return NULL;
+    return wsjtx_udp_send(cfg->gridtracker_host, cfg->gridtracker_port, packet, detail, detail_size);
 }
 
-static esp_err_t gridtracker_send_adif(const freerig_qrz_config_t *cfg, const char *adif,
-                                       char *detail, size_t detail_size)
+static esp_err_t gridtracker_wsjtx_event_handler(httpd_req_t *req)
 {
-    if (!cfg || !cfg->gridtracker_host[0] || cfg->gridtracker_port == 0 || !adif) {
-        if (detail && detail_size) snprintf(detail, detail_size, "GridTracker is not configured");
+    freerig_qrz_config_t cfg;
+    esp_err_t cfg_err = freerig_config_get_qrz(&cfg);
+    if (cfg_err != ESP_OK) return send_error(req, "500 Internal Server Error", esp_err_to_name(cfg_err));
+    if (!cfg.gridtracker_enabled || !cfg.gridtracker_host[0] || cfg.gridtracker_port == 0) {
+        return send_error(req, "503 Service Unavailable", "GridTracker WSJT-X integration is disabled or incomplete");
+    }
+
+    cJSON *json = read_json(req);
+    if (!json) return send_error(req, "422 Unprocessable Entity", "invalid JSON");
+    const char *type = json_string(json, "type", "");
+    char event_type[16];
+    snprintf(event_type, sizeof(event_type), "%s", type);
+    wsjtx_packet_t packet;
+    bool built = false;
+    bool clear_before_close = false;
+    if (!strcasecmp(type, "heartbeat")) {
+        built = wsjtx_build_heartbeat(&packet, WSJTX_PROTOCOL_ID, "FreeRig710 1.0", "");
+    } else if (!strcasecmp(type, "status")) {
+        bool ignored = false;
+        wsjtx_status_t status = {
+            .dial_frequency_hz = (uint64_t)json_number(json, "dial_frequency_hz", 0),
+            .mode = json_string(json, "mode", "FT8"),
+            .dx_call = json_string(json, "dx_call", ""),
+            .report = json_string(json, "report", ""),
+            .tx_mode = json_string(json, "tx_mode", "FT8"),
+            .tx_enabled = json_bool(json, "tx_enabled", false, &ignored),
+            .transmitting = json_bool(json, "transmitting", false, &ignored),
+            .decoding = json_bool(json, "decoding", false, &ignored),
+            .rx_df_hz = json_int(json, "rx_df_hz", 0),
+            .tx_df_hz = json_int(json, "tx_df_hz", 0),
+            .de_call = json_string(json, "de_call", cfg.station_callsign),
+            .de_grid = json_string(json, "de_grid", cfg.station_grid),
+            .dx_grid = json_string(json, "dx_grid", ""),
+            .tx_watchdog = json_bool(json, "tx_watchdog", false, &ignored),
+            .sub_mode = json_string(json, "sub_mode", ""),
+            .fast_mode = json_bool(json, "fast_mode", false, &ignored),
+            .special_operation_mode = (uint8_t)json_int(json, "special_operation_mode", 0),
+            .frequency_tolerance_hz = (uint32_t)json_number(json, "frequency_tolerance_hz", UINT32_MAX),
+            .tr_period_seconds = (uint32_t)json_int(json, "tr_period_seconds", 15),
+            .configuration_name = json_string(json, "configuration_name", "Default"),
+            .tx_message = json_string(json, "tx_message", ""),
+        };
+        built = status.dial_frequency_hz > 0 && wsjtx_build_status(&packet, WSJTX_PROTOCOL_ID, &status);
+    } else if (!strcasecmp(type, "decode")) {
+        bool ignored = false;
+        int delta_frequency = json_int(json, "delta_frequency_hz", -1);
+        int milliseconds = json_int(json, "milliseconds_since_midnight", -1);
+        wsjtx_decode_t decode = {
+            .is_new = json_bool(json, "new", true, &ignored),
+            .milliseconds_since_midnight = milliseconds >= 0 ? (uint32_t)milliseconds : 0,
+            .snr = json_int(json, "snr", 0),
+            .delta_time_seconds = json_number(json, "delta_time_seconds", 0),
+            .delta_frequency_hz = delta_frequency >= 0 ? (uint32_t)delta_frequency : 0,
+            .mode = json_string(json, "mode", "~"),
+            .message = json_string(json, "message", ""),
+            .low_confidence = json_bool(json, "low_confidence", false, &ignored),
+            .off_air = json_bool(json, "off_air", false, &ignored),
+        };
+        built = milliseconds >= 0 && milliseconds < 86400000 && delta_frequency >= 0 &&
+                decode.message[0] && wsjtx_build_decode(&packet, WSJTX_PROTOCOL_ID, &decode);
+    } else if (!strcasecmp(type, "clear")) {
+        built = wsjtx_build_clear(&packet, WSJTX_PROTOCOL_ID);
+    } else if (!strcasecmp(type, "close")) {
+        built = wsjtx_build_close(&packet, WSJTX_PROTOCOL_ID);
+        clear_before_close = built;
+    }
+    cJSON_Delete(json);
+    if (!built) return send_error(req, "422 Unprocessable Entity", "invalid or unsupported WSJT-X event");
+
+    char detail[128] = {0};
+    if (clear_before_close) {
+        wsjtx_packet_t clear_packet;
+        if (!wsjtx_build_clear(&clear_packet, WSJTX_PROTOCOL_ID)) {
+            return send_error(req, "500 Internal Server Error", "unable to build WSJT-X Clear packet");
+        }
+        esp_err_t clear_err = gridtracker_send_packet(&cfg, &clear_packet, detail, sizeof(detail));
+        if (clear_err != ESP_OK) return send_error(req, "502 Bad Gateway", detail[0] ? detail : esp_err_to_name(clear_err));
+    }
+    esp_err_t err = gridtracker_send_packet(&cfg, &packet, detail, sizeof(detail));
+    if (err != ESP_OK) return send_error(req, "502 Bad Gateway", detail[0] ? detail : esp_err_to_name(err));
+    wsjtx_udp_stats_t stats;
+    wsjtx_udp_get_stats(&stats);
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddTrueToObject(response, "ok");
+    cJSON_AddStringToObject(response, "type", event_type);
+    cJSON_AddStringToObject(response, "detail", detail);
+    cJSON_AddNumberToObject(response, "sent_packets", stats.sent_packets);
+    cJSON_AddNumberToObject(response, "received_packets", stats.received_packets);
+    return send_json(req, response);
+}
+
+static esp_err_t gridtracker_wsjtx_commands_handler(httpd_req_t *req)
+{
+    wsjtx_udp_stats_t stats;
+    wsjtx_udp_get_stats(&stats);
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddTrueToObject(response, "ok");
+    cJSON *commands = cJSON_AddArrayToObject(response, "commands");
+    wsjtx_command_t command;
+    while (wsjtx_udp_pop_command(&command)) {
+        cJSON *item = cJSON_CreateObject();
+        switch (command.type) {
+        case WSJTX_MESSAGE_REPLY:
+            cJSON_AddStringToObject(item, "type", "reply");
+            cJSON_AddNumberToObject(item, "milliseconds_since_midnight", command.milliseconds_since_midnight);
+            cJSON_AddNumberToObject(item, "snr", command.snr);
+            cJSON_AddNumberToObject(item, "delta_time_seconds", command.delta_time_seconds);
+            cJSON_AddNumberToObject(item, "delta_frequency_hz", command.delta_frequency_hz);
+            cJSON_AddStringToObject(item, "mode", command.mode);
+            cJSON_AddStringToObject(item, "message", command.message);
+            cJSON_AddBoolToObject(item, "low_confidence", command.low_confidence);
+            cJSON_AddNumberToObject(item, "modifiers", command.modifiers);
+            break;
+        case WSJTX_MESSAGE_CLEAR:
+            cJSON_AddStringToObject(item, "type", "clear");
+            cJSON_AddNumberToObject(item, "window", command.window);
+            break;
+        case WSJTX_MESSAGE_REPLAY:
+            cJSON_AddStringToObject(item, "type", "replay");
+            break;
+        case WSJTX_MESSAGE_HALT_TX:
+            cJSON_AddStringToObject(item, "type", "halt_tx");
+            cJSON_AddBoolToObject(item, "auto_only", command.flag);
+            break;
+        case WSJTX_MESSAGE_FREE_TEXT:
+            cJSON_AddStringToObject(item, "type", "free_text");
+            cJSON_AddStringToObject(item, "text", command.message);
+            cJSON_AddBoolToObject(item, "send", command.flag);
+            break;
+        case WSJTX_MESSAGE_LOCATION:
+            cJSON_AddStringToObject(item, "type", "location");
+            cJSON_AddStringToObject(item, "location", command.message);
+            break;
+        default:
+            cJSON_Delete(item);
+            continue;
+        }
+        cJSON_AddItemToArray(commands, item);
+    }
+    cJSON *transport = cJSON_AddObjectToObject(response, "transport");
+    cJSON_AddBoolToObject(transport, "socket_open", stats.socket_open);
+    cJSON_AddStringToObject(transport, "host", stats.host);
+    cJSON_AddNumberToObject(transport, "port", stats.port);
+    cJSON_AddNumberToObject(transport, "sent_packets", stats.sent_packets);
+    cJSON_AddNumberToObject(transport, "received_packets", stats.received_packets);
+    cJSON_AddNumberToObject(transport, "dropped_commands", stats.dropped_commands);
+    cJSON_AddNumberToObject(transport, "peer_schema", stats.peer_schema);
+    return send_json(req, response);
+}
+
+static bool wsjtx_utc_from_adif(const char *date, const char *time_value, wsjtx_utc_t *out)
+{
+    if (!date || !time_value || !out || strlen(date) < 8 || strlen(time_value) < 4) return false;
+    memset(out, 0, sizeof(*out));
+    out->year = (date[0] - '0') * 1000 + (date[1] - '0') * 100 + (date[2] - '0') * 10 + date[3] - '0';
+    out->month = (date[4] - '0') * 10 + date[5] - '0';
+    out->day = (date[6] - '0') * 10 + date[7] - '0';
+    out->hour = (time_value[0] - '0') * 10 + time_value[1] - '0';
+    out->minute = (time_value[2] - '0') * 10 + time_value[3] - '0';
+    out->second = strlen(time_value) >= 6 ? (time_value[4] - '0') * 10 + time_value[5] - '0' : 0;
+    return out->year >= 1970 && out->month >= 1 && out->month <= 12 && out->day >= 1 && out->day <= 31 &&
+           out->hour <= 23 && out->minute <= 59 && out->second <= 59;
+}
+
+static esp_err_t gridtracker_send_logged_qso(const qrz_job_t *job, const char *adif,
+                                             char *detail, size_t detail_size)
+{
+    if (!job || !adif) return ESP_ERR_INVALID_ARG;
+    wsjtx_qso_logged_t qso = {
+        .dx_call = job->call,
+        .dx_grid = job->grid,
+        .tx_frequency_hz = job->frequency_hz,
+        .mode = job->submode[0] ? job->submode : job->mode,
+        .report_sent = job->rst_sent,
+        .report_received = job->rst_rcvd,
+        .comments = job->comment,
+        .operator_call = job->config.station_callsign,
+        .my_call = job->config.station_callsign,
+        .my_grid = job->my_grid,
+        .exchange_sent = "",
+        .exchange_received = "",
+        .adif_propagation_mode = "",
+        .name = "",
+    };
+    char power[16] = {0};
+    if (job->tx_power_w > 0) snprintf(power, sizeof(power), "%d", job->tx_power_w);
+    qso.tx_power = power;
+    const char *date_off = job->date_off[0] ? job->date_off : job->date;
+    const char *time_off = job->time_off[0] ? job->time_off : job->time_on;
+    if (!wsjtx_utc_from_adif(job->date, job->time_on, &qso.time_on) ||
+        !wsjtx_utc_from_adif(date_off, time_off, &qso.time_off)) {
+        if (detail && detail_size) snprintf(detail, detail_size, "invalid QSO UTC timestamp for WSJT-X protocol");
         return ESP_ERR_INVALID_ARG;
     }
-    char port[8];
-    snprintf(port, sizeof(port), "%u", (unsigned)cfg->gridtracker_port);
-    struct addrinfo hints = {
-        .ai_family = AF_INET,
-        .ai_socktype = SOCK_DGRAM,
-        .ai_protocol = IPPROTO_UDP,
-    };
-    struct addrinfo *res = NULL;
-    int rc = getaddrinfo(cfg->gridtracker_host, port, &hints, &res);
-    if (rc != 0 || !res) {
-        if (detail && detail_size) snprintf(detail, detail_size, "GridTracker address lookup failed");
-        return ESP_FAIL;
+
+    wsjtx_packet_t qso_packet;
+    if (!wsjtx_build_qso_logged(&qso_packet, WSJTX_PROTOCOL_ID, &qso)) return ESP_ERR_INVALID_SIZE;
+    esp_err_t err = gridtracker_send_packet(&job->config, &qso_packet, detail, detail_size);
+    if (err != ESP_OK) return err;
+
+    const char *header = "<ADIF_VER:5>3.1.4<PROGRAMID:10>FreeRig710<PROGRAMVERSION:3>1.0<EOH>";
+    size_t complete_size = strlen(header) + strlen(adif) + 1U;
+    char *complete_adif = qrz_alloc(complete_size);
+    if (!complete_adif) return ESP_ERR_NO_MEM;
+    snprintf(complete_adif, complete_size, "%s%s", header, adif);
+    wsjtx_packet_t adif_packet;
+    bool built = wsjtx_build_logged_adif(&adif_packet, WSJTX_PROTOCOL_ID, complete_adif);
+    free(complete_adif);
+    if (!built) return ESP_ERR_INVALID_SIZE;
+    err = gridtracker_send_packet(&job->config, &adif_packet, detail, detail_size);
+    if (err == ESP_OK && detail && detail_size) {
+        snprintf(detail, detail_size, "GridTracker received WSJT-X QSO Logged and Logged ADIF on %s:%u",
+                 job->config.gridtracker_host, (unsigned)job->config.gridtracker_port);
     }
-    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sock < 0) {
-        if (detail && detail_size) snprintf(detail, detail_size, "GridTracker UDP socket failed: errno %d", errno);
-        freeaddrinfo(res);
-        return ESP_FAIL;
-    }
-    size_t records = 0;
-    size_t bytes = 0;
-    const char *start = adif;
-    const char *eor = NULL;
-    while ((eor = adif_find_eor(start)) != NULL) {
-        const char *record = start;
-        while (record < eor && isspace((unsigned char)*record)) record++;
-        size_t len = (size_t)((eor + 5) - record);
-        if (len > 0) {
-            ssize_t sent = sendto(sock, record, len, 0, res->ai_addr, res->ai_addrlen);
-            if (sent < 0 || (size_t)sent != len) {
-                close(sock);
-                freeaddrinfo(res);
-                if (detail && detail_size) snprintf(detail, detail_size, "GridTracker UDP send failed: errno %d", errno);
-                return ESP_FAIL;
-            }
-            records++;
-            bytes += (size_t)sent;
-            vTaskDelay(pdMS_TO_TICKS(2));
-        }
-        start = eor + 5;
-    }
-    if (records == 0 && adif[0]) {
-        size_t len = strlen(adif);
-        ssize_t sent = sendto(sock, adif, len, 0, res->ai_addr, res->ai_addrlen);
-        if (sent < 0 || (size_t)sent != len) {
-            close(sock);
-            freeaddrinfo(res);
-            if (detail && detail_size) snprintf(detail, detail_size, "GridTracker UDP send failed: errno %d", errno);
-            return ESP_FAIL;
-        }
-        records = 1;
-        bytes = (size_t)sent;
-    }
-    close(sock);
-    freeaddrinfo(res);
-    if (detail && detail_size) {
-        snprintf(detail, detail_size, "GridTracker UDP sent %u record%s (%u bytes) to %s:%u",
-                 (unsigned)records, records == 1 ? "" : "s", (unsigned)bytes,
-                 cfg->gridtracker_host, (unsigned)cfg->gridtracker_port);
-    }
-    return ESP_OK;
+    return err;
 }
 
 static void qrz_response_value(const char *response, const char *key, char *out, size_t out_size)
@@ -2144,6 +2304,7 @@ static void qrz_log_task(void *arg)
     if (ok) ok = qrz_adif_field(adif, adif_cap, &used, "STATION_CALLSIGN", job->config.station_callsign);
     if (ok) ok = qrz_adif_field(adif, adif_cap, &used, "QSO_DATE", job->date);
     if (ok) ok = qrz_adif_field(adif, adif_cap, &used, "TIME_ON", job->time_on);
+    if (ok && job->date_off[0]) ok = qrz_adif_field(adif, adif_cap, &used, "QSO_DATE_OFF", job->date_off);
     if (ok && job->time_off[0]) ok = qrz_adif_field(adif, adif_cap, &used, "TIME_OFF", job->time_off);
     if (ok) ok = qrz_adif_field(adif, adif_cap, &used, "BAND", job->band);
     if (ok) ok = qrz_adif_frequency(adif, adif_cap, &used, "FREQ", job->frequency_hz);
@@ -2246,7 +2407,7 @@ static void qrz_log_task(void *arg)
     }
 
     if (gridtracker_active) {
-        esp_err_t gt_err = gridtracker_send_adif(&job->config, adif, gridtracker_detail, sizeof(gridtracker_detail));
+        esp_err_t gt_err = gridtracker_send_logged_qso(job, adif, gridtracker_detail, sizeof(gridtracker_detail));
         if (gt_err == ESP_OK) {
             gridtracker_sent = true;
         } else {
@@ -2333,36 +2494,6 @@ static esp_err_t qrz_log_status_handler(httpd_req_t *req)
     cJSON *o = cJSON_CreateObject();
     cJSON_AddTrueToObject(o, "ok");
     cJSON_AddItemToObject(o, "job", qrz_job_json(&st));
-    return send_json(req, o);
-}
-
-static esp_err_t log_gridtracker_adif_handler(httpd_req_t *req)
-{
-    freerig_qrz_config_t q;
-    esp_err_t cfg_err = freerig_config_get_qrz(&q);
-    if (cfg_err != ESP_OK) return send_error(req, "500 Internal Server Error", esp_err_to_name(cfg_err));
-    if (!q.gridtracker_enabled) return send_error(req, "503 Service Unavailable", "GridTracker logging is disabled");
-    if (!q.gridtracker_host[0] || q.gridtracker_port == 0) {
-        return send_error(req, "503 Service Unavailable", "GridTracker UDP target is not configured");
-    }
-
-    cJSON *j = read_json(req);
-    if (!j) return send_error(req, "422 Unprocessable Entity", "invalid JSON");
-    const char *adif = json_string(j, "adif", NULL);
-    if (!adif || !adif[0]) {
-        cJSON_Delete(j);
-        return send_error(req, "422 Unprocessable Entity", "ADIF payload is required");
-    }
-    char detail[128] = {0};
-    esp_err_t err = gridtracker_send_adif(&q, adif, detail, sizeof(detail));
-    size_t bytes = strlen(adif);
-    cJSON_Delete(j);
-    if (err != ESP_OK) return send_error(req, "502 Bad Gateway", detail[0] ? detail : esp_err_to_name(err));
-
-    cJSON *o = cJSON_CreateObject();
-    cJSON_AddTrueToObject(o, "ok");
-    cJSON_AddNumberToObject(o, "bytes", (double)bytes);
-    cJSON_AddStringToObject(o, "detail", detail);
     return send_json(req, o);
 }
 
@@ -2453,7 +2584,10 @@ static esp_err_t qrz_log_handler(httpd_req_t *req)
         strftime(job->time_on, sizeof(job->time_on), "%H%M%S", &t);
     }
     if (iso_off && strlen(iso_off) >= 19) {
-        char ignored_date[9] = {0}; qrz_iso_to_adif(iso_off, ignored_date, job->time_off);
+        qrz_iso_to_adif(iso_off, job->date_off, job->time_off);
+    } else {
+        snprintf(job->date_off, sizeof(job->date_off), "%s", job->date);
+        snprintf(job->time_off, sizeof(job->time_off), "%s", job->time_on);
     }
     cJSON_Delete(j);
 
@@ -4502,6 +4636,7 @@ esp_err_t control_api_register(httpd_handle_t server)
     ESP_LOGI(TAG, "AUDIO WS REGISTERED: /api/v1/audio/ws");
     (void)freerig_config_init();
     (void)freerig_memories_init();
+    (void)wsjtx_udp_init();
     static bool jog_started=false;if(!jog_started){if(xTaskCreate(jog_task,"freq_jog",3072,NULL,3,NULL)==pdPASS)jog_started=true;}
 #define R(uri,method,fn) do{esp_err_t e=register_uri((uri),(method),(fn),false);if(e!=ESP_OK)return e;}while(0)
     R("/api/v1/capabilities",HTTP_GET,capabilities_handler);R("/api/v1/state",HTTP_GET,state_handler);
@@ -4511,7 +4646,8 @@ esp_err_t control_api_register(httpd_handle_t server)
     R("/api/v1/video/settings",HTTP_GET,video_settings_get);R("/api/v1/video/settings",HTTP_POST,video_settings_post);
     R("/api/v1/wifi/status",HTTP_GET,wifi_status_handler);R("/api/v1/wifi/config",HTTP_POST,wifi_config_handler);R("/api/v1/wifi/scan",HTTP_GET,wifi_scan_handler);
     R("/api/v1/wireguard/status",HTTP_GET,wireguard_status_handler);R("/api/v1/wireguard/config",HTTP_POST,wireguard_config_handler);
-    R("/api/v1/log/status",HTTP_GET,qrz_status_handler);R("/api/v1/log/config",HTTP_POST,qrz_config_handler);R("/api/v1/log/qso",HTTP_POST,qrz_log_handler);R("/api/v1/log/qso/status",HTTP_GET,qrz_log_status_handler);R("/api/v1/log/gridtracker/adif",HTTP_POST,log_gridtracker_adif_handler);
+    R("/api/v1/log/status",HTTP_GET,qrz_status_handler);R("/api/v1/log/config",HTTP_POST,qrz_config_handler);R("/api/v1/log/qso",HTTP_POST,qrz_log_handler);R("/api/v1/log/qso/status",HTTP_GET,qrz_log_status_handler);
+    R("/api/v1/gridtracker/wsjtx/event",HTTP_POST,gridtracker_wsjtx_event_handler);R("/api/v1/gridtracker/wsjtx/commands",HTTP_GET,gridtracker_wsjtx_commands_handler);
     R("/api/v1/qrz/status",HTTP_GET,qrz_status_handler);R("/api/v1/qrz/config",HTTP_POST,qrz_config_handler);R("/api/v1/qrz/log",HTTP_POST,qrz_log_handler);R("/api/v1/qrz/log/status",HTTP_GET,qrz_log_status_handler);R("/api/v1/qrz/fetch",HTTP_POST,qrz_fetch_handler);R("/api/v1/qrz/fetch/status",HTTP_GET,qrz_fetch_status_handler);R("/api/v1/qrz/fetch/page",HTTP_GET,qrz_fetch_page_handler);R("/api/v1/qrz/fetch/cancel",HTTP_POST,qrz_fetch_cancel_handler);
     R("/api/v1/cw/status",HTTP_OPTIONS,options_handler);
     R("/api/v1/radio/jog",HTTP_OPTIONS,options_handler);
