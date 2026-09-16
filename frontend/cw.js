@@ -96,6 +96,7 @@
       this.candidateDuration = 0;
       this.pattern = "";
       this.patternMarks = [];
+      this.patternGaps = [];
       this.characterFlushed = false;
       this.wordFlushed = false;
 
@@ -136,6 +137,7 @@
       this.candidateDuration = 0;
       this.pattern = "";
       this.patternMarks = [];
+      this.patternGaps = [];
       this.characterFlushed = false;
       this.wordFlushed = false;
       this.markHistory = [];
@@ -310,7 +312,7 @@
 
       this.appendScanAudio(incoming);
       this.scanElapsedSamples += incoming.length;
-      const scanInterval = Math.max(1, Math.round(this.sampleRate * 0.25));
+      const scanInterval = Math.max(1, Math.round(this.sampleRate * 0.10));
       if (this.callbacks.autoTone() && this.scanElapsedSamples >= scanInterval) {
         this.scanElapsedSamples %= scanInterval;
         this.updateToneLock();
@@ -345,7 +347,7 @@
     }
 
     scanStableTone(samples) {
-      if (samples.length < Math.round(this.sampleRate * 0.12)) return null;
+      if (samples.length < Math.round(this.sampleRate * 0.08)) return null;
 
       const factor = Math.max(1, Math.round(this.sampleRate / 11025));
       const usable = Math.floor(samples.length / factor) * factor;
@@ -536,6 +538,7 @@
       if (durationMs < 22) return;
       if (durationMs > 500) {
         this.patternMarks = [];
+        this.patternGaps = [];
         this.pattern = "";
         return;
       }
@@ -543,6 +546,7 @@
       this.patternMarks.push(durationMs);
       if (this.patternMarks.length > 6) {
         this.patternMarks = [];
+        this.patternGaps = [];
         this.pattern = "";
         return;
       }
@@ -557,7 +561,7 @@
 
       const model = this.markModel();
       this.pattern = this.patternMarks
-        .map((duration) => duration >= model.threshold ? "-" : ".")
+        .map((duration) => duration >= Math.min(model.threshold, model.dit * 1.60) ? "-" : ".")
         .join("");
       this.characterFlushed = false;
       this.wordFlushed = false;
@@ -566,7 +570,15 @@
     finishGap(durationMs) {
       this.learnGap(durationMs);
       const gaps = this.gapThresholds();
-      if (durationMs >= gaps.character) this.flushCharacter();
+      if (durationMs >= gaps.character) {
+        this.flushCharacter();
+      } else if (this.patternMarks.length) {
+        // Keep the element gap so a later flush can detect a likely
+        // compressed character boundary inside an otherwise valid 5/6-mark
+        // sequence (common with hand-sent CW / uneven spacing).
+        this.patternGaps.push(durationMs);
+        if (this.patternGaps.length > 5) this.patternGaps.shift();
+      }
       if (durationMs >= gaps.word) this.flushWord();
     }
 
@@ -583,13 +595,43 @@
     flushCharacter() {
       if (!this.patternMarks.length || this.characterFlushed) return;
       const model = this.markModel();
+      const markThreshold = Math.min(model.threshold, model.dit * 1.60);
       this.pattern = this.patternMarks
-        .map((duration) => duration >= model.threshold ? "-" : ".")
+        .map((duration) => duration >= markThreshold ? "-" : ".")
         .join("");
-      const character = MORSE_TO_TEXT[this.pattern];
-      if (character) this.callbacks.appendText(character);
+
+      let decoded = MORSE_TO_TEXT[this.pattern] || "";
+
+      // Uneven/hand-sent CW can compress a character gap until it is only
+      // slightly longer than an element gap. If that happens inside a long
+      // 5/6-element pattern, try one split at the strongest gap. This is
+      // deliberately conservative: a normal, evenly-spaced digit remains
+      // untouched. Example from the capture set: -.... was really T + H.
+      if (this.patternMarks.length >= 5 && this.patternGaps.length === this.patternMarks.length - 1) {
+        const baseline = median(this.patternGaps);
+        let best = null;
+        for (let index = 0; index < this.patternGaps.length; index += 1) {
+          const gap = this.patternGaps[index];
+          const leftPattern = this.pattern.slice(0, index + 1);
+          const rightPattern = this.pattern.slice(index + 1);
+          const left = MORSE_TO_TEXT[leftPattern];
+          const right = MORSE_TO_TEXT[rightPattern];
+          if (!left || !right) continue;
+          const ratio = gap / Math.max(1, baseline);
+          const ditRatio = gap / Math.max(1, model.dit);
+          const score = ratio + ditRatio * 0.15;
+          if (ratio >= 1.26 && ditRatio >= 1.25 && (!best || score > best.score)) {
+            best = { score, text: left + right };
+          }
+        }
+        const directIsLongCode = this.pattern.length >= 5;
+        if (best && (!decoded || directIsLongCode)) decoded = best.text;
+      }
+
+      if (decoded) this.callbacks.appendText(decoded);
       this.pattern = "";
       this.patternMarks = [];
+      this.patternGaps = [];
       this.characterFlushed = true;
     }
 
