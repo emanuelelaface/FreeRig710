@@ -5,9 +5,10 @@ css=(root/'frontend/ft8-page.css').read_text()
 js=(root/'frontend/ft8.js').read_text()
 page=(root/'frontend/ft8-page.js').read_text()
 
-# Band Activity pointer/click calls any parseable decoded station and attempts
-# Auto TX. Pointer state lives on the stable tbody so a DOM redraw between a
-# physical trackpad press and release cannot swallow the selection.
+# Band Activity pointer/click selects any parseable decoded station and attempts
+# Auto TX only when the selection preference is on. Pointer state lives on the
+# stable tbody so a DOM redraw between a physical trackpad press and release
+# cannot swallow the selection.
 render=js[js.index('const renderBody ='):js.index('renderBody(id("ft8-decodes-body")')]
 assert 'tr.dataset.ft8RowKey = row.key;' in render
 pointer=js[js.index('    setupActivityPointerSelection() {'):js.index('    async refreshStationIdentity() {')]
@@ -16,7 +17,10 @@ for token in ('"pointerdown"','"pointerup"','setPointerCapture','releasePointerC
 operator_select=js[js.index('    async selectDecodeFromActivity(row) {'):js.index('    selectDecode(row) {')]
 assert 'await page.prepareForActivitySelection({switchingDx})' in operator_select
 assert 'const accepted=this.selectDecode(row);' in operator_select
-assert 'if(accepted)page?.rearmAutoTxFromSelection?.();' in operator_select
+assert 'if(accepted&&this.autoArmOnSelection)page?.rearmAutoTxFromSelection?.();' in operator_select
+assert 'id="ft8-auto-arm-selection" type="checkbox" checked' in html
+assert 'Select this decoded station' in render
+assert 'Click to call this decoded station' not in render
 assert 'row.parsed?.kind==="CQ"' not in js[js.index('const renderBody ='):js.index('renderBody(id("ft8-decodes-body")')]
 assert 'return true;' in js[js.index('    selectDecode(row) {'):js.index('    updateTxReportFromRow(row) {')]
 assert 'return false;' in js[js.index('    selectDecode(row) {'):js.index('    updateTxReportFromRow(row) {')]
@@ -37,4 +41,4 @@ assert '<span>CQ</span>' not in cq
 assert 'id="ft8-call-cq"' in cq and 'id="ft8-cq-preview"' in cq
 assert '.ft8-cq-box button,.ft8-cq-box strong{height:31px;min-height:31px;box-sizing:border-box}' in css
 assert '.ft8-cq-box{display:grid;grid-template-columns:auto 1fr;' in css
-print('FT8.6.5.16 any-decode click / CQ arm contract: OK')
+print('FT8 any-decode selection preference / CQ arm contract: OK')

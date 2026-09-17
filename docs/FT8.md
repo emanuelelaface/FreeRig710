@@ -28,9 +28,9 @@ UTC | SNR | MESSAGE | CALL | LOCATION | WORKED
 
 `DT` and `DF` remain in the decoded row data for filtering/QSO/frequency logic but are hidden from the fixed columns; they are available from row context/tooltip.
 
-A single click on **any valid decoded message**, not only `CQ`, selects the transmitter callsign and starts a QSO attempt. FreeRig710 prepares `DXCALL MYCALL GRID`, arms TX when allowed, and continues with the normal report/R-report/RR73/73 sequence when the selected DX replies.
+A single click on **any valid decoded message**, not only `CQ`, selects the station and prepares the QSO, including its callsign, frequency, slot parity, report and next message. Band Activity, RX Activity and GridTracker Reply use the same selection behavior. **Auto-arm TX on station selection** is on by default and saved in this browser. Turn it off to prepare the QSO without enabling TX, then press **Enable TX** when ready.
 
-An automatically decoded callsign cannot steal an already-active QSO. An explicit operator click on another Band Activity row safely halts the old automatic sequence before selecting and arming the new station.
+An automatically decoded callsign cannot steal an already-active QSO. An explicit operator selection of another station safely halts the old automatic sequence before selecting the new station; arming it follows the auto-arm preference. Changing the preference does not stop TX that is already enabled; use **Halt TX** to stop it.
 
 When a Chromium-based browser restores FT8 after leaving the tab in the background, the page first reconciles the ESP32 TX state, reconnects stale audio and probes the codec Web Worker. A Band Activity click waits for that recovery to finish; an unresponsive Worker or a stale decode operation is recreated automatically, without requiring a forced page reload.
 
@@ -72,7 +72,7 @@ Choosing a band configures the FT-710 for integrated FT8 operation and sets the 
 
 ## Calling a decoded station
 
-Click the desired Band Activity row. FreeRig710 extracts the transmitting CALL, selects the row/frequency, prepares the initial directed message and attempts to arm TX. If the station answers your call, Auto Seq progresses through the QSO.
+Select the desired Band Activity or RX Activity row, or select its decode in GridTracker. FreeRig710 prepares the QSO and attempts to arm TX if **Auto-arm TX on station selection** is on. Otherwise, press **Enable TX** to arm the prepared message. Once TX is enabled, Auto Seq progresses through the QSO as usual.
 
 ## QSO controls
 
@@ -80,6 +80,7 @@ Click the desired Band Activity row. FreeRig710 extracts the transmitting CALL, 
 - **Halt TX** — cancels armed/active automatic TX.
 - **Tune ALC / Stop Tune** — bounded calibration helper.
 - **Auto Seq** — automatically advances message stages from received replies.
+- **Auto-arm TX on station selection** — enables TX when selecting a decoded station; independent of Auto Seq. **Enable CQ** and **Enable TX** always request TX explicitly, regardless of this preference.
 - **Call 1st** — CQ response behavior.
 - **Hold TX frequency** — keeps selected TX DF while receiving replies elsewhere.
 - **Retry max / Timeout slots** — bounds automatic retry behavior.

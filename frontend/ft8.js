@@ -119,6 +119,7 @@
     colorRules: null,
     qsoMachine: null,
     autoSeq: true,
+    autoArmOnSelection: true,
     callFirst: true,
     cqAuto: "first",
     holdTxFrequency: true,
@@ -361,7 +362,7 @@
             && sent.mode === String(command.mode || "")
             && sent.low_confidence === Boolean(command.low_confidence);
         });
-        if (row && ["CQ", "QRZ"].includes(row.parsed?.kind || this.parseMessage(row.text).kind)) await this.selectDecodeFromActivity(row);
+        if (row) await this.selectDecodeFromActivity(row);
         return;
       }
       if (command?.type === "halt_tx") {
@@ -868,6 +869,13 @@
     initQsoMachine() {
       const api=window.FreeRig710FT8QsoMachine; if(!api)return;
       this.qsoMachine=new api.QsoMachine({maxRetries:6,timeoutSlots:8,completeOnSent73:true,callFirst:true,autoSeq:true});
+      const autoArmSelect=id("ft8-auto-arm-selection");
+      try{this.autoArmOnSelection=localStorage.getItem("freerig710-ft8-auto-arm-selection-v1")!=="0";}catch(_){}
+      if(autoArmSelect)autoArmSelect.checked=this.autoArmOnSelection;
+      autoArmSelect?.addEventListener("change",()=>{
+        this.autoArmOnSelection=autoArmSelect.checked;
+        try{localStorage.setItem("freerig710-ft8-auto-arm-selection-v1",this.autoArmOnSelection?"1":"0");}catch(_){}
+      });
       const cqAutoSelect=id("ft8-cq-auto");
       try{const saved=String(localStorage.getItem("freerig710-ft8-cq-auto-v1")||"").trim().toLowerCase();if(cqAutoSelect&&["none","first","max-distance"].includes(saved))cqAutoSelect.value=saved;}catch(_){}
       const syncOptions=()=>{this.autoSeq=Boolean(id("ft8-auto-seq")?.checked);const selected=String(cqAutoSelect?.value||"first").trim().toLowerCase();this.cqAuto=["none","first","max-distance"].includes(selected)?selected:"first";this.callFirst=this.cqAuto==="first";this.holdTxFrequency=Boolean(id("ft8-hold-tx")?.checked);this.qsoMachine?.configure({autoSeq:this.autoSeq,callFirst:this.callFirst,maxRetries:Number(id("ft8-qso-retries")?.value)||6,timeoutSlots:Number(id("ft8-qso-timeout")?.value)||8});try{localStorage.setItem("freerig710-ft8-cq-auto-v1",this.cqAuto);}catch(_){}};
@@ -1256,7 +1264,7 @@
         for (const row of rows) {
           const tr = document.createElement("tr");
           const isTx=Boolean(row.isTx);
-          tr.title = isTx ? `Local FT8 transmission${row.waveformId?` · waveform ${row.waveformId}`:""}` : (rxFrequency ? "Select this station/QSO" : "Click to call this decoded station");
+          tr.title = isTx ? `Local FT8 transmission${row.waveformId?` · waveform ${row.waveformId}`:""}` : (rxFrequency ? "Select this station/QSO" : "Select this decoded station");
           if(!isTx)tr.tabIndex=0;
           if (row.parsed?.kind === "CQ") tr.classList.add("ft8-row-cq");
           if (this.myCall && row.parsed?.to === this.myCall) tr.classList.add("ft8-row-mycall");
@@ -1393,7 +1401,7 @@
       const switchingDx=Boolean(isCall(dx)&&before.dxCall&&before.dxCall!==dx);
       if(page?.prepareForActivitySelection && !await page.prepareForActivitySelection({switchingDx}))return false;
       const accepted=this.selectDecode(row);
-      if(accepted)page?.rearmAutoTxFromSelection?.();
+      if(accepted&&this.autoArmOnSelection)page?.rearmAutoTxFromSelection?.();
       return accepted;
     },
 
